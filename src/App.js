@@ -4,7 +4,6 @@ import { Wallet, Lock, Unlock, Bitcoin, Gamepad2, CheckCircle, AlertCircle, Load
 const BitcoinExclusiveAccess = () => {
   const [step, setStep] = useState('connect');
   const [address, setAddress] = useState('');
-  const [signature, setSignature] = useState('');
   const [balance, setBalance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -19,7 +18,7 @@ const BitcoinExclusiveAccess = () => {
 
   useEffect(() => {
     setMessage(challengeMessage);
-  }, []);
+  }, [challengeMessage]);
 
   const checkBitcoinBalance = async (btcAddress) => {
     try {
