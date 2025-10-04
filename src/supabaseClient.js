@@ -3,10 +3,18 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
+const environment = process.env.REACT_APP_ENVIRONMENT || 'development';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error('⚠️ Variables Supabase manquantes dans .env.local');
+  console.error('URL:', supabaseUrl);
+  console.error('Key:', supabaseAnonKey ? 'Présente' : 'Absente');
 }
+
+// 🔍 Log de debug pour vérifier l'environnement
+console.log(`🌍 Environnement actuel : ${environment}`);
+console.log(`🔗 Supabase URL : ${supabaseUrl?.substring(0, 30)}...`);
+console.log('🔑 Clé chargée :', supabaseAnonKey ? 'OUI ✅' : 'NON ❌');
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 

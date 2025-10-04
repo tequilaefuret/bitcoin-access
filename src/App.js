@@ -8,6 +8,7 @@ import DashboardStep from './components/steps/DashboardStep';
 import GameStep from './components/steps/GameStep';
 import HistoryModal from './components/modals/HistoryModal';
 import StatsModal from './components/modals/StatsModal';
+import EnvIndicator from './components/ui/EnvIndicator';
 import { useBitcoinBalance } from './hooks/useBitcoinBalance';
 
 const BitcoinExclusiveAccess = () => {
@@ -95,6 +96,9 @@ const BitcoinExclusiveAccess = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 p-4">
+      {/* INDICATEUR D'ENVIRONNEMENT */}
+      <EnvIndicator />
+      
       <div className="max-w-4xl mx-auto">
         
         {/* EN-TÊTE */}
