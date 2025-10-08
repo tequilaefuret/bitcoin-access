@@ -46,13 +46,13 @@ const DashboardStep = ({
               <Gamepad2 className="w-5 h-5 text-green-600" />
               <p className="text-sm text-gray-600">Parties Restantes</p>
             </div>
-            <p className="text-2xl font-bold text-green-600">{Math.floor(wbtcAvailable / 0.0001)}</p>
+            <p className="text-2xl font-bold text-green-600">{Math.floor(wbtcAvailable / 0.000001)}</p>
           </div>
         </div>
         
         <div className="text-sm text-gray-600">
           <p>💰 Total dépensé : {wbtcSpentTotal.toFixed(8)} wBTC</p>
-          <p className="mt-1">💎 Coût par partie : 0.0001 wBTC</p>
+          <p className="mt-1">💎 Coût par partie : 0.000001 wBTC</p>
         </div>
       </div>
 

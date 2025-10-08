@@ -1,4 +1,4 @@
-// src/supabaseClient.js - VERSION SÉCURISÉE (Mempool.space API)
+// src/supabaseClient.js - VERSION SÉCURISÉE (Mempool.space API + Signature)
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
@@ -27,9 +27,18 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 async function fetchRealTimeBtcBalanceConfirmed(bitcoinAddress) {
   try {
     // 🌐 API Mempool.space - Retourne explicitement confirmé vs mempool
-    const response = await fetch(
-      `https://mempool.space/api/address/${bitcoinAddress}`
-    );
+    const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK;
+    let apiUrl;
+    
+    if (networkConfig === 'testnet4') {
+      apiUrl = `https://mempool.space/testnet4/api/address/${bitcoinAddress}`;
+    } else if (networkConfig === 'testnet' || networkConfig === 'testnet3') {
+      apiUrl = `https://mempool.space/testnet/api/address/${bitcoinAddress}`;
+    } else {
+      apiUrl = `https://mempool.space/api/address/${bitcoinAddress}`;
+    }
+  
+    const response = await fetch(apiUrl);
     
     if (!response.ok) {
       if (response.status === 404) {
@@ -56,41 +65,202 @@ async function fetchRealTimeBtcBalanceConfirmed(bitcoinAddress) {
 }
 
 /**
- * Récupère ou crée le compte wBTC d'un utilisateur
+ * ✅ Vérifie une signature Bitcoin via Edge Function Supabase
+ * @param {object} params - { address, message, signature, network }
+ * @returns {Promise<object>} { valid: boolean, error?: string }
+ */
+export async function verifyBitcoinSignature({ address, message, signature, network }) {
+  try {
+    console.log('🔐 Appel Edge Function pour vérification signature...');
+    console.log('📍 Adresse:', address);
+    console.log('📝 Message:', message);
+    console.log('🌐 Réseau:', network);
+    
+    // Appeler l'Edge Function Supabase
+    const { data, error } = await supabase.functions.invoke('verify-bitcoin-signature', {
+      body: {
+        address,
+        message,
+        signature,
+        network
+      }
+    });
+
+    // Gérer les erreurs de l'Edge Function
+    if (error) {
+      console.error('❌ Erreur Edge Function:', error);
+      return {
+        valid: false,
+        error: error.message || 'Erreur lors de la vérification de la signature'
+      };
+    }
+
+    console.log('📥 Réponse Edge Function:', data);
+
+    // Retourner le résultat de la vérification
+    return {
+      valid: data.valid === true,
+      error: data.error || null,
+      verified_at: data.valid ? new Date().toISOString() : null
+    };
+
+  } catch (error) {
+    console.error('❌ Erreur verifyBitcoinSignature:', error);
+    return {
+      valid: false,
+      error: error.message || 'Erreur technique lors de la vérification'
+    };
+  }
+}
+
+/**
+ * ✅ MODIFIÉ : Récupère ou crée le compte wBTC d'un utilisateur
+ * Accepte maintenant les données de signature en paramètre optionnel
+ * 
  * @param {string} bitcoinAddress - Adresse Bitcoin
  * @param {number} currentBtcBalance - Solde BTC CONFIRMÉ actuel
+ * @param {object|null} signatureProof - Données de signature { message, signature, timestamp, verified }
  * @returns {object} État du compte wBTC
  */
-export async function getUserBalance(bitcoinAddress, currentBtcBalance) {
+export async function getUserBalance(bitcoinAddress, currentBtcBalance, signatureProof = null) {
   try {
+    // Tenter de récupérer l'utilisateur existant
     const { data: existingUser, error: fetchError } = await supabase
       .from('user_balances')
       .select('*')
       .eq('bitcoin_address', bitcoinAddress)
       .single();
 
-    if (fetchError && fetchError.code !== 'PGRST116') {
+    // Gérer l'erreur 406 (Not Acceptable) - traiter comme "non trouvé"
+    if (fetchError && fetchError.code !== 'PGRST116' && fetchError.code !== 'PGRST406') {
       throw fetchError;
     }
 
+    // Si l'utilisateur existe
     if (existingUser) {
       const btcChanged = existingUser.btc_balance !== currentBtcBalance;
       
+      // Préparer les données de mise à jour
+      const updateData = {
+        last_sync: new Date().toISOString()
+      };
+
+      // Si le solde BTC a changé, mettre à jour wBTC
       if (btcChanged) {
         const delta = currentBtcBalance - existingUser.btc_balance;
-        
-        // 🎯 OPTION B : wbtc_available ajusté par le delta
         const newWbtcAvailable = Math.max(0, existingUser.wbtc_balance + delta);
         const wbtcSpentTotal = existingUser.wbtc_spent_total || 0;
 
+        updateData.btc_balance = currentBtcBalance;
+        updateData.wbtc_balance = newWbtcAvailable;
+        updateData.wbtc_spent_total = wbtcSpentTotal;
+      }
+
+      // ✅ Si une signature est fournie, la stocker/mettre à jour
+      if (signatureProof) {
+        updateData.signature_proof = {
+          message: signatureProof.message,
+          signature: signatureProof.signature,
+          timestamp: signatureProof.timestamp,
+          verified: signatureProof.verified,
+          verified_at: new Date().toISOString()
+        };
+        console.log('🔐 Mise à jour signature_proof en base');
+      }
+
+      const { data: updated, error: updateError } = await supabase
+        .from('user_balances')
+        .update(updateData)
+        .eq('bitcoin_address', bitcoinAddress)
+        .select()
+        .single();
+
+      if (updateError) throw updateError;
+
+      // Enregistrer la transaction de sync si le solde a changé
+      if (btcChanged) {
+        const delta = currentBtcBalance - existingUser.btc_balance;
+        await supabase.from('transactions').insert({
+          bitcoin_address: bitcoinAddress,
+          amount: delta,
+          type: 'sync'
+        });
+      }
+
+      return { 
+        wbtc_available: updated.wbtc_balance,
+        wbtc_spent_total: updated.wbtc_spent_total,
+        btc_balance: updated.btc_balance,
+        isNew: false, 
+        synced: btcChanged,
+        syncDelta: btcChanged ? currentBtcBalance - existingUser.btc_balance : 0
+      };
+    }
+
+    // Nouvel utilisateur - préparer les données d'insertion
+    const insertData = {
+      bitcoin_address: bitcoinAddress,
+      btc_balance: currentBtcBalance,
+      wbtc_balance: currentBtcBalance,
+      wbtc_spent_total: 0,
+      last_sync: new Date().toISOString()
+    };
+
+    // ✅ Si une signature est fournie, l'inclure dès la création
+    if (signatureProof) {
+      insertData.signature_proof = {
+        message: signatureProof.message,
+        signature: signatureProof.signature,
+        timestamp: signatureProof.timestamp,
+        verified: signatureProof.verified,
+        verified_at: new Date().toISOString()
+      };
+      console.log('🔐 Création compte avec signature_proof');
+    }
+
+    const { data: newUser, error: insertError } = await supabase
+      .from('user_balances')
+      .insert(insertData)
+      .select()
+      .single();
+
+    // Gérer l'erreur 409 (duplicate key) - l'utilisateur existe déjà
+    if (insertError && insertError.code === '23505') {
+      // Race condition: l'utilisateur a été créé entre-temps
+      // Réessayer de le récupérer
+      const { data: retryUser, error: retryError } = await supabase
+        .from('user_balances')
+        .select('*')
+        .eq('bitcoin_address', bitcoinAddress)
+        .single();
+
+      if (retryError) throw retryError;
+
+      // Synchroniser avec le solde actuel si différent
+      if (retryUser.btc_balance !== currentBtcBalance) {
+        const delta = currentBtcBalance - retryUser.btc_balance;
+        const newWbtcAvailable = Math.max(0, retryUser.wbtc_balance + delta);
+
+        const updateData = {
+          btc_balance: currentBtcBalance,
+          wbtc_balance: newWbtcAvailable,
+          last_sync: new Date().toISOString()
+        };
+
+        // Ajouter la signature si fournie
+        if (signatureProof) {
+          updateData.signature_proof = {
+            message: signatureProof.message,
+            signature: signatureProof.signature,
+            timestamp: signatureProof.timestamp,
+            verified: signatureProof.verified,
+            verified_at: new Date().toISOString()
+          };
+        }
+
         const { data: updated, error: updateError } = await supabase
           .from('user_balances')
-          .update({
-            btc_balance: currentBtcBalance,
-            wbtc_balance: newWbtcAvailable,
-            wbtc_spent_total: wbtcSpentTotal,
-            last_sync: new Date().toISOString()
-          })
+          .update(updateData)
           .eq('bitcoin_address', bitcoinAddress)
           .select()
           .single();
@@ -103,38 +273,26 @@ export async function getUserBalance(bitcoinAddress, currentBtcBalance) {
           type: 'sync'
         });
 
-        return { 
+        return {
           wbtc_available: updated.wbtc_balance,
-          wbtc_spent_total: updated.wbtc_spent_total,
+          wbtc_spent_total: updated.wbtc_spent_total || 0,
           btc_balance: updated.btc_balance,
-          isNew: false, 
+          isNew: false,
           synced: true,
           syncDelta: delta
         };
       }
 
-      return { 
-        wbtc_available: existingUser.wbtc_balance,
-        wbtc_spent_total: existingUser.wbtc_spent_total || 0,
-        btc_balance: existingUser.btc_balance,
-        isNew: false, 
-        synced: false 
+      return {
+        wbtc_available: retryUser.wbtc_balance,
+        wbtc_spent_total: retryUser.wbtc_spent_total || 0,
+        btc_balance: retryUser.btc_balance,
+        isNew: false,
+        synced: false
       };
     }
 
-    // Nouvel utilisateur
-    const { data: newUser, error: insertError } = await supabase
-      .from('user_balances')
-      .insert({
-        bitcoin_address: bitcoinAddress,
-        btc_balance: currentBtcBalance,
-        wbtc_balance: currentBtcBalance, // Conversion 1:1 initiale
-        wbtc_spent_total: 0,
-        last_sync: new Date().toISOString()
-      })
-      .select()
-      .single();
-
+    // Autre erreur d'insertion
     if (insertError) throw insertError;
 
     return { 
@@ -163,8 +321,8 @@ export async function syncBeforeCriticalAction(bitcoinAddress) {
     
     console.log('💰 BTC confirmé détecté:', realTimeBtc);
     
-    // 2. Synchroniser avec Supabase
-    const balance = await getUserBalance(bitcoinAddress, realTimeBtc);
+    // 2. Synchroniser avec Supabase (sans signature car c'est une sync de routine)
+    const balance = await getUserBalance(bitcoinAddress, realTimeBtc, null);
     
     return balance;
     

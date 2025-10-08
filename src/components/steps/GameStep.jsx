@@ -66,7 +66,7 @@ const GameStep = ({
           💎 Solde : {wbtcAvailable.toFixed(8)} wBTC
         </p>
         <p className="text-purple-600">
-          🎮 {Math.floor(wbtcAvailable / 0.0001)} parties restantes
+          🎮 {Math.floor(wbtcAvailable / 0.000001)} parties restantes
         </p>
       </div>
 
@@ -91,7 +91,7 @@ const GameStep = ({
             </p>
             {score === 0 && (
               <p className="text-sm text-purple-600 mb-4">
-                💰 Cette partie coûtera 0.0001 wBTC
+                💰 Cette partie coûtera 0.000001 wBTC
               </p>
             )}
             <button
