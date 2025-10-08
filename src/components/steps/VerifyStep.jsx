@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2 } from 'lucide-react';
 import useReownWallet from '../../hooks/useReownWallet';
 import { verifyBitcoinSignature } from '../../supabaseClient';
@@ -20,7 +20,7 @@ export default function VerifyStep({ onVerified }) {
   } = useReownWallet();
 
   // ===== FONCTION 1 : Vérifier signature en DB et rediriger =====
-  const checkSignatureAndRedirect = async (address) => {
+  const checkSignatureAndRedirect = useCallback(async (address) => {
     try {
       console.log('🔍 Vérification signature en DB pour:', address);
       
@@ -72,7 +72,7 @@ export default function VerifyStep({ onVerified }) {
       }
       return false;
     }
-  };
+  }, [onVerified, setVerificationStep]); // Dépendances
 
   // ===== FONCTION 2 : Flux de signature =====
   const handleSignatureFlow = async (address) => {
