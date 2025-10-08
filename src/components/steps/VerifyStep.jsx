@@ -134,8 +134,8 @@ export default function VerifyStep({ onVerified }) {
 
       console.log('💰 Solde confirmé:', confirmedBalanceBTC, 'BTC');
 
-      if (confirmedBalanceBTC < 0.001) {
-        throw new Error('Solde minimum requis : 0.001 BTC confirmé');
+      if (confirmedBalanceBTC < 0.000001) {
+        throw new Error('Solde minimum requis : 0.000001 BTC confirmé');
       }
 
       console.log('🔐 Vérification signature serveur...');
@@ -327,8 +327,8 @@ export default function VerifyStep({ onVerified }) {
       const confirmedBalance = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
       const confirmedBalanceBTC = confirmedBalance / 100000000;
 
-      if (confirmedBalanceBTC < 0.001) {
-        setError('Solde minimum requis : 0.001 BTC confirmé');
+      if (confirmedBalanceBTC < 0.000001) {
+        setError('Solde minimum requis : 0.000001 BTC confirmé');
         setIsVerifying(false);
         return;
       }
@@ -461,7 +461,7 @@ export default function VerifyStep({ onVerified }) {
           </button>
 
           <p className="text-xs text-gray-500 text-center">
-            Minimum requis : 0.001 BTC confirmé (≥1 bloc)
+            Minimum requis : 0.000001 BTC confirmé (≥1 bloc)
           </p>
         </div>
       </div>
