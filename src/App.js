@@ -128,7 +128,7 @@ const BitcoinExclusiveAccess = () => {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, []);
+  }, [checkBitcoinBalance, setAddress]);
 
   // ===== EFFET : DÉTECTION RÉVOCATION WALLET =====
   useEffect(() => {

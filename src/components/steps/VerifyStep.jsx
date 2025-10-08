@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Wallet, KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2 } from 'lucide-react';
+import { KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2 } from 'lucide-react';
 import useReownWallet from '../../hooks/useReownWallet';
 import { verifyBitcoinSignature } from '../../supabaseClient';
 import { supabase } from '../../supabaseClient';
@@ -10,14 +10,12 @@ export default function VerifyStep({ onVerified }) {
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
   const [verificationStep, setVerificationStep] = useState('idle');
-  const [signatureData, setSignatureData] = useState(null);
 
   const {
     connectWallet,
     signMessage,
     isConnecting,
     error: walletError,
-    connectedAddress,
     modal
   } = useReownWallet();
 
@@ -90,7 +88,6 @@ export default function VerifyStep({ onVerified }) {
       }
 
       console.log('✅ Signature obtenue:', signature);
-      setSignatureData(signature);
 
       setVerificationStep('verifying');
       await handleWalletVerification(address, signature);
@@ -185,7 +182,7 @@ export default function VerifyStep({ onVerified }) {
         checkSignatureAndRedirect(address);
       }
     }
-  }, [connectionMethod, modal]);
+  }, [connectionMethod, modal, checkSignatureAndRedirect]);
 
   // ===== EFFET : Redirection auto si wallet connecté + signature existe =====
   useEffect(() => {

@@ -265,7 +265,6 @@ export default function useReownWallet() {
     try {
       const address = modal.getAddress();
       const caipAddress = modal.getCaipAddress();
-      const isConnected = modal.getIsConnectedState();
       
       // console.log('🔄 Refresh adresse:', { address, caipAddress, isConnected });
       
