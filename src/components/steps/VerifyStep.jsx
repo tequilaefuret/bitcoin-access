@@ -219,7 +219,7 @@ export default function VerifyStep({ onVerified }) {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [connectionMethod, verificationStep, modal]);
+  }, [connectionMethod, verificationStep, modal, checkSignatureAndRedirect]);
 
   // ===== FONCTION 4 : Connexion wallet =====
   const handleWalletConnect = async () => {
