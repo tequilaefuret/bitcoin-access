@@ -2,7 +2,6 @@
 import { useState, useCallback } from 'react';
 import { 
   verifyAndRegister,
-  getUserData,
   syncUserBalance,
   deductGameCost,
   saveGameScore,

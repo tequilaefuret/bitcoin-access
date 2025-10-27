@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2 } from 'lucide-react';
 import useReownWallet from '../../hooks/useReownWallet';
 import { verifyAndRegister, getUserData } from '../../supabaseClient';
-import { supabase } from '../../supabaseClient';
 
 export default function VerifyStep({ onVerified }) {
   const [connectionMethod, setConnectionMethod] = useState(null);
