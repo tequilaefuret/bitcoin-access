@@ -11,7 +11,7 @@ import StatsModal from './components/modals/StatsModal';
 import EnvIndicator from './components/ui/EnvIndicator';
 import { useBitcoinBalance } from './hooks/useBitcoinBalance';
 import useReownWallet from './hooks/useReownWallet';
-import { supabase } from './supabaseClient';
+import { supabase, getUserData } from './supabaseClient';
 
 const BitcoinExclusiveAccess = () => {
   const [step, setStep] = useState('connect');
@@ -47,7 +47,9 @@ const BitcoinExclusiveAccess = () => {
   // ===== HANDLER : DÉCONNEXION DÉTECTÉE =====
   const handleWalletDisconnected = useCallback(() => {
     console.log('🔌 Gestion de la déconnexion...');
-    localStorage.removeItem('btc_address');
+    // 🆕 Nettoyer TOUS les items localStorage
+    localStorage.removeItem('bitcoin_address');
+    localStorage.removeItem('btc_auth_token');
     sessionStorage.setItem('disconnect_timestamp', Date.now().toString());
     setAddress(null);
     setStep('connect');
@@ -62,15 +64,17 @@ const BitcoinExclusiveAccess = () => {
       console.log('🔍 Vérification de session sauvegardée...');
       
       try {
-        const savedAddress = localStorage.getItem('btc_address');
+        // 🆕 Vérifier JWT ET adresse (les deux sont nécessaires maintenant)
+        const jwt = localStorage.getItem('btc_auth_token');
+        const savedAddress = localStorage.getItem('bitcoin_address');
         
-        if (!savedAddress) {
+        if (!jwt || !savedAddress) {
           console.log('❌ Pas de session sauvegardée → Page Connexion');
           if (isMounted) setIsCheckingSession(false);
           return;
         }
         
-        console.log('✅ Session trouvée pour:', savedAddress);
+        console.log('✅ Session trouvée pour:', savedAddress.slice(0, 10) + '...');
         
         // ✅ VÉRIFICATION CRITIQUE : S'assurer que c'est une vraie session et pas un reste
         // Si on vient de se déconnecter, ne pas reconnecter
@@ -79,31 +83,43 @@ const BitcoinExclusiveAccess = () => {
         
         if (disconnectTimestamp && (now - parseInt(disconnectTimestamp)) < 5000) {
           console.log('⚠️ Déconnexion récente détectée, ignorer localStorage');
-          localStorage.removeItem('btc_address');
+          localStorage.removeItem('btc_auth_token');
+          localStorage.removeItem('bitcoin_address');
           sessionStorage.removeItem('disconnect_timestamp');
           if (isMounted) setIsCheckingSession(false);
           return;
         }
 
-        const { data: user, error: dbError } = await supabase
-          .from('user_balances')
-          .select('*')
-          .eq('bitcoin_address', savedAddress)
-          .single();
+        // 🆕 Configurer session Supabase avec JWT
+        await supabase.auth.setSession({
+          access_token: jwt,
+          refresh_token: jwt
+        });
 
-        if (dbError || !user) {
-          console.log('❌ Session expirée ou invalide en DB');
-          localStorage.removeItem('btc_address');
+        // 🆕 Utiliser getUserData (SELECT direct via RLS avec JWT)
+        const user = await getUserData(savedAddress);
+
+        if (!user) {
+          console.log('❌ Session expirée ou invalide (JWT peut-être expiré)');
+          localStorage.removeItem('btc_auth_token');
+          localStorage.removeItem('bitcoin_address');
           if (isMounted) setIsCheckingSession(false);
           return;
         }
 
         if (user.signature_proof?.verified) {
           console.log('✅ Signature vérifiée → Restauration Dashboard');
+          console.log('💰 BTC:', user.btc_balance);
+          console.log('💰 wBTC:', user.wbtc_balance);
           
           if (isMounted) {
+            // 🆕 Restaurer TOUS les états depuis la BDD
             setAddress(savedAddress);
-            await checkBitcoinBalance(savedAddress);
+            
+            // Le hook useBitcoinBalance gère les états internes
+            // On appelle checkBitcoinBalance qui va mettre à jour tous les états
+            await checkBitcoinBalance(savedAddress, user.signature_proof);
+            
             setStep('authorized');
           }
         } else {
@@ -115,6 +131,13 @@ const BitcoinExclusiveAccess = () => {
 
       } catch (err) {
         console.error('❌ Erreur vérification session:', err);
+        
+        // 🆕 Si erreur (JWT expiré par exemple), nettoyer la session
+        if (err.message?.includes('JWT') || err.message?.includes('expired')) {
+          console.log('⚠️ JWT expiré, nettoyage session...');
+          localStorage.removeItem('btc_auth_token');
+          localStorage.removeItem('bitcoin_address');
+        }
       } finally {
         if (isMounted) setIsCheckingSession(false);
       }
@@ -128,7 +151,7 @@ const BitcoinExclusiveAccess = () => {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [checkBitcoinBalance, setAddress]);
+  }, [setAddress, checkBitcoinBalance]); // 🆕 Ajouté checkBitcoinBalance
 
   // ===== EFFET : DÉTECTION RÉVOCATION WALLET =====
   useEffect(() => {
@@ -185,7 +208,8 @@ const BitcoinExclusiveAccess = () => {
       console.log('🔌 Déconnexion manuelle initiée...');
       
       // ✅ ÉTAPE 1 : Nettoyer localStorage EN PREMIER
-      localStorage.removeItem('btc_address');
+      localStorage.removeItem('bitcoin_address'); // 🆕 Unifié
+      localStorage.removeItem('btc_auth_token'); // 🆕 Ajouté
       sessionStorage.setItem('disconnect_timestamp', Date.now().toString());
       console.log('🗑️ localStorage nettoyé');
       
@@ -208,7 +232,8 @@ const BitcoinExclusiveAccess = () => {
       console.error('❌ Erreur déconnexion:', err);
       
       // ✅ Forcer quand même la redirection même en cas d'erreur
-      localStorage.removeItem('btc_address');
+      localStorage.removeItem('bitcoin_address');
+      localStorage.removeItem('btc_auth_token');
       setAddress(null);
       setStep('connect');
       setError('Déconnexion effectuée avec erreurs mineurs');
@@ -228,17 +253,15 @@ const BitcoinExclusiveAccess = () => {
     
     const { address, signature, signatureVerified } = data;
     
-    // ✅ CRITIQUE : Bloquer TOUT accès sans signature vérifiée
+    // Bloquer TOUT accès sans signature vérifiée
     if (!signatureVerified) {
       console.error('❌ FAILLE BLOQUÉE : Tentative d\'accès sans signature vérifiée');
       setError('⚠️ Signature cryptographique obligatoire pour accéder au jeu.');
-      
-      // Forcer retour à la page Vérification
       setStep('verify');
       return;
     }
     
-    // ✅ Vérifier aussi que l'adresse connectée correspond
+    // Vérifier aussi que l'adresse connectée correspond
     if (connectedAddress && connectedAddress !== address) {
       console.error('❌ FAILLE BLOQUÉE : Adresse différente détectée');
       setError('⚠️ L\'adresse connectée ne correspond pas à l\'adresse vérifiée.');
@@ -246,37 +269,45 @@ const BitcoinExclusiveAccess = () => {
       return;
     }
     
+    // Utilisateur déjà créé par verifyAndRegister()
     try {
-      const success = await checkBitcoinBalance(address, signature);
+      setAddress(address);
+      localStorage.setItem('bitcoin_address', address);
+      console.log('💾 Session sauvegardée avec signature vérifiée');
       
-      if (success) {
-        setAddress(address);
-        localStorage.setItem('btc_address', address);
-        console.log('💾 Session sauvegardée avec signature vérifiée');
+      // 🆕 MODIFICATION : getUserData appelle maintenant l'Edge Function get-user-data
+      // Plus besoin de JWT car l'Edge Function utilise service_role
+      const user = await getUserData(address);
+      
+      if (user) {
+        console.log('✅ Utilisateur chargé depuis BDD');
+        console.log('💰 BTC:', user.btc_balance);
+        console.log('💰 wBTC:', user.wbtc_balance);
+        
+        // Mettre à jour les états via checkBitcoinBalance
+        await checkBitcoinBalance(address, signature);
+        
         setStep('authorized');
       } else {
-        setError('Erreur lors de la création du compte');
+        console.error('❌ Utilisateur non trouvé après création');
+        setError('Erreur : utilisateur non trouvé après création');
       }
     } catch (err) {
-      console.error('❌ Erreur synchro:', err);
+      console.error('❌ Erreur:', err);
       setError('Erreur lors de la synchronisation');
     }
   }, [checkBitcoinBalance, setAddress, setError, connectedAddress]);
 
   const handleStartGame = useCallback(async () => {
-    // ✅ Vérifier signature en DB avant de lancer le jeu
+    // Vérifier signature en DB avant de lancer le jeu
     try {
-      const savedAddress = localStorage.getItem('btc_address');
+      const savedAddress = localStorage.getItem('bitcoin_address'); // 🆕 Unifié
       
       if (!savedAddress) {
         throw new Error('Pas de session sauvegardée');
       }
       
-      const { data: user } = await supabase
-        .from('user_balances')
-        .select('signature_proof')
-        .eq('bitcoin_address', savedAddress)
-        .single();
+      const user = await getUserData(savedAddress);
       
       if (!user?.signature_proof?.verified) {
         throw new Error('Signature non vérifiée');
@@ -292,7 +323,8 @@ const BitcoinExclusiveAccess = () => {
     } catch (err) {
       console.error('❌ Vérification pré-jeu échouée:', err.message);
       setError('Votre session a expiré. Veuillez vous reconnecter.');
-      localStorage.removeItem('btc_address');
+      localStorage.removeItem('bitcoin_address'); // 🆕 Unifié
+      localStorage.removeItem('btc_auth_token'); // 🆕 Ajouté
       setStep('connect');
       return false;
     }
@@ -317,11 +349,11 @@ const BitcoinExclusiveAccess = () => {
       if (!isConnected) {
         console.warn('⚠️ Wallet déconnecté détecté au clic sur Jouer');
         
-        // ✅ Rouvrir le modal SANS changer de page
+        // Rouvrir le modal SANS changer de page
         try {
           await modal.open();
           
-          // ✅ Attendre la reconnexion avec polling
+          // Attendre la reconnexion avec polling
           let attempts = 0;
           const maxAttempts = 30; // 30 secondes max
           
@@ -336,19 +368,15 @@ const BitcoinExclusiveAccess = () => {
             if (address && connected) {
               clearInterval(waitForConnection);
               
-              // ✅ Vérifier si cette adresse a déjà signé
+              // Vérifier si cette adresse a déjà signé
               try {
-                const savedAddress = localStorage.getItem('btc_address');
+                const savedAddress = localStorage.getItem('bitcoin_address'); // 🆕 Unifié
                 
                 if (savedAddress === address) {
                   console.log('✅ Reconnexion réussie avec adresse connue');
                   
                   // Vérifier signature en DB
-                  const { data: user } = await supabase
-                    .from('user_balances')
-                    .select('signature_proof')
-                    .eq('bitcoin_address', address)
-                    .single();
+                  const user = await getUserData(address);
                   
                   if (user?.signature_proof?.verified) {
                     console.log('✅ Signature valide → Lancer le jeu');

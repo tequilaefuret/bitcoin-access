@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2 } from 'lucide-react';
 import useReownWallet from '../../hooks/useReownWallet';
-import { verifyBitcoinSignature } from '../../supabaseClient';
+import { verifyAndRegister, getUserData } from '../../supabaseClient';
 import { supabase } from '../../supabaseClient';
 
 export default function VerifyStep({ onVerified }) {
@@ -19,41 +19,27 @@ export default function VerifyStep({ onVerified }) {
     modal
   } = useReownWallet();
 
+  // ===== UTILITAIRES : Détection Taproot =====
+  const isTaprootAddress = (address) => {
+    return address.startsWith('bc1p') || address.startsWith('tb1p');
+  };
+
   // ===== FONCTION 1 : Vérifier signature en DB et rediriger =====
   const checkSignatureAndRedirect = useCallback(async (address) => {
     try {
       console.log('🔍 Vérification signature en DB pour:', address);
       
-      const { data: user } = await supabase
-        .from('user_balances')
-        .select('signature_proof, btc_balance, wbtc_balance')
-        .eq('bitcoin_address', address)
-        .single();
+      // 🆕 Utiliser getUserData (SELECT direct via RLS)
+      const user = await getUserData(address);
 
       if (user?.signature_proof?.verified) {
         console.log('✅ Signature déjà en DB → Direct au Dashboard sans re-signer');
         
-        const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK || 'mainnet';
-        let apiUrl;
-        
-        if (networkConfig === 'testnet4') {
-          apiUrl = `https://mempool.space/testnet4/api/address/${address}`;
-        } else if (networkConfig === 'testnet' || networkConfig === 'testnet3') {
-          apiUrl = `https://mempool.space/testnet/api/address/${address}`;
-        } else {
-          apiUrl = `https://mempool.space/api/address/${address}`;
-        }
-        
-        const response = await fetch(apiUrl);
-        const data = await response.json();
-        const confirmedBalance = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
-        const confirmedBalanceBTC = confirmedBalance / 100000000;
-        
         setVerificationStep('verifying');
         
         onVerified({
-          address: address,
-          balance: confirmedBalanceBTC,
+          address: user.bitcoin_address,
+          balance: user.btc_balance,
           method: 'wallet',
           signature: user.signature_proof,
           signatureVerified: true
@@ -65,19 +51,27 @@ export default function VerifyStep({ onVerified }) {
         return false;
       }
     } catch (err) {
-      if (err.code === 'PGRST116') {
-        console.log('ℹ️ Nouvelle adresse (pas encore en DB)');
-      } else {
-        console.log('⚠️ Erreur DB:', err.message);
-      }
+      console.log('⚠️ Erreur vérification DB:', err.message);
       return false;
     }
-  }, [onVerified, setVerificationStep]); // Dépendances
+  }, [onVerified, setVerificationStep]);
 
   // ===== FONCTION 2 : Flux de signature =====
   const handleSignatureFlow = async (address) => {
     console.log('🔐 ÉTAPE 1 : Demande de signature pour', address);
     setError('');
+
+    // 🆕 VÉRIFICATION TAPROOT AVANT SIGNATURE
+    if (isTaprootAddress(address)) {
+      setError(
+        '⚠️ Adresse Taproot non supportée\n\n' +
+        'Les adresses commençant par bc1p (mainnet) ou tb1p (testnet) ne supportent pas la signature de message standard.\n\n' +
+        'Veuillez utiliser une adresse SegWit (bc1q/tb1q) ou Legacy (1.../m...) dans votre wallet.'
+      );
+      setVerificationStep('idle');
+      return;
+    }
+
     setVerificationStep('signing');
 
     try {
@@ -113,34 +107,10 @@ export default function VerifyStep({ onVerified }) {
 
     try {
       const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK || 'mainnet';
-      let apiUrl;
       
-      if (networkConfig === 'testnet4') {
-        apiUrl = `https://mempool.space/testnet4/api/address/${address}`;
-      } else if (networkConfig === 'testnet' || networkConfig === 'testnet3') {
-        apiUrl = `https://mempool.space/testnet/api/address/${address}`;
-      } else {
-        apiUrl = `https://mempool.space/api/address/${address}`;
-      }
-      
-      console.log('🔍 Vérification solde sur:', networkConfig);
-      
-      const response = await fetch(apiUrl);
-      if (!response.ok) throw new Error('Erreur API Mempool');
-      
-      const data = await response.json();
-      const confirmedBalance = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
-      const confirmedBalanceBTC = confirmedBalance / 100000000;
-
-      console.log('💰 Solde confirmé:', confirmedBalanceBTC, 'BTC');
-
-      if (confirmedBalanceBTC < 0.000001) {
-        throw new Error('Solde minimum requis : 0.000001 BTC confirmé');
-      }
-
       console.log('🔐 Vérification signature serveur...');
       
-      const verificationResult = await verifyBitcoinSignature({
+      const verificationResult = await verifyAndRegister({
         address: address,
         message: signature.message,
         signature: signature.signature,
@@ -148,22 +118,45 @@ export default function VerifyStep({ onVerified }) {
       });
 
       if (!verificationResult.valid) {
-        throw new Error(verificationResult.error || 'Signature invalide');
+        // Afficher l'erreur détaillée du serveur
+        const errorMsg = verificationResult.error || 'Signature invalide';
+        throw new Error(errorMsg);
       }
 
-      console.log('✅ Signature vérifiée côté serveur !');
+      console.log('✅ Signature vérifiée cryptographiquement côté serveur !');
+      
+      // Récupérer le solde depuis la réponse de verifyAndRegister
+      const confirmedBalanceBTC = verificationResult.user.btc_balance;
+      console.log('💰 Solde confirmé:', confirmedBalanceBTC, 'BTC (depuis Edge Function)');
+      
+      // Log du type d'adresse si disponible
+      if (verificationResult.user.signature_proof?.addressType) {
+        console.log('📋 Type d\'adresse:', verificationResult.user.signature_proof.addressType);
+      }
 
+      // Utiliser signature_proof depuis la BDD au lieu de l'objet signature local
       onVerified({
         address: address,
         balance: confirmedBalanceBTC,
         method: 'wallet',
-        signature: signature,
+        signature: verificationResult.user.signature_proof,
         signatureVerified: true
       });
 
     } catch (err) {
       console.error('❌ Erreur vérification:', err);
-      setError(err.message || 'Impossible de vérifier l\'adresse.');
+      
+      // Gestion spéciale des erreurs de signature
+      if (err.message.includes('Taproot')) {
+        setError('⚠️ Adresse Taproot détectée\n\n' + err.message);
+      } else if (err.message.includes('cryptographiquement')) {
+        setError('❌ Signature invalide\n\n' + err.message);
+      } else if (err.message.includes('Solde minimum')) {
+        setError('💰 Solde insuffisant\n\n' + err.message);
+      } else {
+        setError(err.message || 'Impossible de vérifier l\'adresse.');
+      }
+      
       setVerificationStep('idle');
     } finally {
       setIsVerifying(false);
@@ -232,9 +225,31 @@ export default function VerifyStep({ onVerified }) {
       
       if (existingAddress && isConnected) {
         console.log('🔐 Wallet déjà connecté, vérification DB...');
-        const hasSignature = await checkSignatureAndRedirect(existingAddress);
         
-        if (!hasSignature) {
+        // Vérifier Taproot AVANT de chercher en DB
+        if (isTaprootAddress(existingAddress)) {
+          setError(
+            '⚠️ Adresse Taproot non supportée\n\n' +
+            `Votre wallet est connecté avec une adresse Taproot (${existingAddress.slice(0, 8)}...).\n\n` +
+            'Veuillez sélectionner une adresse SegWit (bc1q) ou Legacy dans votre wallet.'
+          );
+          return;
+        }
+        
+        const userData = await getUserData(existingAddress);
+        
+        if (userData?.signature_proof?.verified) {
+          console.log('✅ Signature déjà en DB → Direct au Dashboard');
+          
+          onVerified({
+            address: userData.bitcoin_address,
+            balance: userData.btc_balance,
+            method: 'wallet',
+            signature: userData.signature_proof,
+            signatureVerified: true
+          });
+          return;
+        } else {
           console.log('⚠️ Pas de signature → Demander signature');
           await handleSignatureFlow(existingAddress);
         }
@@ -261,24 +276,44 @@ export default function VerifyStep({ onVerified }) {
           const address = modal.getAddress();
           const connected = modal.getIsConnectedState();
           
-          // console.log(`🔄 Polling ${attempts}: address=${address}, connected=${connected}`);
-          
           // ✅ Connexion détectée
           if (address && connected && !hasConnected) {
             console.log('🎉 Nouvelle connexion réussie:', address);
             hasConnected = true;
             clearInterval(checkInterval);
             
-            const hasSignature = await checkSignatureAndRedirect(address);
+            // Vérifier Taproot AVANT de continuer
+            if (isTaprootAddress(address)) {
+              setError(
+                '⚠️ Adresse Taproot non supportée\n\n' +
+                `Votre wallet est connecté avec une adresse Taproot (${address.slice(0, 8)}...).\n\n` +
+                'Veuillez sélectionner une adresse SegWit (bc1q) ou Legacy dans votre wallet.'
+              );
+              setVerificationStep('idle');
+              return;
+            }
             
-            if (!hasSignature) {
+            const userData = await getUserData(address);
+            
+            if (userData?.signature_proof?.verified) {
+              console.log('✅ Signature déjà en DB → Direct au Dashboard');
+              
+              onVerified({
+                address: userData.bitcoin_address,
+                balance: userData.btc_balance,
+                method: 'wallet',
+                signature: userData.signature_proof,
+                signatureVerified: true
+              });
+              return;
+            } else {
               console.log('🆕 Nouvelle adresse → Demander signature');
               await handleSignatureFlow(address);
             }
             return;
           }
           
-          // ✅ Timeout uniquement (pas de message d'annulation)
+          // Timeout uniquement
           if (attempts >= maxAttempts) {
             clearInterval(checkInterval);
             if (!hasConnected) {
@@ -396,6 +431,9 @@ export default function VerifyStep({ onVerified }) {
           <div className="text-sm text-blue-800">
             <p className="font-semibold mb-1">Wallets compatibles :</p>
             <p>Xverse • Leather • OKX • Phantom</p>
+            <p className="text-xs text-blue-600 mt-2">
+              ⚠️ Adresses Taproot (bc1p) non supportées
+            </p>
           </div>
         </div>
       </div>
@@ -437,7 +475,7 @@ export default function VerifyStep({ onVerified }) {
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm whitespace-pre-line">
               {error}
             </div>
           )}
@@ -470,6 +508,10 @@ export default function VerifyStep({ onVerified }) {
 
   // ===== RENDU : Connexion wallet =====
   if (connectionMethod === 'wallet') {
+    // 🆕 Détection Taproot pour affichage avertissement
+    const currentAddress = modal?.getAddress();
+    const showTaprootWarning = currentAddress && isTaprootAddress(currentAddress);
+
     return (
       <div className="max-w-md mx-auto p-6">
         <button
@@ -484,6 +526,26 @@ export default function VerifyStep({ onVerified }) {
         </button>
 
         <h2 className="text-2xl font-bold mb-6">Connexion Wallet Bitcoin</h2>
+
+        {/* 🆕 Avertissement Taproot */}
+        {showTaprootWarning && (
+          <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4 mb-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-orange-900">
+                <p className="font-bold mb-1">⚠️ Adresse Taproot détectée</p>
+                <p className="mb-2">
+                  Votre wallet est connecté avec une adresse <span className="font-mono bg-orange-100 px-1 rounded">{currentAddress.slice(0, 10)}...</span>
+                </p>
+                <p className="text-xs">
+                  Les adresses Taproot (bc1p/tb1p) ne supportent pas la signature de message standard.
+                  <br />
+                  <strong>Veuillez sélectionner une adresse SegWit (bc1q) ou Legacy dans votre wallet.</strong>
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {verificationStep !== 'idle' && (
           <div className="bg-white rounded-lg border-2 border-gray-200 p-4 mb-4 space-y-3">
@@ -547,7 +609,6 @@ export default function VerifyStep({ onVerified }) {
                 {verificationStep === 'signing' ? 'Signature en cours...' : 'Vérification...'}
               </>
             ) : (() => {
-                // ✅ Vérifier directement via modal au lieu de connectedAddress
                 const address = modal?.getAddress();
                 const isConnected = modal?.getIsConnectedState();
                 
@@ -566,7 +627,7 @@ export default function VerifyStep({ onVerified }) {
           </button>
 
           {(error || walletError) && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm whitespace-pre-line">
               {error || walletError}
             </div>
           )}
@@ -583,6 +644,9 @@ export default function VerifyStep({ onVerified }) {
               <li>Signez un message pour prouver la propriété</li>
               <li>Vérification automatique du solde BTC</li>
             </ol>
+            <p className="text-xs text-green-700 mt-2 pt-2 border-t border-green-200">
+              ⚠️ <strong>Important :</strong> Utilisez une adresse Legacy (1...) ou SegWit (bc1q...). Les adresses Taproot (bc1p...) ne sont pas supportées.
+            </p>
           </div>
         </div>
       </div>

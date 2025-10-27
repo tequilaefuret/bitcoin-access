@@ -1,13 +1,13 @@
-// src/hooks/useBitcoinBalance.js - VERSION SÉCURISÉE (Mempool.space API + Signature)
+// src/hooks/useBitcoinBalance.js - VERSION SÉCURISÉE FINALE (Edge Functions uniquement)
 import { useState, useCallback } from 'react';
 import { 
-  getUserBalance, 
-  deductGameCost, 
-  updateGameScore, 
-  getTransactionHistory, 
-  getUserStats,
-  syncBeforeCriticalAction,
-  verifyBitcoinSignature
+  verifyAndRegister,
+  getUserData,
+  syncUserBalance,
+  deductGameCost,
+  saveGameScore,
+  getTransactionHistory,
+  getUserStats
 } from '../supabaseClient';
 
 export const useBitcoinBalance = () => {
@@ -20,6 +20,10 @@ export const useBitcoinBalance = () => {
   const [error, setError] = useState('');
   const [verificationStatus, setVerificationStatus] = useState('');
 
+  /**
+   * 🔍 Récupérer le solde BTC confirmé via Mempool.space
+   * (Fonction helper locale - ne touche pas à la DB)
+   */
   const fetchConfirmedBalance = async (bitcoinAddress) => {
     try {
       const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK;
@@ -49,9 +53,7 @@ export const useBitcoinBalance = () => {
       return {
         confirmed: confirmedBalance,
         unconfirmed: unconfirmedBalance,
-        total: confirmedBalance + unconfirmedBalance,
-        txCount: data.chain_stats.tx_count,
-        mempoolTxCount: data.mempool_stats.tx_count
+        total: confirmedBalance + unconfirmedBalance
       };
     } catch (error) {
       console.error('Erreur fetchConfirmedBalance:', error);
@@ -59,43 +61,21 @@ export const useBitcoinBalance = () => {
     }
   };
 
+  /**
+   * 🔐 Vérifier solde Bitcoin + Signature (si fournie)
+   * CETTE FONCTION UTILISE L'EDGE FUNCTION verify-and-register
+   */
   const checkBitcoinBalance = useCallback(async (bitcoinAddress, signatureData = null) => {
-    console.log('checkBitcoinBalance appelé avec:', { bitcoinAddress, hasSignature: !!signatureData });
+    console.log('🔍 checkBitcoinBalance appelé avec:', { 
+      bitcoinAddress, 
+      hasSignature: !!signatureData 
+    });
     
     try {
       setLoading(true);
       setError('');
       
-      let signatureVerified = false;
-      
-      if (signatureData) {
-        console.log('Vérification de la signature cryptographique...');
-        
-        try {
-          const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK || 'mainnet';
-          
-          const verificationResult = await verifyBitcoinSignature({
-            address: bitcoinAddress,
-            message: signatureData.message,
-            signature: signatureData.signature,
-            network: networkConfig
-          });
-          
-          if (!verificationResult.valid) {
-            throw new Error('Signature cryptographique invalide. La preuve de propriété a échoué.');
-          }
-          
-          console.log('Signature vérifiée avec succès !');
-          signatureVerified = true;
-          
-        } catch (err) {
-          console.error('Erreur vérification signature:', err);
-          setError('Échec de la vérification cryptographique : ' + err.message);
-          setVerificationStatus('error');
-          return false;
-        }
-      }
-      
+      // 1️⃣ Vérifier solde BTC réel via Mempool.space
       const balances = await fetchConfirmedBalance(bitcoinAddress);
       const balanceBTC = balances.confirmed;
       const unconfirmedBTC = balances.unconfirmed;
@@ -103,7 +83,7 @@ export const useBitcoinBalance = () => {
       setBtcBalance(balanceBTC);
       setBtcUnconfirmed(unconfirmedBTC);
       
-      console.log('Soldes détectés:', {
+      console.log('💰 Soldes détectés:', {
         confirmed: balanceBTC,
         unconfirmed: unconfirmedBTC,
         total: balances.total
@@ -111,6 +91,7 @@ export const useBitcoinBalance = () => {
       
       const minimumBTC = 0.00001;
       
+      // 2️⃣ Vérifier solde minimum
       if (balanceBTC < minimumBTC) {
         if (unconfirmedBTC > 0) {
           setError(
@@ -118,7 +99,7 @@ export const useBitcoinBalance = () => {
             `Solde confirmé : ${balanceBTC.toFixed(8)} BTC\n` +
             `En attente : ${unconfirmedBTC.toFixed(8)} BTC\n` +
             `Minimum requis : ${minimumBTC} BTC\n\n` +
-            `Veuillez attendre au moins 1 confirmation blockchain (environ 10 minutes).\n` +
+            `Veuillez attendre au moins 1 confirmation blockchain (~10 min).\n` +
             `Total une fois confirmé : ${balances.total.toFixed(8)} BTC`
           );
         } else {
@@ -132,72 +113,77 @@ export const useBitcoinBalance = () => {
         return false;
       }
       
-      try {
-        const userBalance = await getUserBalance(
-          bitcoinAddress, 
-          balanceBTC,
-          signatureData ? {
+      // 3️⃣ Si signature fournie → Créer/Sync compte via Edge Function
+      if (signatureData) {
+        console.log('🔐 Signature fournie, appel verify-and-register...');
+        
+        try {
+          const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK || 'mainnet';
+          
+          const result = await verifyAndRegister({
+            address: bitcoinAddress,
             message: signatureData.message,
             signature: signatureData.signature,
-            timestamp: signatureData.timestamp,
-            verified: signatureVerified
-          } : null
-        );
-        
-        setWbtcAvailable(userBalance.wbtc_available);
-        setWbtcSpentTotal(userBalance.wbtc_spent_total);
-        setVerificationStatus('success');
-        
-        let message = '';
-        
-        if (userBalance.isNew) {
-          message = 
-            `Compte wBTC créé avec succès !\n\n` +
-            `Solde BTC confirmé : ${balanceBTC.toFixed(8)} BTC\n` +
-            `Solde wBTC : ${userBalance.wbtc_available.toFixed(8)} wBTC\n` +
-            `Parties disponibles : ${Math.floor(userBalance.wbtc_available / 0.000001)}\n\n` +
-            `Coût par partie : 0.000001 wBTC`;
+            network: networkConfig === 'testnet4' ? 'testnet4' : 'bitcoin'
+          });
           
-          if (signatureVerified) {
-            message += `\n\nSignature cryptographique vérifiée`;
+          if (!result.valid) {
+            throw new Error('Signature cryptographique invalide');
           }
           
-          if (unconfirmedBTC > 0) {
-            message += `\n\nEn attente de confirmation : ${unconfirmedBTC.toFixed(8)} BTC`;
+          console.log('✅ Signature vérifiée et compte créé/synced !');
+          
+          // Mise à jour des états avec données de l'Edge Function
+          setWbtcAvailable(result.user.wbtc_balance);
+          setWbtcSpentTotal(result.user.wbtc_spent_total || 0);
+          setBtcBalance(result.user.btc_balance);
+          setVerificationStatus('success');
+          
+          // Message utilisateur
+          const isNew = result.user.created_at === result.user.last_sync;
+          let message = '';
+          
+          if (isNew) {
+            message = 
+              `✅ Compte wBTC créé avec succès !\n\n` +
+              `Solde BTC confirmé : ${result.user.btc_balance.toFixed(8)} BTC\n` +
+              `Solde wBTC : ${result.user.wbtc_balance.toFixed(8)} wBTC\n` +
+              `Parties disponibles : ${Math.floor(result.user.wbtc_balance / 0.000001)}\n\n` +
+              `Coût par partie : 0.000001 wBTC\n` +
+              `Signature cryptographique vérifiée ✅`;
+          } else {
+            message = 
+              `✅ Connexion réussie !\n\n` +
+              `Solde BTC : ${result.user.btc_balance.toFixed(8)} BTC\n` +
+              `Solde wBTC : ${result.user.wbtc_balance.toFixed(8)} wBTC\n` +
+              `Parties disponibles : ${Math.floor(result.user.wbtc_balance / 0.000001)}`;
           }
-          
-          alert(message);
-          
-        } else if (userBalance.synced) {
-          const syncType = userBalance.syncDelta > 0 ? 'Rechargement' : 'Retrait';
-          
-          message = 
-            `Synchronisation effectuée !\n\n` +
-            `${syncType} détecté : ${Math.abs(userBalance.syncDelta).toFixed(8)} BTC\n` +
-            `Nouveau solde wBTC : ${userBalance.wbtc_available.toFixed(8)} wBTC\n` +
-            `Parties disponibles : ${Math.floor(userBalance.wbtc_available / 0.000001)}`;
           
           if (unconfirmedBTC > 0) {
             message += `\n\nEn attente : ${unconfirmedBTC.toFixed(8)} BTC`;
           }
           
           alert(message);
+          return true;
+          
+        } catch (err) {
+          console.error('❌ Erreur vérification signature:', err);
+          setError('Échec de la vérification cryptographique : ' + err.message);
+          setVerificationStatus('error');
+          return false;
         }
-        
-        return true;
-        
-      } catch (err) {
-        console.error('Erreur synchronisation wBTC:', err);
-        setError('Erreur lors de la synchronisation avec la base de données : ' + err.message);
-        setVerificationStatus('error');
-        return false;
       }
+      
+      // 4️⃣ Pas de signature → Simple vérification solde (reconnexion)
+      console.log('ℹ️ Pas de signature, simple vérification solde');
+      setVerificationStatus('success');
+      return true;
       
     } catch (err) {
       if (err.message === 'API_ERROR') {
-        setError('Erreur de connexion à la blockchain. Vérifiez votre connexion internet.');
+        setError('Erreur de connexion blockchain. Vérifiez votre connexion.');
       } else {
-        setError('Erreur lors de la vérification de l\'adresse: ' + err.message);
+        setError('Erreur lors de la vérification : ' + err.message);
       }
       setVerificationStatus('error');
       return false;
@@ -206,6 +192,10 @@ export const useBitcoinBalance = () => {
     }
   }, []);
 
+  /**
+   * 🎮 Démarrer une partie (déduire wBTC)
+   * CETTE FONCTION UTILISE L'EDGE FUNCTION user-operations (operation: 'deduct')
+   */
   const startGame = useCallback(async () => {
     setError('');
     const gameCost = 0.000001;
@@ -213,29 +203,33 @@ export const useBitcoinBalance = () => {
     try {
       setLoading(true);
       
-      const updated = await deductGameCost(address, gameCost);
+      console.log('🎮 Démarrage partie - déduction de', gameCost, 'wBTC');
       
-      setWbtcAvailable(updated.wbtc_available);
-      setWbtcSpentTotal(updated.wbtc_spent_total);
-      setBtcBalance(updated.btc_balance);
+      const result = await deductGameCost(address, gameCost);
       
+      if (!result.success) {
+        throw new Error(result.error || 'Déduction échouée');
+      }
+      
+      // Mise à jour des états
+      setWbtcAvailable(result.user.wbtc_balance);
+      setWbtcSpentTotal(result.user.wbtc_spent_total);
+      setBtcBalance(result.user.btc_balance);
+      
+      console.log('✅ Partie démarrée. Nouveau solde:', result.user.wbtc_balance);
       setError('');
       return true;
       
     } catch (err) {
-      console.error('Erreur lors du paiement:', err);
+      console.error('❌ Erreur démarrage partie:', err);
       
-      if (err.message.includes('insuffisant')) {
+      if (err.message.includes('insuffisant') || err.message.includes('Insufficient')) {
         setError(
           `Solde wBTC insuffisant\n\n` +
-          `Requis : ${gameCost.toFixed(4)} wBTC\n` +
+          `Requis : ${gameCost.toFixed(6)} wBTC\n` +
           `Actuel : ${wbtcAvailable.toFixed(8)} wBTC\n\n` +
           `Rechargez votre compte Bitcoin pour continuer.`
         );
-      } else if (err.message.includes('Conflit')) {
-        setError('Action trop rapide. Veuillez réessayer dans quelques secondes.');
-      } else if (err.message.includes('attendre')) {
-        setError('Trop de requêtes. Veuillez patienter 1 minute.');
       } else {
         setError('Erreur : ' + err.message);
       }
@@ -247,6 +241,10 @@ export const useBitcoinBalance = () => {
     }
   }, [address, wbtcAvailable]);
 
+  /**
+   * 🔄 Synchronisation manuelle BTC → wBTC
+   * CETTE FONCTION UTILISE L'EDGE FUNCTION user-operations (operation: 'sync')
+   */
   const manualSync = useCallback(async () => {
     if (!address) return;
     
@@ -254,77 +252,119 @@ export const useBitcoinBalance = () => {
       setLoading(true);
       setError('');
       
+      console.log('🔄 Synchronisation manuelle pour:', address);
+      
+      // 1️⃣ Vérifier solde BTC réel
       const balances = await fetchConfirmedBalance(address);
       const confirmedBTC = balances.confirmed;
       const unconfirmedBTC = balances.unconfirmed;
       
-      console.log('Synchronisation manuelle:', balances);
+      console.log('💰 Soldes détectés:', balances);
       
-      const synced = await syncBeforeCriticalAction(address);
-      setWbtcAvailable(synced.wbtc_available);
-      setWbtcSpentTotal(synced.wbtc_spent_total);
+      // 2️⃣ Appeler Edge Function pour sync
+      const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK || 'mainnet';
+      const result = await syncUserBalance(
+        address, 
+        networkConfig === 'testnet4' ? 'testnet4' : 'bitcoin'
+      );
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Synchronisation échouée');
+      }
+      
+      // 3️⃣ Mise à jour des états
+      setWbtcAvailable(result.user.wbtc_balance);
+      setWbtcSpentTotal(result.user.wbtc_spent_total);
       setBtcBalance(confirmedBTC);
       setBtcUnconfirmed(unconfirmedBTC);
       
+      // 4️⃣ Message utilisateur
       let message = 
-        `Synchronisation réussie !\n\n` +
+        `✅ Synchronisation réussie !\n\n` +
         `BTC confirmé : ${confirmedBTC.toFixed(8)} BTC\n` +
-        `wBTC disponible : ${synced.wbtc_available.toFixed(8)} wBTC\n` +
-        `Total dépensé : ${synced.wbtc_spent_total.toFixed(8)} wBTC\n` +
-        `Parties restantes : ${Math.floor(synced.wbtc_available / 0.000001)}`;
+        `wBTC disponible : ${result.user.wbtc_balance.toFixed(8)} wBTC\n` +
+        `Total dépensé : ${result.user.wbtc_spent_total.toFixed(8)} wBTC\n` +
+        `Parties restantes : ${Math.floor(result.user.wbtc_balance / 0.000001)}`;
+      
+      if (result.delta !== 0) {
+        const syncType = result.delta > 0 ? 'Rechargement' : 'Retrait';
+        message += `\n\n${syncType} : ${Math.abs(result.delta).toFixed(8)} BTC`;
+      }
       
       if (unconfirmedBTC > 0) {
-        message += `\n\nEn attente : ${unconfirmedBTC.toFixed(8)} BTC (non confirmé)`;
+        message += `\n\nEn attente : ${unconfirmedBTC.toFixed(8)} BTC`;
       }
       
       alert(message);
       
     } catch (err) {
-      if (err.message === 'API_RATE_LIMIT') {
-        setError('Trop de requêtes. Veuillez attendre 1 minute.');
-      } else {
-        setError('Erreur lors de la synchronisation : ' + err.message);
-      }
+      console.error('❌ Erreur synchronisation:', err);
+      setError('Erreur synchronisation : ' + err.message);
     } finally {
       setLoading(false);
     }
   }, [address]);
 
+  /**
+   * 📜 Charger l'historique des transactions
+   * CETTE FONCTION UTILISE L'EDGE FUNCTION user-operations (operation: 'get_history')
+   */
   const loadHistory = useCallback(async () => {
     if (!address) return [];
     
     try {
       setLoading(true);
+      console.log('📜 Chargement historique pour:', address);
+      
       const history = await getTransactionHistory(address, 20);
+      console.log(`✅ ${history.length} transactions récupérées`);
+      
       return history;
     } catch (err) {
-      setError('Erreur lors du chargement de l\'historique : ' + err.message);
+      console.error('❌ Erreur chargement historique:', err);
+      setError('Erreur chargement historique : ' + err.message);
       return [];
     } finally {
       setLoading(false);
     }
   }, [address]);
 
+  /**
+   * 📊 Charger les statistiques utilisateur
+   * CETTE FONCTION UTILISE L'EDGE FUNCTION user-operations (operation: 'get_stats')
+   */
   const loadStats = useCallback(async () => {
     if (!address) return null;
     
     try {
       setLoading(true);
-      const userStats = await getUserStats(address);
-      return userStats;
+      console.log('📊 Chargement stats pour:', address);
+      
+      const stats = await getUserStats(address);
+      console.log('✅ Stats récupérées:', stats);
+      
+      return stats;
     } catch (err) {
-      setError('Erreur lors du chargement des statistiques : ' + err.message);
+      console.error('❌ Erreur chargement stats:', err);
+      setError('Erreur chargement stats : ' + err.message);
       return null;
     } finally {
       setLoading(false);
     }
   }, [address]);
 
-  const saveGameScore = useCallback(async (score) => {
+  /**
+   * 💾 Sauvegarder le score d'une partie
+   * CETTE FONCTION UTILISE L'EDGE FUNCTION user-operations (operation: 'save_score')
+   */
+  const saveGameScoreCallback = useCallback(async (score) => {
     try {
-      await updateGameScore(address, score);
+      console.log('💾 Sauvegarde score:', score);
+      await saveGameScore(address, score);
+      console.log('✅ Score sauvegardé');
     } catch (err) {
-      console.error('Erreur lors de la sauvegarde du score:', err);
+      console.error('❌ Erreur sauvegarde score:', err);
+      // Non bloquant
     }
   }, [address]);
 
@@ -344,6 +384,6 @@ export const useBitcoinBalance = () => {
     manualSync,
     loadHistory,
     loadStats,
-    saveGameScore,
+    saveGameScore: saveGameScoreCallback,
   };
 };
