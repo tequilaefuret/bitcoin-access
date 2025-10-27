@@ -1,18 +1,21 @@
 // ========================================
-// EDGE FUNCTION : verify-and-register
+// EDGE FUNCTION : verify-and-register (VERSION COMPLÈTE AVEC BIP-322)
 // Vérifie signature Bitcoin + Crée compte + Génère JWT
 // ========================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { create } from 'https://deno.land/x/djwt@v2.8/mod.ts';
-import * as bitcoinjsMessage from 'npm:bitcoinjs-message@2.2.0';
 import { Buffer } from 'https://deno.land/std@0.168.0/node/buffer.ts';
+
+// Import librairies de vérification
+import * as bitcoinjsMessage from 'npm:bitcoinjs-message@2.2.0';
+import { Verifier } from 'npm:bip322-js@3.0.0';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const JWT_SECRET = Deno.env.get('SUP_JWT_SECRET') ?? '';
-const JWT_EXPIRATION = Deno.env.get('SUP_JWT_EXPIRATION') ?? '7d'; // Défaut: 7 jours
+const JWT_EXPIRATION = Deno.env.get('SUP_JWT_EXPIRATION') ?? '7d';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -22,7 +25,294 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// === GÉNÉRATION JWT ===
+// ========================================
+// TYPES
+// ========================================
+type AddressType = 'p2pkh' | 'p2sh' | 'p2wpkh' | 'p2wsh' | 'p2tr';
+type SignatureFormat = 'legacy-ecdsa' | 'bip322-simple' | 'bip322-full' | 'unknown';
+type Network = 'mainnet' | 'testnet' | 'regtest';
+
+interface VerificationResult {
+  isValid: boolean;
+  addressType: AddressType;
+  signatureFormat: SignatureFormat;
+  method: string;
+  error?: string;
+}
+
+// ========================================
+// DÉTECTION TYPE ADRESSE (AMÉLIORÉ)
+// ========================================
+function detectAddressType(address: string): { type: AddressType; network: Network } {
+  // Taproot
+  if (address.startsWith('bc1p')) {
+    return { type: 'p2tr', network: 'mainnet' };
+  }
+  if (address.startsWith('tb1p')) {
+    return { type: 'p2tr', network: 'testnet' };
+  }
+  if (address.startsWith('bcrt1p')) {
+    return { type: 'p2tr', network: 'regtest' };
+  }
+
+  // SegWit Native (P2WPKH vs P2WSH)
+  if (address.startsWith('bc1q')) {
+    return { 
+      type: address.length <= 45 ? 'p2wpkh' : 'p2wsh', 
+      network: 'mainnet' 
+    };
+  }
+  if (address.startsWith('tb1q') || address.startsWith('bcrt1q')) {
+    const network = address.startsWith('tb1q') ? 'testnet' : 'regtest';
+    return { 
+      type: address.length <= 45 ? 'p2wpkh' : 'p2wsh', 
+      network 
+    };
+  }
+
+  // P2SH
+  if (address.startsWith('3') || address.startsWith('2')) {
+    return { 
+      type: 'p2sh', 
+      network: address.startsWith('3') ? 'mainnet' : 'testnet' 
+    };
+  }
+
+  // P2PKH Legacy
+  if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) {
+    const network = address.startsWith('1') ? 'mainnet' : 'testnet';
+    return { type: 'p2pkh', network };
+  }
+
+  throw new Error(`Format d'adresse non reconnu: ${address}`);
+}
+
+// ========================================
+// DÉTECTION FORMAT SIGNATURE (CORRIGÉ)
+// ========================================
+function detectSignatureFormat(signature: string): SignatureFormat {
+  let decoded: Buffer;
+  
+  try {
+    decoded = Buffer.from(signature, 'base64');
+  } catch {
+    return 'unknown';
+  }
+
+  // Signature ECDSA classique (65 bytes)
+  if (decoded.length === 65) {
+    const header = decoded[0];
+    
+    if ((header >= 27 && header <= 34) ||
+        (header >= 35 && header <= 38) ||
+        (header >= 39 && header <= 42)) {
+      return 'legacy-ecdsa';
+    }
+  }
+
+  // BIP-322 Simple
+  if (decoded.length > 0 && decoded.length < 200) {
+    const firstByte = decoded[0];
+    if (firstByte >= 1 && firstByte <= 3) {
+      return 'bip322-simple';
+    }
+  }
+
+  // BIP-322 Full
+  if (decoded.length >= 200) {
+    if (decoded.length > 4) {
+      const version = decoded.readUInt32LE(0);
+      if (version === 1 || version === 2) {
+        return 'bip322-full';
+      }
+    }
+  }
+
+  return 'unknown';
+}
+
+// ========================================
+// VÉRIFICATION BIP-322
+// ========================================
+function verifyBIP322(
+  address: string, 
+  message: string, 
+  signature: string
+): { isValid: boolean; error?: string } {
+  try {
+    const isValid = Verifier.verifySignature(address, message, signature, false);
+    return { isValid };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error('❌ Erreur BIP-322:', errorMessage);
+    return { isValid: false, error: errorMessage };
+  }
+}
+
+// ========================================
+// VÉRIFICATION LEGACY
+// ========================================
+function verifyLegacy(
+  address: string, 
+  message: string, 
+  signature: string,
+  addressType: AddressType
+): { isValid: boolean; error?: string } {
+  try {
+    const signatureBuffer = Buffer.from(signature, 'base64');
+    
+    const header = signatureBuffer[0];
+    
+    if (header < 27 || header > 42) {
+      return { 
+        isValid: false, 
+        error: `Header invalide: ${header}. Attendu: 27-42` 
+      };
+    }
+
+    const checkSegwitAlways = (addressType === 'p2wpkh' || addressType === 'p2sh');
+    
+    const isValid = bitcoinjsMessage.verify(
+      message, 
+      address, 
+      signatureBuffer,
+      null,
+      checkSegwitAlways
+    );
+    
+    return { isValid };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error('❌ Erreur Legacy:', errorMessage);
+    return { isValid: false, error: errorMessage };
+  }
+}
+
+// ========================================
+// ROUTEUR PRINCIPAL DE VÉRIFICATION
+// ========================================
+function verifyBitcoinSignature(
+  address: string, 
+  message: string, 
+  signature: string
+): VerificationResult {
+  
+  if (!address || !message || !signature) {
+    return {
+      isValid: false,
+      addressType: 'p2pkh',
+      signatureFormat: 'unknown',
+      method: 'none',
+      error: 'Paramètres manquants'
+    };
+  }
+
+  let addressInfo: { type: AddressType; network: Network };
+  
+  try {
+    addressInfo = detectAddressType(address);
+  } catch (err) {
+    return {
+      isValid: false,
+      addressType: 'p2pkh',
+      signatureFormat: 'unknown',
+      method: 'none',
+      error: err instanceof Error ? err.message : 'Adresse invalide'
+    };
+  }
+
+  const signatureFormat = detectSignatureFormat(signature);
+
+  console.log('🔍 Type adresse:', addressInfo.type);
+  console.log('🔍 Réseau:', addressInfo.network);
+  console.log('🔍 Format signature:', signatureFormat);
+
+  // === RÈGLES DE ROUTAGE ===
+
+  // RÈGLE 1 : Taproot → OBLIGATOIREMENT BIP-322
+  if (addressInfo.type === 'p2tr') {
+    if (signatureFormat === 'legacy-ecdsa') {
+      return {
+        isValid: false,
+        addressType: addressInfo.type,
+        signatureFormat,
+        method: 'none',
+        error: 'Les adresses Taproot nécessitent des signatures BIP-322'
+      };
+    }
+    
+    const result = verifyBIP322(address, message, signature);
+    return {
+      isValid: result.isValid,
+      addressType: addressInfo.type,
+      signatureFormat,
+      method: 'bip322',
+      error: result.error
+    };
+  }
+
+  // RÈGLE 2 : P2WSH → OBLIGATOIREMENT BIP-322
+  if (addressInfo.type === 'p2wsh') {
+    const result = verifyBIP322(address, message, signature);
+    return {
+      isValid: result.isValid,
+      addressType: addressInfo.type,
+      signatureFormat,
+      method: 'bip322',
+      error: result.error
+    };
+  }
+
+  // RÈGLE 3 : Signature BIP-322 détectée
+  if (signatureFormat === 'bip322-simple' || signatureFormat === 'bip322-full') {
+    const result = verifyBIP322(address, message, signature);
+    return {
+      isValid: result.isValid,
+      addressType: addressInfo.type,
+      signatureFormat,
+      method: 'bip322',
+      error: result.error
+    };
+  }
+
+  // RÈGLE 4 : Signature ECDSA Legacy
+  if (signatureFormat === 'legacy-ecdsa') {
+    const result = verifyLegacy(address, message, signature, addressInfo.type);
+    return {
+      isValid: result.isValid,
+      addressType: addressInfo.type,
+      signatureFormat,
+      method: 'legacy',
+      error: result.error
+    };
+  }
+
+  // RÈGLE 5 : Format inconnu → Tentative gracieuse
+  console.warn('⚠️ Format inconnu, tentative avec les deux méthodes');
+  
+  const bip322Result = verifyBIP322(address, message, signature);
+  if (bip322Result.isValid) {
+    return {
+      isValid: true,
+      addressType: addressInfo.type,
+      signatureFormat: 'bip322-simple',
+      method: 'bip322'
+    };
+  }
+
+  const legacyResult = verifyLegacy(address, message, signature, addressInfo.type);
+  return {
+    isValid: legacyResult.isValid,
+    addressType: addressInfo.type,
+    signatureFormat: legacyResult.isValid ? 'legacy-ecdsa' : 'unknown',
+    method: legacyResult.isValid ? 'legacy' : 'none',
+    error: legacyResult.error || bip322Result.error
+  };
+}
+
+// ========================================
+// GÉNÉRATION JWT
+// ========================================
 async function generateJWT(address: string): Promise<string> {
   try {
     const encoder = new TextEncoder();
@@ -36,7 +326,6 @@ async function generateJWT(address: string): Promise<string> {
       ['sign', 'verify']
     );
 
-    // Calcul de l'expiration
     let exp: number | undefined;
     if (JWT_EXPIRATION !== 'never') {
       const now = Math.floor(Date.now() / 1000);
@@ -52,19 +341,18 @@ async function generateJWT(address: string): Promise<string> {
 
     const jwt = await create({ alg: 'HS256', typ: 'JWT' }, payload, key);
     
-    console.log('✅ JWT généré avec succès');
+    console.log('✅ JWT généré');
     return jwt;
     
   } catch (error: any) {
-    console.error('❌ Erreur génération JWT:', error.message);
+    console.error('❌ Erreur JWT:', error.message);
     throw new Error('Échec génération JWT');
   }
 }
 
-// Helper: Parser durée d'expiration
 function parseExpiration(exp: string): number {
   const match = exp.match(/^(\d+)([smhd])$/);
-  if (!match) return 7 * 24 * 60 * 60; // Défaut: 7 jours
+  if (!match) return 7 * 24 * 60 * 60;
   
   const value = parseInt(match[1]);
   const unit = match[2];
@@ -79,26 +367,9 @@ function parseExpiration(exp: string): number {
   return value * multipliers[unit];
 }
 
-// === VÉRIFICATION SIGNATURE BITCOIN ===
-function verifyBitcoinSignature(address: string, message: string, signature: string): boolean {
-  try {
-    console.log('🔐 Vérification signature Bitcoin...');
-    console.log('📍 Adresse:', address);
-    console.log('📝 Message:', message.substring(0, 50) + '...');
-    
-    const signatureBuffer = Buffer.from(signature, 'base64');
-    const isValid = bitcoinjsMessage.verify(message, address, signatureBuffer);
-    
-    console.log(isValid ? '✅ Signature valide' : '❌ Signature invalide');
-    return isValid;
-    
-  } catch (error: any) {
-    console.error('❌ Erreur vérification signature:', error.message);
-    return false;
-  }
-}
-
-// === RÉCUPÉRATION BALANCE BITCOIN ===
+// ========================================
+// RÉCUPÉRATION BALANCE BITCOIN
+// ========================================
 async function fetchBitcoinBalance(address: string, network: string): Promise<number> {
   let apiUrl: string;
   
@@ -114,7 +385,7 @@ async function fetchBitcoinBalance(address: string, network: string): Promise<nu
   
   if (!response.ok) {
     if (response.status === 404) {
-      return 0; // Adresse valide mais sans transactions
+      return 0;
     }
     throw new Error('Erreur API Mempool.space');
   }
@@ -124,23 +395,10 @@ async function fetchBitcoinBalance(address: string, network: string): Promise<nu
   return confirmedBalance / 100000000;
 }
 
-// === DÉTECTION TYPE D'ADRESSE ===
-function detectAddressType(address: string): string {
-  if (address.startsWith('bc1p') || address.startsWith('tb1p')) {
-    return 'P2TR (Taproot)';
-  } else if (address.startsWith('bc1q') || address.startsWith('tb1q')) {
-    return 'P2WPKH (SegWit)';
-  } else if (address.startsWith('3') || address.startsWith('2')) {
-    return 'P2SH (SegWit wrappé)';
-  } else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) {
-    return 'P2PKH (Legacy)';
-  }
-  return 'Unknown';
-}
-
-// === HANDLER PRINCIPAL ===
+// ========================================
+// HANDLER PRINCIPAL
+// ========================================
 serve(async (req) => {
-  // CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
@@ -152,37 +410,30 @@ serve(async (req) => {
     console.log('📍 Adresse:', address);
     console.log('🌐 Réseau:', network);
 
-    // 1. Validation paramètres
     if (!address || !message || !signature || !network) {
-      throw new Error('Paramètres manquants (address, message, signature, network)');
+      throw new Error('Paramètres manquants');
     }
 
-    // 2. Détecter type d'adresse
-    const addressType = detectAddressType(address);
-    console.log('🏷️ Type adresse:', addressType);
-
-    // 3. Bloquer Taproot (non supporté par bitcoinjs-message)
-    if (addressType.includes('Taproot')) {
+    // Vérifier la signature avec routeur intelligent
+    const verification = verifyBitcoinSignature(address, message, signature);
+    
+    if (!verification.isValid) {
       throw new Error(
-        'Les adresses Taproot (bc1p/tb1p) ne sont pas encore supportées par bitcoinjs-message. ' +
-        'Veuillez utiliser une adresse SegWit (bc1q) ou Legacy.'
+        verification.error || 
+        'Signature invalide. La preuve de propriété a échoué.'
       );
     }
 
-    // 4. Vérifier la signature cryptographiquement
-    const isValidSignature = verifyBitcoinSignature(address, message, signature);
-    
-    if (!isValidSignature) {
-      throw new Error('Signature Bitcoin invalide. La preuve de propriété a échoué.');
-    }
+    console.log('✅ Signature vérifiée');
+    console.log('📊 Type:', verification.addressType);
+    console.log('📊 Format:', verification.signatureFormat);
+    console.log('📊 Méthode:', verification.method);
 
-    console.log('✅ Signature cryptographique vérifiée');
-
-    // 5. Vérifier solde BTC réel
+    // Vérifier solde BTC
     const btcBalance = await fetchBitcoinBalance(address, network);
-    console.log('💰 Solde BTC détecté:', btcBalance);
+    console.log('💰 Solde BTC:', btcBalance);
 
-    // 6. Vérifier si utilisateur existe
+    // Vérifier si utilisateur existe
     const { data: existingUser } = await supabase
       .from('user_balances')
       .select('*')
@@ -192,7 +443,6 @@ serve(async (req) => {
     let userData;
 
     if (existingUser) {
-      // 7a. Utilisateur existe → UPDATE
       console.log('👤 Utilisateur existant, mise à jour...');
       
       const oldBtc = existingUser.btc_balance || 0;
@@ -210,7 +460,9 @@ serve(async (req) => {
             timestamp: Date.now(),
             verified: true,
             verified_at: new Date().toISOString(),
-            addressType: addressType
+            addressType: verification.addressType,
+            signatureFormat: verification.signatureFormat,
+            verificationMethod: verification.method
           },
           last_sync: new Date().toISOString()
         })
@@ -220,7 +472,6 @@ serve(async (req) => {
 
       if (updateError) throw updateError;
 
-      // Créer transaction si delta != 0
       if (delta !== 0) {
         await supabase.from('transactions').insert({
           bitcoin_address: address,
@@ -234,15 +485,14 @@ serve(async (req) => {
       console.log('✅ Utilisateur mis à jour');
       
     } else {
-      // 7b. Nouvel utilisateur → INSERT
-      console.log('🆕 Nouvel utilisateur, création compte...');
+      console.log('🆕 Nouvel utilisateur, création...');
       
       const { data: newUser, error: insertError } = await supabase
         .from('user_balances')
         .insert({
           bitcoin_address: address,
           btc_balance: btcBalance,
-          wbtc_balance: btcBalance, // Initialisation 1:1
+          wbtc_balance: btcBalance,
           wbtc_spent_total: 0,
           signature_proof: {
             message: message,
@@ -250,7 +500,9 @@ serve(async (req) => {
             timestamp: Date.now(),
             verified: true,
             verified_at: new Date().toISOString(),
-            addressType: addressType
+            addressType: verification.addressType,
+            signatureFormat: verification.signatureFormat,
+            verificationMethod: verification.method
           },
           last_sync: new Date().toISOString(),
           created_at: new Date().toISOString()
@@ -264,10 +516,9 @@ serve(async (req) => {
       console.log('✅ Compte créé');
     }
 
-    // 8. Générer JWT
+    // Générer JWT
     const jwt = await generateJWT(address);
 
-    // 9. Retourner résultat complet
     return new Response(
       JSON.stringify({
         valid: true,

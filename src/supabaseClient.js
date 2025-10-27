@@ -60,7 +60,6 @@ export async function verifyAndRegister({ address, message, signature, network }
     // Extraction signature si format objet Xverse
     let signatureString = signature;
     if (typeof signature === 'object' && signature.signature) {
-      console.log('⚠️ Format Xverse détecté');
       signatureString = signature.signature;
     }
     

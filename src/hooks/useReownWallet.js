@@ -171,73 +171,109 @@ export default function useReownWallet() {
   }, [modal]);
 
   /**
-   * Demande une signature de message
-   */
-  const signMessage = useCallback(async (address) => {
-    setError('');
+     * Demande une signature de message
+     */
+    const signMessage = useCallback(async (address) => {
+      setError('');
 
-    try {
-      if (!modal) {
-        throw new Error('Wallet non connecté');
-      }
-
-      const timestamp = Date.now();
-      const message = `Prouver propriété de ${address}\nTimestamp: ${timestamp}`;
-
-      //console.log('📝 Demande de signature:', message);
-
-      const provider = await modal.getWalletProvider();
-      
-      if (!provider) {
-        throw new Error('Provider non disponible');
-      }
-
-      let signature;
-      
       try {
-        signature = await provider.request({
-          method: 'personal_sign',
-          params: [message, address]
-        });
-      } catch (err) {
-        // console.log('⚠️ personal_sign échoué, tentative signMessage...');
-        signature = await provider.request({
-          method: 'signMessage',
-          params: {
-            address: address,
-            message: message
+        if (!modal) {
+          throw new Error('Wallet non connecté');
+        }
+
+        const timestamp = Date.now();
+        const message = `Prouver propriété de ${address}\nTimestamp: ${timestamp}`;
+
+        // DÉTECTION DU RÉSEAU BASÉ SUR L'ADRESSE
+        const network = address.startsWith('tb1') || 
+                        address.startsWith('2') || 
+                        address.startsWith('m') || 
+                        address.startsWith('n')
+          ? 'testnet'
+          : 'mainnet';
+
+        console.log('🌐 Réseau détecté pour signature:', network);
+        console.log('📝 Message à signer:', message);
+        console.log('📍 Adresse:', address);
+
+        const provider = await modal.getWalletProvider();
+        
+        if (!provider) {
+          throw new Error('Provider non disponible');
+        }
+
+        let signature;
+        
+        try {
+          // TENTATIVE 1 : personal_sign avec network
+          signature = await provider.request({
+            method: 'personal_sign',
+            params: [message, address],
+            network: network  // ⚠️ FIX LEATHER
+          });
+          
+          console.log('✅ Signature via personal_sign');
+          
+        } catch (err) {
+          console.log('⚠️ personal_sign échoué, tentative signMessage...');
+          
+          try {
+            // TENTATIVE 2 : signMessage avec network
+            signature = await provider.request({
+              method: 'signMessage',
+              params: {
+                address: address,
+                message: message,
+                network: network  // ⚠️ FIX LEATHER
+              }
+            });
+            
+            console.log('✅ Signature via signMessage');
+            
+          } catch (err2) {
+            console.log('⚠️ signMessage échoué, tentative stacks_signMessage (Leather)...');
+            
+            // TENTATIVE 3 : Méthode spécifique Leather
+            signature = await provider.request({
+              method: 'stacks_signMessage',
+              params: {
+                message: message,
+                network: network  // ⚠️ FIX LEATHER
+              }
+            });
+            
+            console.log('✅ Signature via stacks_signMessage');
           }
-        });
+        }
+
+        if (!signature) {
+          throw new Error('Signature non reçue du wallet');
+        }
+
+        console.log('✅ Signature reçue:', typeof signature === 'object' ? JSON.stringify(signature) : signature.substring(0, 20) + '...');
+
+        return {
+          message: message,
+          signature: signature,
+          timestamp: timestamp,
+          address: address
+        };
+
+      } catch (err) {
+        console.error('❌ Erreur signature:', err);
+        
+        if (err.message?.includes('not supported') || err.message?.includes('MethodNotSupported')) {
+          setError('Ce wallet ne supporte pas la signature de messages');
+          throw new Error('Wallet non compatible avec la signature de messages');
+        } else if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+          setError('Signature refusée par l\'utilisateur');
+          throw new Error('Signature refusée par l\'utilisateur');
+        } else {
+          setError('Erreur lors de la signature');
+          throw err;
+        }
       }
-
-      if (!signature) {
-        throw new Error('Signature non reçue du wallet');
-      }
-
-      // console.log('✅ Signature reçue');
-
-      return {
-        message: message,
-        signature: signature,
-        timestamp: timestamp,
-        address: address
-      };
-
-    } catch (err) {
-      // console.error('❌ Erreur signature:', err);
-      
-      if (err.message?.includes('not supported') || err.message?.includes('MethodNotSupported')) {
-        setError('Ce wallet ne supporte pas la signature de messages');
-        throw new Error('Wallet non compatible avec la signature de messages');
-      } else if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
-        setError('Signature refusée par l\'utilisateur');
-        throw new Error('Signature refusée par l\'utilisateur');
-      } else {
-        setError('Erreur lors de la signature');
-        throw err;
-      }
-    }
-  }, [modal]);
+    }, [modal]);
 
   /**
    * Déconnecte le wallet
