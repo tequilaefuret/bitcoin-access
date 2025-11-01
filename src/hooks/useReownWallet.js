@@ -218,7 +218,6 @@ export default function useReownWallet() {
       console.log('📝 Message à signer:', message);
       console.log('📍 Adresse:', address);
 
-      // 🆕 VÉRIFICATION COHÉRENCE ADRESSE/RÉSEAU
       const addressNetwork = address.startsWith('bc1') || 
                             address.startsWith('1') || 
                             address.startsWith('3')
@@ -242,19 +241,75 @@ export default function useReownWallet() {
 
       let signature;
       
-      // 🆕 DÉTECTION OKX WALLET
-      const isOKX = provider.isOkxWallet || 
-                    provider.name?.toLowerCase().includes('okx') ||
-                    window.okxwallet;
+      // 🆕 DÉTECTION AMÉLIORÉE DES WALLETS
+      // Ordre d'importance : Phantom > OKX > Autres
+      
+      // 1️⃣ PHANTOM WALLET (Priorité haute - détecté en premier)
+      const isPhantom = window.phantom?.bitcoin !== undefined;
+      
+      // 2️⃣ OKX WALLET (Vérification stricte)
+      const isOKX = (provider.isOkxWallet === true || 
+                    window.okxwallet !== undefined) && 
+                    !isPhantom; // Exclure Phantom
 
-      if (isOKX) {
-        console.log('✅ OKX Wallet détecté, utilisation API native');
+      console.log('🔍 Détection wallet:', {
+        isPhantom,
+        isOKX,
+        providerName: provider.name
+      });
+
+      if (isPhantom) {
+        console.log('👻 Phantom Wallet détecté, utilisation API native');
         
         try {
-          // OKX utilise directement window.okxwallet
+          // Documentation Phantom : https://docs.phantom.com/bitcoin/signing-a-message
+          const phantomProvider = window.phantom.bitcoin;
+          
+          // Vérifier que le compte est connecté
+          const accounts = await phantomProvider.requestAccounts();
+          
+          if (!accounts || accounts.length === 0) {
+            throw new Error('Aucun compte Phantom connecté');
+          }
+          
+          console.log('📱 Comptes Phantom:', accounts);
+          
+          // Signer le message avec Phantom
+          // Format attendu : { message: string, address: string }
+          const signResult = await phantomProvider.signMessage(address, message);
+          
+          // Phantom retourne { signature: string, address: string }
+          signature = signResult.signature;
+          
+          console.log('✅ Signature Phantom reçue');
+        } catch (err) {
+          console.error('❌ Erreur signature Phantom:', err);
+          throw new Error('Phantom Wallet: Signature refusée ou non supportée');
+        }
+      } 
+      else if (isOKX) {
+        console.log('🟠 OKX Wallet détecté, utilisation API native');
+        
+        try {
           if (window.okxwallet && window.okxwallet.bitcoin) {
+            // Détecter le type d'adresse pour OKX
+            let addressType = 'segwit_native';
+            
+            if (address.startsWith('bc1p') || address.startsWith('tb1p')) {
+              addressType = 'taproot';
+            } else if (address.startsWith('bc1q') || address.startsWith('tb1q')) {
+              addressType = 'segwit_native';
+            } else if (address.startsWith('3') || address.startsWith('2')) {
+              addressType = 'segwit_nested';
+            } else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) {
+              addressType = 'legacy';
+            }
+            
+            console.log('📍 Type adresse détecté:', addressType);
+            
             signature = await window.okxwallet.bitcoin.signMessage(message, {
-              from: address
+              from: address,
+              type: addressType
             });
             
             console.log('✅ Signature OKX reçue');
@@ -265,8 +320,11 @@ export default function useReownWallet() {
           console.error('❌ Erreur signature OKX:', err);
           throw new Error('OKX Wallet: Signature refusée ou non supportée');
         }
-      } else {
-        // POUR LES AUTRES WALLETS (Leather, Xverse, etc.)
+      } 
+      else {
+        // 3️⃣ AUTRES WALLETS (Xverse, Leather, etc.)
+        console.log('🔐 Wallet standard détecté, utilisation provider.request()');
+        
         try {
           signature = await provider.request({
             method: 'personal_sign',
@@ -332,7 +390,7 @@ export default function useReownWallet() {
       } else if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
         setError('Signature refusée par l\'utilisateur');
         throw new Error('Signature refusée');
-      } else if (err.message?.includes('OKX')) {
+      } else if (err.message?.includes('OKX') || err.message?.includes('Phantom')) {
         setError(err.message);
         throw err;
       } else {
