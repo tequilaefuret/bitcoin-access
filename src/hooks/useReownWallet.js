@@ -197,6 +197,40 @@ export default function useReownWallet() {
     }
   }, [modal]);
 
+  // 🎯 STRATÉGIE PAR WALLET - Facile à étendre
+  const WALLET_STRATEGIES = {
+    phantom: {
+      detect: () => window.phantom?.bitcoin?.isPhantom === true,
+      sign: async (address, message) => {
+        const provider = window.phantom.bitcoin;
+        await provider.requestAccounts();
+        
+        // Phantom : encode message + convert signature
+        const encoded = new TextEncoder().encode(message);
+        const result = await provider.signMessage(address, encoded);
+        
+        // Convert Uint8Array to Base64
+        const binString = String.fromCodePoint(...result.signature);
+        return btoa(binString);
+      }
+    },
+    
+    okx: {
+      detect: () => window.okxwallet?.bitcoin !== undefined,
+      sign: async (address, message) => {
+        const provider = window.okxwallet.bitcoin;
+        
+        // Detect address type
+        let addressType = 'segwit_native';
+        if (address.startsWith('bc1p') || address.startsWith('tb1p')) addressType = 'taproot';
+        else if (address.startsWith('3') || address.startsWith('2')) addressType = 'segwit_nested';
+        else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) addressType = 'legacy';
+        
+        return await provider.signMessage(message, { from: address, type: addressType });
+      }
+    }
+  };
+
   /**
    * Demande une signature de message
    */
@@ -204,147 +238,47 @@ export default function useReownWallet() {
     setError('');
 
     try {
-      if (!modal) {
-        throw new Error('Wallet non connecté');
-      }
+      if (!modal) throw new Error('Wallet non connecté');
 
       const timestamp = Date.now();
       const message = `Prouver propriété de ${address}\nTimestamp: ${timestamp}`;
-
       const bitcoinNetwork = process.env.REACT_APP_BITCOIN_NETWORK || 'testnet4';
       const network = (bitcoinNetwork === 'bitcoin' || bitcoinNetwork === 'mainnet') ? 'mainnet' : 'testnet';
 
-      console.log('🌐 Réseau pour signature:', network);
-      console.log('📝 Message à signer:', message);
+      console.log('🌐 Réseau:', network);
+      console.log('📝 Message:', message);
       console.log('📍 Adresse:', address);
 
-      const addressNetwork = address.startsWith('bc1') || 
-                            address.startsWith('1') || 
-                            address.startsWith('3')
-        ? 'mainnet'
-        : 'testnet';
-
+      // Vérif réseau
+      const addressNetwork = address.startsWith('bc1') || address.startsWith('1') || address.startsWith('3') ? 'mainnet' : 'testnet';
       if (addressNetwork !== network) {
-        throw new Error(
-          `Mauvais réseau détecté.\n\n` +
-          `Ce site nécessite ${network}.\n` +
-          `Votre wallet est en ${addressNetwork}.\n\n` +
-          `Veuillez déconnecter et reconnecter avec le bon réseau.`
-        );
+        throw new Error(`Mauvais réseau. Attendu: ${network}, Détecté: ${addressNetwork}`);
       }
 
       const provider = await modal.getWalletProvider();
-      
-      if (!provider) {
-        throw new Error('Provider non disponible');
-      }
+      if (!provider) throw new Error('Provider non disponible');
 
       let signature;
       
-      // 🆕 DÉTECTION AMÉLIORÉE DES WALLETS
-      // Ordre d'importance : Phantom > OKX > Autres
-      
-      // 1️⃣ PHANTOM WALLET (Priorité haute - détecté en premier)
-      const isPhantom = window.phantom?.bitcoin !== undefined;
-      
-      // 2️⃣ OKX WALLET (Vérification stricte)
-      const isOKX = (provider.isOkxWallet === true || 
-                    window.okxwallet !== undefined) && 
-                    !isPhantom; // Exclure Phantom
-
-      console.log('🔍 Détection wallet:', {
-        isPhantom,
-        isOKX,
-        providerName: provider.name
+      // 🎯 DÉTECTION ET EXÉCUTION DE LA STRATÉGIE
+      const walletStrategy = Object.entries(WALLET_STRATEGIES).find(([name, strategy]) => {
+        const detected = strategy.detect();
+        if (detected) console.log(`✅ ${name.toUpperCase()} détecté`);
+        return detected;
       });
 
-      if (isPhantom) {
-        console.log('👻 Phantom Wallet détecté, utilisation API native');
-        
+      if (walletStrategy) {
+        const [walletName, strategy] = walletStrategy;
         try {
-          const phantomProvider = window.phantom.bitcoin;
-          
-          const accounts = await phantomProvider.requestAccounts();
-          
-          if (!accounts || accounts.length === 0) {
-            throw new Error('Aucun compte Phantom connecté');
-          }
-          
-          console.log('📱 Comptes Phantom:', accounts);
-          
-          // Encoder le message en Uint8Array
-          const encoder = new TextEncoder();
-          const messageEncoded = encoder.encode(message);
-          
-          console.log('📝 Message original:', message);
-          console.log('📍 Adresse:', address);
-          
-          // Appel API Phantom
-          const result = await phantomProvider.signMessage(address, messageEncoded);
-          
-          if (!result || !result.signature) {
-            throw new Error('Format de réponse Phantom invalide');
-          }
-          
-          // 🆕 CONVERTIR LA SIGNATURE UINT8ARRAY EN BASE64
-          // Helper function de la doc Phantom
-          const bytesToBase64 = (bytes) => {
-            const binString = String.fromCodePoint(...bytes);
-            return btoa(binString);
-          };
-          
-          signature = bytesToBase64(result.signature);
-          
-          console.log('✅ Signature Phantom reçue et convertie en Base64');
-          console.log('📝 Signature:', signature.substring(0, 30) + '...');
-          
+          signature = await strategy.sign(address, message);
+          console.log(`✅ Signature ${walletName} reçue`);
         } catch (err) {
-          console.error('❌ Erreur signature Phantom:', err);
-          
-          if (err.message?.includes('User rejected') || err.code === 4001) {
-            throw new Error('Signature refusée par l\'utilisateur');
-          } else {
-            throw new Error(`Phantom: ${err.message || 'Signature non supportée'}`);
-          }
+          console.error(`❌ Erreur ${walletName}:`, err);
+          throw new Error(`${walletName}: ${err.message || 'Signature refusée'}`);
         }
-      }
-      else if (isOKX) {
-        console.log('🟠 OKX Wallet détecté, utilisation API native');
-        
-        try {
-          if (window.okxwallet && window.okxwallet.bitcoin) {
-            // Détecter le type d'adresse pour OKX
-            let addressType = 'segwit_native';
-            
-            if (address.startsWith('bc1p') || address.startsWith('tb1p')) {
-              addressType = 'taproot';
-            } else if (address.startsWith('bc1q') || address.startsWith('tb1q')) {
-              addressType = 'segwit_native';
-            } else if (address.startsWith('3') || address.startsWith('2')) {
-              addressType = 'segwit_nested';
-            } else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) {
-              addressType = 'legacy';
-            }
-            
-            console.log('📍 Type adresse détecté:', addressType);
-            
-            signature = await window.okxwallet.bitcoin.signMessage(message, {
-              from: address,
-              type: addressType
-            });
-            
-            console.log('✅ Signature OKX reçue');
-          } else {
-            throw new Error('API OKX Bitcoin non disponible');
-          }
-        } catch (err) {
-          console.error('❌ Erreur signature OKX:', err);
-          throw new Error('OKX Wallet: Signature refusée ou non supportée');
-        }
-      } 
-      else {
-        // 3️⃣ AUTRES WALLETS (Xverse, Leather, etc.)
-        console.log('🔐 Wallet standard détecté, utilisation provider.request()');
+      } else {
+        // 🔄 FALLBACK : Wallets standard (Xverse, Leather, etc.)
+        console.log('🔐 Wallet standard');
         
         try {
           signature = await provider.request({
@@ -352,72 +286,40 @@ export default function useReownWallet() {
             params: [message, address],
             network: network
           });
-          
           console.log('✅ Signature via personal_sign');
-          
         } catch (err) {
-          console.log('⚠️ personal_sign échoué, tentative signMessage...');
-          
           try {
             signature = await provider.request({
               method: 'signMessage',
-              params: {
-                address: address,
-                message: message,
-                network: network
-              }
+              params: { address, message, network }
             });
-            
             console.log('✅ Signature via signMessage');
-            
           } catch (err2) {
-            console.log('⚠️ signMessage échoué, tentative stacks_signMessage...');
-            
             signature = await provider.request({
               method: 'stacks_signMessage',
-              params: {
-                message: message,
-                network: network
-              }
+              params: { message, network }
             });
-            
             console.log('✅ Signature via stacks_signMessage');
           }
         }
       }
 
-      if (!signature) {
-        throw new Error('Signature non reçue du wallet');
-      }
+      if (!signature) throw new Error('Signature non reçue');
 
-      console.log('✅ Signature reçue');
-
-      return {
-        message: message,
-        signature: signature,
-        timestamp: timestamp,
-        address: address
-      };
+      return { message, signature, timestamp, address };
 
     } catch (err) {
-      console.error('❌ Erreur signature:', err);
+      console.error('❌ Erreur:', err);
       
-      if (err.message?.includes('Mauvais réseau')) {
+      if (err.message?.includes('réseau')) {
         setError(err.message);
-        throw err;
-      } else if (err.message?.includes('not supported') || err.message?.includes('MethodNotSupported')) {
-        setError('Ce wallet ne supporte pas la signature de messages');
-        throw new Error('Wallet non compatible');
-      } else if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
+      } else if (err.message?.includes('rejected') || err.message?.includes('refusée')) {
         setError('Signature refusée par l\'utilisateur');
-        throw new Error('Signature refusée');
-      } else if (err.message?.includes('OKX') || err.message?.includes('Phantom')) {
-        setError(err.message);
-        throw err;
       } else {
-        setError('Erreur lors de la signature');
-        throw err;
+        setError(err.message || 'Erreur signature');
       }
+      
+      throw err;
     }
   }, [modal]);
 
