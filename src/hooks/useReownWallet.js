@@ -262,7 +262,6 @@ export default function useReownWallet() {
         console.log('👻 Phantom Wallet détecté, utilisation API native');
         
         try {
-          // Documentation Phantom : https://docs.phantom.com/bitcoin/signing-a-message
           const phantomProvider = window.phantom.bitcoin;
           
           // Vérifier que le compte est connecté
@@ -274,19 +273,57 @@ export default function useReownWallet() {
           
           console.log('📱 Comptes Phantom:', accounts);
           
-          // Signer le message avec Phantom
-          // Format attendu : { message: string, address: string }
-          const signResult = await phantomProvider.signMessage(address, message);
+          // 🆕 MÉTHODE CORRECTE POUR PHANTOM
+          // Phantom attend : signMessage(address, message) 
+          // où address est l'adresse publique (pas l'objet account)
           
-          // Phantom retourne { signature: string, address: string }
-          signature = signResult.signature;
+          // Trouver le bon compte correspondant à l'adresse
+          const account = accounts.find(acc => 
+            acc.address === address || 
+            acc.publicKey === address
+          );
           
-          console.log('✅ Signature Phantom reçue');
+          if (!account) {
+            console.warn('⚠️ Adresse non trouvée dans les comptes, utilisation directe');
+          }
+          
+          console.log('📝 Signature avec adresse:', address);
+          console.log('📝 Message:', message);
+          console.log('🔍 DEBUG PHANTOM:');
+          console.log('- phantomProvider exists:', !!phantomProvider);
+          console.log('- signMessage exists:', typeof phantomProvider.signMessage);
+          console.log('- address type:', typeof address, address);
+          console.log('- message type:', typeof message, message);
+          console.log('- message length:', message.length);
+          
+          // Appel API Phantom - syntaxe correcte
+          const result = await phantomProvider.signMessage(address, message);
+          
+          // Phantom retourne { signature: string }
+          if (result && result.signature) {
+            signature = result.signature;
+            console.log('✅ Signature Phantom reçue:', signature.substring(0, 20) + '...');
+          } else {
+            throw new Error('Format de réponse Phantom invalide');
+          }
+          
         } catch (err) {
           console.error('❌ Erreur signature Phantom:', err);
-          throw new Error('Phantom Wallet: Signature refusée ou non supportée');
+          
+          // Log détaillé pour debug
+          console.error('Détails erreur:', {
+            message: err.message,
+            code: err.code,
+            stack: err.stack
+          });
+          
+          if (err.message?.includes('User rejected') || err.code === 4001) {
+            throw new Error('Signature refusée par l\'utilisateur');
+          } else {
+            throw new Error(`Phantom Wallet: ${err.message || 'Signature non supportée'}`);
+          }
         }
-      } 
+      }
       else if (isOKX) {
         console.log('🟠 OKX Wallet détecté, utilisation API native');
         
