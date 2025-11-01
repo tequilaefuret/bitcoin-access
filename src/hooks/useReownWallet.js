@@ -272,23 +272,31 @@ export default function useReownWallet() {
           
           console.log('📱 Comptes Phantom:', accounts);
           
-          // 🆕 ENCODER LE MESSAGE EN UINT8ARRAY (requis par Phantom)
+          // Encoder le message en Uint8Array
           const encoder = new TextEncoder();
           const messageEncoded = encoder.encode(message);
           
           console.log('📝 Message original:', message);
-          console.log('📝 Message encodé:', messageEncoded);
           console.log('📍 Adresse:', address);
           
-          // Syntaxe correcte : signMessage(address, encodedMessage)
+          // Appel API Phantom
           const result = await phantomProvider.signMessage(address, messageEncoded);
           
-          if (result && result.signature) {
-            signature = result.signature;
-            console.log('✅ Signature Phantom reçue');
-          } else {
+          if (!result || !result.signature) {
             throw new Error('Format de réponse Phantom invalide');
           }
+          
+          // 🆕 CONVERTIR LA SIGNATURE UINT8ARRAY EN BASE64
+          // Helper function de la doc Phantom
+          const bytesToBase64 = (bytes) => {
+            const binString = String.fromCodePoint(...bytes);
+            return btoa(binString);
+          };
+          
+          signature = bytesToBase64(result.signature);
+          
+          console.log('✅ Signature Phantom reçue et convertie en Base64');
+          console.log('📝 Signature:', signature.substring(0, 30) + '...');
           
         } catch (err) {
           console.error('❌ Erreur signature Phantom:', err);
