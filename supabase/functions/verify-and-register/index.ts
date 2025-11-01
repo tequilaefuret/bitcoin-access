@@ -1,15 +1,11 @@
 // ========================================
-// EDGE FUNCTION : verify-and-register (VERSION COMPLÈTE AVEC BIP-322)
+// EDGE FUNCTION : verify-and-register (BIP-322 ONLY)
 // Vérifie signature Bitcoin + Crée compte + Génère JWT
 // ========================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { create } from 'https://deno.land/x/djwt@v2.8/mod.ts';
-import { Buffer } from 'https://deno.land/std@0.168.0/node/buffer.ts';
-
-// Import librairies de vérification
-import * as bitcoinjsMessage from 'npm:bitcoinjs-message@2.2.0';
 import { Verifier } from 'npm:bip322-js@3.0.0';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
@@ -29,19 +25,17 @@ const corsHeaders = {
 // TYPES
 // ========================================
 type AddressType = 'p2pkh' | 'p2sh' | 'p2wpkh' | 'p2wsh' | 'p2tr';
-type SignatureFormat = 'legacy-ecdsa' | 'bip322-simple' | 'bip322-full' | 'unknown';
 type Network = 'mainnet' | 'testnet' | 'regtest';
 
 interface VerificationResult {
   isValid: boolean;
   addressType: AddressType;
-  signatureFormat: SignatureFormat;
-  method: string;
+  network: Network;
   error?: string;
 }
 
 // ========================================
-// DÉTECTION TYPE ADRESSE (AMÉLIORÉ)
+// DÉTECTION TYPE ADRESSE
 // ========================================
 function detectAddressType(address: string): { type: AddressType; network: Network } {
   // Taproot
@@ -88,108 +82,7 @@ function detectAddressType(address: string): { type: AddressType; network: Netwo
 }
 
 // ========================================
-// DÉTECTION FORMAT SIGNATURE (CORRIGÉ)
-// ========================================
-function detectSignatureFormat(signature: string): SignatureFormat {
-  let decoded: Buffer;
-  
-  try {
-    decoded = Buffer.from(signature, 'base64');
-  } catch {
-    return 'unknown';
-  }
-
-  // Signature ECDSA classique (65 bytes)
-  if (decoded.length === 65) {
-    const header = decoded[0];
-    
-    if ((header >= 27 && header <= 34) ||
-        (header >= 35 && header <= 38) ||
-        (header >= 39 && header <= 42)) {
-      return 'legacy-ecdsa';
-    }
-  }
-
-  // BIP-322 Simple
-  if (decoded.length > 0 && decoded.length < 200) {
-    const firstByte = decoded[0];
-    if (firstByte >= 1 && firstByte <= 3) {
-      return 'bip322-simple';
-    }
-  }
-
-  // BIP-322 Full
-  if (decoded.length >= 200) {
-    if (decoded.length > 4) {
-      const version = decoded.readUInt32LE(0);
-      if (version === 1 || version === 2) {
-        return 'bip322-full';
-      }
-    }
-  }
-
-  return 'unknown';
-}
-
-// ========================================
-// VÉRIFICATION BIP-322
-// ========================================
-function verifyBIP322(
-  address: string, 
-  message: string, 
-  signature: string
-): { isValid: boolean; error?: string } {
-  try {
-    const isValid = Verifier.verifySignature(address, message, signature, false);
-    return { isValid };
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('❌ Erreur BIP-322:', errorMessage);
-    return { isValid: false, error: errorMessage };
-  }
-}
-
-// ========================================
-// VÉRIFICATION LEGACY
-// ========================================
-function verifyLegacy(
-  address: string, 
-  message: string, 
-  signature: string,
-  addressType: AddressType
-): { isValid: boolean; error?: string } {
-  try {
-    const signatureBuffer = Buffer.from(signature, 'base64');
-    
-    const header = signatureBuffer[0];
-    
-    if (header < 27 || header > 42) {
-      return { 
-        isValid: false, 
-        error: `Header invalide: ${header}. Attendu: 27-42` 
-      };
-    }
-
-    const checkSegwitAlways = (addressType === 'p2wpkh' || addressType === 'p2sh');
-    
-    const isValid = bitcoinjsMessage.verify(
-      message, 
-      address, 
-      signatureBuffer,
-      null,
-      checkSegwitAlways
-    );
-    
-    return { isValid };
-  } catch (err) {
-    const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('❌ Erreur Legacy:', errorMessage);
-    return { isValid: false, error: errorMessage };
-  }
-}
-
-// ========================================
-// ROUTEUR PRINCIPAL DE VÉRIFICATION
+// VÉRIFICATION BIP-322 (UNIVERSAL)
 // ========================================
 function verifyBitcoinSignature(
   address: string, 
@@ -201,8 +94,7 @@ function verifyBitcoinSignature(
     return {
       isValid: false,
       addressType: 'p2pkh',
-      signatureFormat: 'unknown',
-      method: 'none',
+      network: 'mainnet',
       error: 'Paramètres manquants'
     };
   }
@@ -215,99 +107,49 @@ function verifyBitcoinSignature(
     return {
       isValid: false,
       addressType: 'p2pkh',
-      signatureFormat: 'unknown',
-      method: 'none',
+      network: 'mainnet',
       error: err instanceof Error ? err.message : 'Adresse invalide'
     };
   }
 
-  const signatureFormat = detectSignatureFormat(signature);
-
   console.log('🔍 Type adresse:', addressInfo.type);
   console.log('🔍 Réseau:', addressInfo.network);
-  console.log('🔍 Format signature:', signatureFormat);
 
-  // === RÈGLES DE ROUTAGE ===
-
-  // RÈGLE 1 : Taproot → OBLIGATOIREMENT BIP-322
-  if (addressInfo.type === 'p2tr') {
-    if (signatureFormat === 'legacy-ecdsa') {
+  // ✅ BIP-322 supporte TOUS les formats (legacy, segwit, taproot)
+  try {
+    console.log('🔐 Vérification BIP-322...');
+    
+    // Le 3ème paramètre (false) permet d'accepter les signatures legacy aussi
+    const isValid = Verifier.verifySignature(address, message, signature, false);
+    
+    if (isValid) {
+      console.log('✅ Signature BIP-322 valide');
+      return {
+        isValid: true,
+        addressType: addressInfo.type,
+        network: addressInfo.network
+      };
+    } else {
+      console.log('❌ Signature BIP-322 invalide');
       return {
         isValid: false,
         addressType: addressInfo.type,
-        signatureFormat,
-        method: 'none',
-        error: 'Les adresses Taproot nécessitent des signatures BIP-322'
+        network: addressInfo.network,
+        error: 'Signature invalide'
       };
     }
     
-    const result = verifyBIP322(address, message, signature);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error('❌ Erreur BIP-322:', errorMessage);
+    
     return {
-      isValid: result.isValid,
+      isValid: false,
       addressType: addressInfo.type,
-      signatureFormat,
-      method: 'bip322',
-      error: result.error
+      network: addressInfo.network,
+      error: `Erreur de vérification: ${errorMessage}`
     };
   }
-
-  // RÈGLE 2 : P2WSH → OBLIGATOIREMENT BIP-322
-  if (addressInfo.type === 'p2wsh') {
-    const result = verifyBIP322(address, message, signature);
-    return {
-      isValid: result.isValid,
-      addressType: addressInfo.type,
-      signatureFormat,
-      method: 'bip322',
-      error: result.error
-    };
-  }
-
-  // RÈGLE 3 : Signature BIP-322 détectée
-  if (signatureFormat === 'bip322-simple' || signatureFormat === 'bip322-full') {
-    const result = verifyBIP322(address, message, signature);
-    return {
-      isValid: result.isValid,
-      addressType: addressInfo.type,
-      signatureFormat,
-      method: 'bip322',
-      error: result.error
-    };
-  }
-
-  // RÈGLE 4 : Signature ECDSA Legacy
-  if (signatureFormat === 'legacy-ecdsa') {
-    const result = verifyLegacy(address, message, signature, addressInfo.type);
-    return {
-      isValid: result.isValid,
-      addressType: addressInfo.type,
-      signatureFormat,
-      method: 'legacy',
-      error: result.error
-    };
-  }
-
-  // RÈGLE 5 : Format inconnu → Tentative gracieuse
-  console.warn('⚠️ Format inconnu, tentative avec les deux méthodes');
-  
-  const bip322Result = verifyBIP322(address, message, signature);
-  if (bip322Result.isValid) {
-    return {
-      isValid: true,
-      addressType: addressInfo.type,
-      signatureFormat: 'bip322-simple',
-      method: 'bip322'
-    };
-  }
-
-  const legacyResult = verifyLegacy(address, message, signature, addressInfo.type);
-  return {
-    isValid: legacyResult.isValid,
-    addressType: addressInfo.type,
-    signatureFormat: legacyResult.isValid ? 'legacy-ecdsa' : 'unknown',
-    method: legacyResult.isValid ? 'legacy' : 'none',
-    error: legacyResult.error || bip322Result.error
-  };
 }
 
 // ========================================
@@ -414,7 +256,7 @@ serve(async (req) => {
       throw new Error('Paramètres manquants');
     }
 
-    // Vérifier la signature avec routeur intelligent
+    // Vérifier la signature avec BIP-322 (supporte tous les formats)
     const verification = verifyBitcoinSignature(address, message, signature);
     
     if (!verification.isValid) {
@@ -426,8 +268,7 @@ serve(async (req) => {
 
     console.log('✅ Signature vérifiée');
     console.log('📊 Type:', verification.addressType);
-    console.log('📊 Format:', verification.signatureFormat);
-    console.log('📊 Méthode:', verification.method);
+    console.log('📊 Réseau:', verification.network);
 
     // Vérifier solde BTC
     const btcBalance = await fetchBitcoinBalance(address, network);
@@ -461,8 +302,7 @@ serve(async (req) => {
             verified: true,
             verified_at: new Date().toISOString(),
             addressType: verification.addressType,
-            signatureFormat: verification.signatureFormat,
-            verificationMethod: verification.method
+            network: verification.network
           },
           last_sync: new Date().toISOString()
         })
@@ -501,8 +341,7 @@ serve(async (req) => {
             verified: true,
             verified_at: new Date().toISOString(),
             addressType: verification.addressType,
-            signatureFormat: verification.signatureFormat,
-            verificationMethod: verification.method
+            network: verification.network
           },
           last_sync: new Date().toISOString(),
           created_at: new Date().toISOString()

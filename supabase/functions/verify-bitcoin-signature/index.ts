@@ -1,15 +1,11 @@
 // ========================================
-// SUPABASE EDGE FUNCTION : verify-bitcoin-signature
+// SUPABASE EDGE FUNCTION : verify-bitcoin-signature (BIP-322)
 // Fichier : supabase/functions/verify-bitcoin-signature/index.ts
 // ========================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { Buffer } from 'https://deno.land/std@0.168.0/node/buffer.ts';
-// Import bitcoinjs-message pour la vérification cryptographique
-// @ts-ignore
-// import * as bitcoinMessage from 'https://esm.sh/bitcoinjs-message@2.2.0';
-import bitcoinMessage from 'npm:bitcoinjs-message@2.2.0';
+import { Verifier } from 'npm:bip322-js@3.0.0';
 
 // ========================================
 // CONFIGURATION
@@ -17,15 +13,19 @@ import bitcoinMessage from 'npm:bitcoinjs-message@2.2.0';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-// Client Supabase avec clé service_role pour bypass RLS
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-// Headers CORS
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// ========================================
+// TYPES
+// ========================================
+type AddressType = 'p2pkh' | 'p2sh' | 'p2wpkh' | 'p2wsh' | 'p2tr';
+type Network = 'mainnet' | 'testnet' | 'regtest';
 
 // ========================================
 // UTILITAIRES
@@ -34,28 +34,48 @@ const corsHeaders = {
 /**
  * Détecte le type d'adresse Bitcoin
  */
-function detectAddressType(address: string): string {
-  if (address.startsWith('1')) return 'P2PKH (Legacy)';
-  if (address.startsWith('3')) return 'P2SH';
-  if (address.startsWith('bc1q') || address.startsWith('tb1q')) return 'P2WPKH (SegWit)';
-  if (address.startsWith('bc1p') || address.startsWith('tb1p')) return 'P2TR (Taproot)';
-  return 'Unknown';
-}
+function detectAddressType(address: string): { type: AddressType; network: Network; label: string } {
+  // Taproot
+  if (address.startsWith('bc1p')) {
+    return { type: 'p2tr', network: 'mainnet', label: 'P2TR (Taproot)' };
+  }
+  if (address.startsWith('tb1p')) {
+    return { type: 'p2tr', network: 'testnet', label: 'P2TR (Taproot)' };
+  }
 
-/**
- * Vérifie si une adresse est au format Taproot
- */
-function isTaprootAddress(address: string): boolean {
-  return address.startsWith('bc1p') || address.startsWith('tb1p');
-}
+  // SegWit Native
+  if (address.startsWith('bc1q')) {
+    return { 
+      type: address.length <= 45 ? 'p2wpkh' : 'p2wsh', 
+      network: 'mainnet',
+      label: address.length <= 45 ? 'P2WPKH (SegWit)' : 'P2WSH (SegWit)'
+    };
+  }
+  if (address.startsWith('tb1q')) {
+    return { 
+      type: address.length <= 45 ? 'p2wpkh' : 'p2wsh', 
+      network: 'testnet',
+      label: address.length <= 45 ? 'P2WPKH (SegWit)' : 'P2WSH (SegWit)'
+    };
+  }
 
-/**
- * Valide le format de la signature (Base64)
- */
-function isValidSignatureFormat(signature: string): boolean {
-  // Signature Bitcoin compacte = 65 bytes en Base64 = ~88 caractères
-  const base64Regex = /^[A-Za-z0-9+/]+=*$/;
-  return base64Regex.test(signature) && signature.length >= 80 && signature.length <= 100;
+  // P2SH
+  if (address.startsWith('3')) {
+    return { type: 'p2sh', network: 'mainnet', label: 'P2SH' };
+  }
+  if (address.startsWith('2')) {
+    return { type: 'p2sh', network: 'testnet', label: 'P2SH' };
+  }
+
+  // Legacy
+  if (address.startsWith('1')) {
+    return { type: 'p2pkh', network: 'mainnet', label: 'P2PKH (Legacy)' };
+  }
+  if (address.startsWith('m') || address.startsWith('n')) {
+    return { type: 'p2pkh', network: 'testnet', label: 'P2PKH (Legacy)' };
+  }
+
+  throw new Error(`Format d'adresse non reconnu: ${address}`);
 }
 
 // ========================================
@@ -63,92 +83,59 @@ function isValidSignatureFormat(signature: string): boolean {
 // ========================================
 
 /**
- * Vérifie cryptographiquement une signature Bitcoin
- * Utilise bitcoinjs-message pour la vérification réelle
+ * Vérifie cryptographiquement une signature Bitcoin avec BIP-322
+ * Supporte TOUS les types d'adresses : Legacy, SegWit, Taproot
  */
 async function verifyBitcoinSignature(
   address: string,
   message: string,
   signature: string,
   network: string
-): Promise<{ valid: boolean; error?: string; addressType?: string }> {
+): Promise<{ valid: boolean; error?: string; addressType?: string; addressLabel?: string }> {
   try {
     // 1. Détection du type d'adresse
-    const addressType = detectAddressType(address);
-    console.log(`🔍 Type d'adresse détecté: ${addressType} (${address.slice(0, 10)}...)`);
+    const addressInfo = detectAddressType(address);
+    console.log(`🔍 Type d'adresse: ${addressInfo.label} (${address.slice(0, 10)}...)`);
+    console.log(`🌐 Réseau détecté: ${addressInfo.network}`);
 
-    // 2. Extraire la signature si elle vient d'un objet Xverse
+    // 2. Extraire la signature si elle vient d'un objet (format Xverse/OKX)
     let signatureString = signature;
     if (typeof signature === 'object' && signature.signature) {
-      console.log('⚠️ Format Xverse détecté, extraction de la signature...');
+      console.log('⚠️ Format objet détecté, extraction de la signature...');
       signatureString = signature.signature;
     }
 
-    // 3. Vérification format signature
-    if (!isValidSignatureFormat(signatureString)) {
-      console.log('❌ Format de signature invalide');
-      return { 
-        valid: false, 
-        error: 'Format de signature invalide (Base64 attendu)',
-        addressType 
-      };
-    }
-
-    // 4. Rejet des adresses Taproot (non supportées pour message signing)
-    if (isTaprootAddress(address)) {
-      console.log('⚠️ Adresse Taproot détectée - Signature de message non supportée');
-      return {
-        valid: false,
-        error: 'Les adresses Taproot (bc1p/tb1p) ne supportent pas la signature de message standard. Veuillez utiliser une adresse SegWit (bc1q) ou Legacy.',
-        addressType
-      };
-    }
-
-    // 5. Configuration du réseau pour bitcoinjs-message
-    let networkPrefix: any;
-
-    if (network === 'testnet4' || network === 'testnet') {
-      console.log(`🔐 Vérification signature sur ${network}...`);
-      // 🆕 Pour testnet, on laisse undefined (détection auto)
-      networkPrefix = undefined;
-    } else {
-      console.log('🔐 Vérification signature sur mainnet...');
-      networkPrefix = undefined; // Pour mainnet aussi (défaut bitcoin)
-    }
-
-    // 6. Conversion signature en Buffer
-    const signatureBuffer = Buffer.from(signatureString, 'base64');
-
-    // 7. Vérification - Passer SEULEMENT 3 paramètres
-    const isValid = bitcoinMessage.verify(
-      message,
-      address,
-      signatureBuffer
-    );
+    // 3. Vérification avec BIP-322 (supporte tous les formats)
+    console.log('🔐 Vérification signature BIP-322...');
+    
+    // Le 4ème paramètre (false) permet d'accepter les signatures legacy aussi
+    const isValid = Verifier.verifySignature(address, message, signatureString, false);
 
     if (isValid) {
       console.log('✅ Signature cryptographiquement valide !');
       return { 
         valid: true, 
-        addressType 
+        addressType: addressInfo.type,
+        addressLabel: addressInfo.label
       };
     } else {
       console.log('❌ Signature cryptographiquement invalide');
       return { 
         valid: false, 
         error: 'Signature cryptographiquement invalide - La signature ne correspond pas à l\'adresse',
-        addressType 
+        addressType: addressInfo.type,
+        addressLabel: addressInfo.label
       };
     }
 
   } catch (error: any) {
-    console.error('❌ Erreur lors de la vérification cryptographique:', error);
+    console.error('❌ Erreur lors de la vérification:', error);
     
     // Gestion des erreurs spécifiques
-    if (error.message?.includes('checksum')) {
+    if (error.message?.includes('Invalid address')) {
       return { 
         valid: false, 
-        error: 'Adresse Bitcoin invalide (erreur de checksum)'
+        error: 'Adresse Bitcoin invalide'
       };
     }
     
@@ -223,7 +210,8 @@ serve(async (req) => {
         JSON.stringify({ 
           valid: false,
           error: verificationResult.error || 'Signature invalide',
-          addressType: verificationResult.addressType
+          addressType: verificationResult.addressType,
+          addressLabel: verificationResult.addressLabel
         }),
         { 
           status: 401,
@@ -242,7 +230,8 @@ serve(async (req) => {
       timestamp: Date.now(),
       verified: true,
       verified_at: new Date().toISOString(),
-      addressType: verificationResult.addressType
+      addressType: verificationResult.addressType,
+      addressLabel: verificationResult.addressLabel
     };
 
     const { error: dbError } = await supabase
@@ -268,13 +257,14 @@ serve(async (req) => {
     }
 
     // 🎉 Succès total !
-    console.log('✅ Signature vérifiée cryptographiquement et enregistrée avec succès');
+    console.log('✅ Signature vérifiée et enregistrée avec succès');
     
     return new Response(
       JSON.stringify({ 
         valid: true,
         message: 'Signature vérifiée cryptographiquement et enregistrée avec succès',
-        addressType: verificationResult.addressType
+        addressType: verificationResult.addressType,
+        addressLabel: verificationResult.addressLabel
       }),
       { 
         status: 200,

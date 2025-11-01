@@ -18,17 +18,11 @@ export default function VerifyStep({ onVerified }) {
     modal
   } = useReownWallet();
 
-  // ===== UTILITAIRES : Détection Taproot =====
-  const isTaprootAddress = (address) => {
-    return address.startsWith('bc1p') || address.startsWith('tb1p');
-  };
-
   // ===== FONCTION 1 : Vérifier signature en DB et rediriger =====
   const checkSignatureAndRedirect = useCallback(async (address) => {
     try {
       console.log('🔍 Vérification signature en DB pour:', address);
       
-      // 🆕 Utiliser getUserData (SELECT direct via RLS)
       const user = await getUserData(address);
 
       if (user?.signature_proof?.verified) {
@@ -59,18 +53,6 @@ export default function VerifyStep({ onVerified }) {
   const handleSignatureFlow = async (address) => {
     console.log('🔐 ÉTAPE 1 : Demande de signature pour', address);
     setError('');
-
-    // 🆕 VÉRIFICATION TAPROOT AVANT SIGNATURE
-    if (isTaprootAddress(address)) {
-      setError(
-        '⚠️ Adresse Taproot non supportée\n\n' +
-        'Les adresses commençant par bc1p (mainnet) ou tb1p (testnet) ne supportent pas la signature de message standard.\n\n' +
-        'Veuillez utiliser une adresse SegWit (bc1q/tb1q) ou Legacy (1.../m...) dans votre wallet.'
-      );
-      setVerificationStep('idle');
-      return;
-    }
-
     setVerificationStep('signing');
 
     try {
@@ -117,23 +99,19 @@ export default function VerifyStep({ onVerified }) {
       });
 
       if (!verificationResult.valid) {
-        // Afficher l'erreur détaillée du serveur
         const errorMsg = verificationResult.error || 'Signature invalide';
         throw new Error(errorMsg);
       }
 
       console.log('✅ Signature vérifiée cryptographiquement côté serveur !');
       
-      // Récupérer le solde depuis la réponse de verifyAndRegister
       const confirmedBalanceBTC = verificationResult.user.btc_balance;
       console.log('💰 Solde confirmé:', confirmedBalanceBTC, 'BTC (depuis Edge Function)');
       
-      // Log du type d'adresse si disponible
       if (verificationResult.user.signature_proof?.addressType) {
         console.log('📋 Type d\'adresse:', verificationResult.user.signature_proof.addressType);
       }
 
-      // Utiliser signature_proof depuis la BDD au lieu de l'objet signature local
       onVerified({
         address: address,
         balance: confirmedBalanceBTC,
@@ -145,10 +123,8 @@ export default function VerifyStep({ onVerified }) {
     } catch (err) {
       console.error('❌ Erreur vérification:', err);
       
-      // Gestion spéciale des erreurs de signature
-      if (err.message.includes('Taproot')) {
-        setError('⚠️ Adresse Taproot détectée\n\n' + err.message);
-      } else if (err.message.includes('cryptographiquement')) {
+      // Messages d'erreur améliorés
+      if (err.message.includes('cryptographiquement') || err.message.includes('invalide')) {
         setError('❌ Signature invalide\n\n' + err.message);
       } else if (err.message.includes('Solde minimum')) {
         setError('💰 Solde insuffisant\n\n' + err.message);
@@ -184,7 +160,6 @@ export default function VerifyStep({ onVerified }) {
     const checkAndRedirect = async () => {
       if (hasChecked || !modal) return;
       
-      // Si on est en mode wallet ET idle
       if (connectionMethod === 'wallet' && verificationStep === 'idle') {
         const address = modal.getAddress();
         const isConnected = modal.getIsConnectedState();
@@ -204,7 +179,6 @@ export default function VerifyStep({ onVerified }) {
       }
     };
     
-    // Délai pour laisser le temps à l'état de se stabiliser
     const timer = setTimeout(checkAndRedirect, 300);
     
     return () => {
@@ -224,16 +198,6 @@ export default function VerifyStep({ onVerified }) {
       
       if (existingAddress && isConnected) {
         console.log('🔐 Wallet déjà connecté, vérification DB...');
-        
-        // Vérifier Taproot AVANT de chercher en DB
-        if (isTaprootAddress(existingAddress)) {
-          setError(
-            '⚠️ Adresse Taproot non supportée\n\n' +
-            `Votre wallet est connecté avec une adresse Taproot (${existingAddress.slice(0, 8)}...).\n\n` +
-            'Veuillez sélectionner une adresse SegWit (bc1q) ou Legacy dans votre wallet.'
-          );
-          return;
-        }
         
         const userData = await getUserData(existingAddress);
         
@@ -281,17 +245,6 @@ export default function VerifyStep({ onVerified }) {
             hasConnected = true;
             clearInterval(checkInterval);
             
-            // Vérifier Taproot AVANT de continuer
-            if (isTaprootAddress(address)) {
-              setError(
-                '⚠️ Adresse Taproot non supportée\n\n' +
-                `Votre wallet est connecté avec une adresse Taproot (${address.slice(0, 8)}...).\n\n` +
-                'Veuillez sélectionner une adresse SegWit (bc1q) ou Legacy dans votre wallet.'
-              );
-              setVerificationStep('idle');
-              return;
-            }
-            
             const userData = await getUserData(address);
             
             if (userData?.signature_proof?.verified) {
@@ -334,7 +287,7 @@ export default function VerifyStep({ onVerified }) {
   const handleManualVerify = async () => {
     setError('');
     
-    const btcRegex = /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/;
+    const btcRegex = /^(bc1|tb1|[13mn2])[a-zA-HJ-NP-Z0-9]{25,62}$/;
     if (!btcRegex.test(manualAddress)) {
       setError('Adresse Bitcoin invalide');
       return;
@@ -431,7 +384,7 @@ export default function VerifyStep({ onVerified }) {
             <p className="font-semibold mb-1">Wallets compatibles :</p>
             <p>Xverse • Leather • OKX • Phantom</p>
             <p className="text-xs text-blue-600 mt-2">
-              ⚠️ Adresses Taproot (bc1p) non supportées
+              ✓ Tous types d'adresses supportés (Legacy, SegWit, Taproot)
             </p>
           </div>
         </div>
@@ -507,10 +460,6 @@ export default function VerifyStep({ onVerified }) {
 
   // ===== RENDU : Connexion wallet =====
   if (connectionMethod === 'wallet') {
-    // 🆕 Détection Taproot pour affichage avertissement
-    const currentAddress = modal?.getAddress();
-    const showTaprootWarning = currentAddress && isTaprootAddress(currentAddress);
-
     return (
       <div className="max-w-md mx-auto p-6">
         <button
@@ -525,26 +474,6 @@ export default function VerifyStep({ onVerified }) {
         </button>
 
         <h2 className="text-2xl font-bold mb-6">Connexion Wallet Bitcoin</h2>
-
-        {/* 🆕 Avertissement Taproot */}
-        {showTaprootWarning && (
-          <div className="bg-orange-50 border-2 border-orange-300 rounded-lg p-4 mb-4">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-orange-900">
-                <p className="font-bold mb-1">⚠️ Adresse Taproot détectée</p>
-                <p className="mb-2">
-                  Votre wallet est connecté avec une adresse <span className="font-mono bg-orange-100 px-1 rounded">{currentAddress.slice(0, 10)}...</span>
-                </p>
-                <p className="text-xs">
-                  Les adresses Taproot (bc1p/tb1p) ne supportent pas la signature de message standard.
-                  <br />
-                  <strong>Veuillez sélectionner une adresse SegWit (bc1q) ou Legacy dans votre wallet.</strong>
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {verificationStep !== 'idle' && (
           <div className="bg-white rounded-lg border-2 border-gray-200 p-4 mb-4 space-y-3">
@@ -644,7 +573,7 @@ export default function VerifyStep({ onVerified }) {
               <li>Vérification automatique du solde BTC</li>
             </ol>
             <p className="text-xs text-green-700 mt-2 pt-2 border-t border-green-200">
-              ⚠️ <strong>Important :</strong> Utilisez une adresse Legacy (1...) ou SegWit (bc1q...). Les adresses Taproot (bc1p...) ne sont pas supportées.
+              ✓ Tous les types d'adresses Bitcoin sont supportés : Legacy (1...), SegWit (bc1q...) et Taproot (bc1p...)
             </p>
           </div>
         </div>
