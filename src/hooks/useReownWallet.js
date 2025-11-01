@@ -264,7 +264,6 @@ export default function useReownWallet() {
         try {
           const phantomProvider = window.phantom.bitcoin;
           
-          // Vérifier que le compte est connecté
           const accounts = await phantomProvider.requestAccounts();
           
           if (!accounts || accounts.length === 0) {
@@ -272,50 +271,24 @@ export default function useReownWallet() {
           }
           
           console.log('📱 Comptes Phantom:', accounts);
-          
-          // 🆕 MÉTHODE CORRECTE POUR PHANTOM
-          // Phantom attend : signMessage(address, message) 
-          // où address est l'adresse publique (pas l'objet account)
-          
-          // Trouver le bon compte correspondant à l'adresse
-          const account = accounts.find(acc => 
-            acc.address === address || 
-            acc.publicKey === address
-          );
-          
-          if (!account) {
-            console.warn('⚠️ Adresse non trouvée dans les comptes, utilisation directe');
-          }
-          
           console.log('📝 Signature avec adresse:', address);
           console.log('📝 Message:', message);
-          console.log('🔍 DEBUG PHANTOM:');
-          console.log('- phantomProvider exists:', !!phantomProvider);
-          console.log('- signMessage exists:', typeof phantomProvider.signMessage);
-          console.log('- address type:', typeof address, address);
-          console.log('- message type:', typeof message, message);
-          console.log('- message length:', message.length);
           
-          // Appel API Phantom - syntaxe correcte
-          const result = await phantomProvider.signMessage(address, message);
+          // 🆕 SYNTAXE CORRECTE PHANTOM
+          // signMessage(message, { address })
+          const result = await phantomProvider.signMessage(message, {
+            address: address
+          });
           
-          // Phantom retourne { signature: string }
           if (result && result.signature) {
             signature = result.signature;
-            console.log('✅ Signature Phantom reçue:', signature.substring(0, 20) + '...');
+            console.log('✅ Signature Phantom reçue');
           } else {
             throw new Error('Format de réponse Phantom invalide');
           }
           
         } catch (err) {
           console.error('❌ Erreur signature Phantom:', err);
-          
-          // Log détaillé pour debug
-          console.error('Détails erreur:', {
-            message: err.message,
-            code: err.code,
-            stack: err.stack
-          });
           
           if (err.message?.includes('User rejected') || err.code === 4001) {
             throw new Error('Signature refusée par l\'utilisateur');
