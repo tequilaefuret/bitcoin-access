@@ -127,9 +127,9 @@ export default function useReownWallet() {
                     
                     setError(
                       `Mauvais réseau !\n\n` +
-                      `Ce site nécessite ${expectedNetwork}.\n` +
-                      `Votre wallet est en ${addressNetwork}.\n\n` +
-                      `Veuillez changer de réseau dans votre wallet.`
+                      `Ce site nécessite une connexion sur le réseau ${expectedNetwork} de Bitcoin.\n` +
+                      `Votre wallet est actuellement paramétré sur le réseau ${addressNetwork}.\n\n` +
+                      `Veuillez changer de réseau dans votre wallet avant de vous connecter.`
                     );
                     
                     // Déconnecter automatiquement
@@ -211,9 +211,7 @@ export default function useReownWallet() {
       const timestamp = Date.now();
       const message = `Prouver propriété de ${address}\nTimestamp: ${timestamp}`;
 
-      // 🆕 UTILISER LA VARIABLE D'ENVIRONNEMENT (cohérent avec AppKit)
       const bitcoinNetwork = process.env.REACT_APP_BITCOIN_NETWORK || 'testnet4';
-      // ⚠️ Accepter 'bitcoin' OU 'mainnet' comme valeurs pour mainnet
       const network = (bitcoinNetwork === 'bitcoin' || bitcoinNetwork === 'mainnet') ? 'mainnet' : 'testnet';
 
       console.log('🌐 Réseau pour signature:', network);
@@ -228,10 +226,6 @@ export default function useReownWallet() {
         : 'testnet';
 
       if (addressNetwork !== network) {
-        console.error('❌ Incohérence réseau !');
-        console.error('Environnement:', network);
-        console.error('Adresse:', addressNetwork);
-        
         throw new Error(
           `Mauvais réseau détecté.\n\n` +
           `Ce site nécessite ${network}.\n` +
@@ -248,42 +242,68 @@ export default function useReownWallet() {
 
       let signature;
       
-      try {
-        signature = await provider.request({
-          method: 'personal_sign',
-          params: [message, address],
-          network: network
-        });
-        
-        console.log('✅ Signature via personal_sign');
-        
-      } catch (err) {
-        console.log('⚠️ personal_sign échoué, tentative signMessage...');
+      // 🆕 DÉTECTION OKX WALLET
+      const isOKX = provider.isOkxWallet || 
+                    provider.name?.toLowerCase().includes('okx') ||
+                    window.okxwallet;
+
+      if (isOKX) {
+        console.log('✅ OKX Wallet détecté, utilisation API native');
         
         try {
+          // OKX utilise directement window.okxwallet
+          if (window.okxwallet && window.okxwallet.bitcoin) {
+            signature = await window.okxwallet.bitcoin.signMessage(message, {
+              from: address
+            });
+            
+            console.log('✅ Signature OKX reçue');
+          } else {
+            throw new Error('API OKX Bitcoin non disponible');
+          }
+        } catch (err) {
+          console.error('❌ Erreur signature OKX:', err);
+          throw new Error('OKX Wallet: Signature refusée ou non supportée');
+        }
+      } else {
+        // POUR LES AUTRES WALLETS (Leather, Xverse, etc.)
+        try {
           signature = await provider.request({
-            method: 'signMessage',
-            params: {
-              address: address,
-              message: message,
-              network: network
-            }
+            method: 'personal_sign',
+            params: [message, address],
+            network: network
           });
           
-          console.log('✅ Signature via signMessage');
+          console.log('✅ Signature via personal_sign');
           
-        } catch (err2) {
-          console.log('⚠️ signMessage échoué, tentative stacks_signMessage...');
+        } catch (err) {
+          console.log('⚠️ personal_sign échoué, tentative signMessage...');
           
-          signature = await provider.request({
-            method: 'stacks_signMessage',
-            params: {
-              message: message,
-              network: network
-            }
-          });
-          
-          console.log('✅ Signature via stacks_signMessage');
+          try {
+            signature = await provider.request({
+              method: 'signMessage',
+              params: {
+                address: address,
+                message: message,
+                network: network
+              }
+            });
+            
+            console.log('✅ Signature via signMessage');
+            
+          } catch (err2) {
+            console.log('⚠️ signMessage échoué, tentative stacks_signMessage...');
+            
+            signature = await provider.request({
+              method: 'stacks_signMessage',
+              params: {
+                message: message,
+                network: network
+              }
+            });
+            
+            console.log('✅ Signature via stacks_signMessage');
+          }
         }
       }
 
@@ -312,6 +332,9 @@ export default function useReownWallet() {
       } else if (err.message?.includes('rejected') || err.message?.includes('User rejected')) {
         setError('Signature refusée par l\'utilisateur');
         throw new Error('Signature refusée');
+      } else if (err.message?.includes('OKX')) {
+        setError(err.message);
+        throw err;
       } else {
         setError('Erreur lors de la signature');
         throw err;
