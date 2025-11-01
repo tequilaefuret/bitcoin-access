@@ -271,14 +271,17 @@ export default function useReownWallet() {
           }
           
           console.log('📱 Comptes Phantom:', accounts);
-          console.log('📝 Signature avec adresse:', address);
-          console.log('📝 Message:', message);
           
-          // 🆕 SYNTAXE CORRECTE PHANTOM
-          // signMessage(message, { address })
-          const result = await phantomProvider.signMessage(message, {
-            address: address
-          });
+          // 🆕 ENCODER LE MESSAGE EN UINT8ARRAY (requis par Phantom)
+          const encoder = new TextEncoder();
+          const messageEncoded = encoder.encode(message);
+          
+          console.log('📝 Message original:', message);
+          console.log('📝 Message encodé:', messageEncoded);
+          console.log('📍 Adresse:', address);
+          
+          // Syntaxe correcte : signMessage(address, encodedMessage)
+          const result = await phantomProvider.signMessage(address, messageEncoded);
           
           if (result && result.signature) {
             signature = result.signature;
@@ -293,7 +296,7 @@ export default function useReownWallet() {
           if (err.message?.includes('User rejected') || err.code === 4001) {
             throw new Error('Signature refusée par l\'utilisateur');
           } else {
-            throw new Error(`Phantom Wallet: ${err.message || 'Signature non supportée'}`);
+            throw new Error(`Phantom: ${err.message || 'Signature non supportée'}`);
           }
         }
       }
