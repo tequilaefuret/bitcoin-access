@@ -7,14 +7,15 @@ import { bitcoin, bitcoinTestnet } from '@reown/appkit/networks';
 let globalModalInstance = null;
 let globalModalInitializing = false;
 
-// 🎯 STRATÉGIES DE WALLETS - Détection via provider
+// 🎯 STRATÉGIES DE WALLETS - Détection stricte par nom
 const WALLET_STRATEGIES = {
   phantom: {
     detect: (provider) => {
-      // Vérifier le provider name OU window.phantom comme origine réelle
-      return provider?.name?.toLowerCase().includes('phantom') ||
-             (window.phantom?.bitcoin?.isPhantom === true && 
-              provider?.isPhantom === true);
+      // STRICTE : Vérifier le nom du provider en priorité
+      const providerName = provider?.name?.toLowerCase() || '';
+      
+      // Phantom UNIQUEMENT si le nom contient 'phantom'
+      return providerName.includes('phantom');
     },
     sign: async (address, message) => {
       const provider = window.phantom.bitcoin;
@@ -30,11 +31,11 @@ const WALLET_STRATEGIES = {
   
   okx: {
     detect: (provider) => {
-      // Vérifier provider OU window.okxwallet
-      return provider?.isOkxWallet === true ||
-             provider?.name?.toLowerCase().includes('okx') ||
-             (window.okxwallet?.bitcoin !== undefined && 
-              provider?.name?.toLowerCase().includes('okx'));
+      // STRICTE : Vérifier le nom du provider en priorité
+      const providerName = provider?.name?.toLowerCase() || '';
+      
+      // OKX UNIQUEMENT si le nom contient 'okx'
+      return providerName.includes('okx');
     },
     sign: async (address, message) => {
       const provider = window.okxwallet.bitcoin;
