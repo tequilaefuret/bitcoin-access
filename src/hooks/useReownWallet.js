@@ -7,37 +7,45 @@ import { bitcoin, bitcoinTestnet } from '@reown/appkit/networks';
 let globalModalInstance = null;
 let globalModalInitializing = false;
 
-// 🎯 STRATÉGIE PAR WALLET - Facile à étendre
+// 🎯 STRATÉGIES DE WALLETS - Détection via provider
 const WALLET_STRATEGIES = {
   phantom: {
-      detect: () => window.phantom?.bitcoin?.isPhantom === true,
-      sign: async (address, message) => {
-        const provider = window.phantom.bitcoin;
-        await provider.requestAccounts();
-        
-        // Phantom : encode message + convert signature
-        const encoded = new TextEncoder().encode(message);
-        const result = await provider.signMessage(address, encoded);
-        
-        // Convert Uint8Array to Base64
-        const binString = String.fromCodePoint(...result.signature);
-        return btoa(binString);
-      }
+    detect: (provider) => {
+      // Vérifier le provider name OU window.phantom comme origine réelle
+      return provider?.name?.toLowerCase().includes('phantom') ||
+             (window.phantom?.bitcoin?.isPhantom === true && 
+              provider?.isPhantom === true);
     },
-    
-    okx: {
-      detect: () => window.okxwallet?.bitcoin !== undefined,
-      sign: async (address, message) => {
-        const provider = window.okxwallet.bitcoin;
-        
-        // Detect address type
-        let addressType = 'segwit_native';
-        if (address.startsWith('bc1p') || address.startsWith('tb1p')) addressType = 'taproot';
-        else if (address.startsWith('3') || address.startsWith('2')) addressType = 'segwit_nested';
-        else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) addressType = 'legacy';
-        
-        return await provider.signMessage(message, { from: address, type: addressType });
-      }
+    sign: async (address, message) => {
+      const provider = window.phantom.bitcoin;
+      await provider.requestAccounts();
+      
+      const encoded = new TextEncoder().encode(message);
+      const result = await provider.signMessage(address, encoded);
+      
+      const binString = String.fromCodePoint(...result.signature);
+      return btoa(binString);
+    }
+  },
+  
+  okx: {
+    detect: (provider) => {
+      // Vérifier provider OU window.okxwallet
+      return provider?.isOkxWallet === true ||
+             provider?.name?.toLowerCase().includes('okx') ||
+             (window.okxwallet?.bitcoin !== undefined && 
+              provider?.name?.toLowerCase().includes('okx'));
+    },
+    sign: async (address, message) => {
+      const provider = window.okxwallet.bitcoin;
+      
+      let addressType = 'segwit_native';
+      if (address.startsWith('bc1p') || address.startsWith('tb1p')) addressType = 'taproot';
+      else if (address.startsWith('3') || address.startsWith('2')) addressType = 'segwit_nested';
+      else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) addressType = 'legacy';
+      
+      return await provider.signMessage(message, { from: address, type: addressType });
+    }
   }
 };
 
@@ -259,10 +267,18 @@ export default function useReownWallet() {
       if (!provider) throw new Error('Provider non disponible');
 
       let signature;
+
+      console.log('🔍 Provider info:', {
+        name: provider?.name,
+        isOkxWallet: provider?.isOkxWallet,
+        isPhantom: provider?.isPhantom,
+        hasWindowPhantom: !!window.phantom,
+        hasWindowOKX: !!window.okxwallet
+      });
       
       // 🎯 DÉTECTION ET EXÉCUTION DE LA STRATÉGIE
       const walletStrategy = Object.entries(WALLET_STRATEGIES).find(([name, strategy]) => {
-        const detected = strategy.detect();
+        const detected = strategy.detect(provider); // ✅ Passer le provider
         if (detected) console.log(`✅ ${name.toUpperCase()} détecté`);
         return detected;
       });
