@@ -266,8 +266,7 @@ export default function useReownWallet() {
       const provider = await modal.getWalletProvider();
       if (!provider) throw new Error('Provider non disponible');
 
-      let signature;
-
+      // 🔍 DEBUG - À garder temporairement
       console.log('🔍 Provider info:', {
         name: provider?.name,
         isOkxWallet: provider?.isOkxWallet,
@@ -275,16 +274,20 @@ export default function useReownWallet() {
         hasWindowPhantom: !!window.phantom,
         hasWindowOKX: !!window.okxwallet
       });
+
+      let signature;
       
-      // 🎯 DÉTECTION ET EXÉCUTION DE LA STRATÉGIE
+      // 🎯 DÉTECTION VIA STRATÉGIES (UNIQUEMENT)
       const walletStrategy = Object.entries(WALLET_STRATEGIES).find(([name, strategy]) => {
-        const detected = strategy.detect(provider); // ✅ Passer le provider
-        if (detected) console.log(`✅ ${name.toUpperCase()} détecté`);
+        const detected = strategy.detect(provider);
+        console.log(`🔍 Test ${name}:`, detected);
         return detected;
       });
 
       if (walletStrategy) {
         const [walletName, strategy] = walletStrategy;
+        console.log(`✅ ${walletName.toUpperCase()} détecté via stratégie`);
+        
         try {
           signature = await strategy.sign(address, message);
           console.log(`✅ Signature ${walletName} reçue`);
@@ -294,7 +297,7 @@ export default function useReownWallet() {
         }
       } else {
         // 🔄 FALLBACK : Wallets standard (Xverse, Leather, etc.)
-        console.log('🔐 Wallet standard');
+        console.log('🔐 Wallet standard (fallback)');
         
         try {
           signature = await provider.request({
@@ -304,6 +307,7 @@ export default function useReownWallet() {
           });
           console.log('✅ Signature via personal_sign');
         } catch (err) {
+          console.log('⚠️ personal_sign échoué, tentative signMessage...');
           try {
             signature = await provider.request({
               method: 'signMessage',
@@ -311,6 +315,7 @@ export default function useReownWallet() {
             });
             console.log('✅ Signature via signMessage');
           } catch (err2) {
+            console.log('⚠️ signMessage échoué, tentative stacks_signMessage...');
             signature = await provider.request({
               method: 'stacks_signMessage',
               params: { message, network }
@@ -321,6 +326,8 @@ export default function useReownWallet() {
       }
 
       if (!signature) throw new Error('Signature non reçue');
+
+      console.log('✅ Signature finale reçue');
 
       return { message, signature, timestamp, address };
 
