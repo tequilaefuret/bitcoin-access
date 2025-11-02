@@ -7,6 +7,40 @@ import { bitcoin, bitcoinTestnet } from '@reown/appkit/networks';
 let globalModalInstance = null;
 let globalModalInitializing = false;
 
+// 🎯 STRATÉGIE PAR WALLET - Facile à étendre
+const WALLET_STRATEGIES = {
+  phantom: {
+      detect: () => window.phantom?.bitcoin?.isPhantom === true,
+      sign: async (address, message) => {
+        const provider = window.phantom.bitcoin;
+        await provider.requestAccounts();
+        
+        // Phantom : encode message + convert signature
+        const encoded = new TextEncoder().encode(message);
+        const result = await provider.signMessage(address, encoded);
+        
+        // Convert Uint8Array to Base64
+        const binString = String.fromCodePoint(...result.signature);
+        return btoa(binString);
+      }
+    },
+    
+    okx: {
+      detect: () => window.okxwallet?.bitcoin !== undefined,
+      sign: async (address, message) => {
+        const provider = window.okxwallet.bitcoin;
+        
+        // Detect address type
+        let addressType = 'segwit_native';
+        if (address.startsWith('bc1p') || address.startsWith('tb1p')) addressType = 'taproot';
+        else if (address.startsWith('3') || address.startsWith('2')) addressType = 'segwit_nested';
+        else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) addressType = 'legacy';
+        
+        return await provider.signMessage(message, { from: address, type: addressType });
+      }
+  }
+};
+
 /**
  * Hook personnalisé pour gérer la connexion Bitcoin via Reown AppKit
  * Utilise un singleton global pour éviter les doubles initialisations
@@ -196,40 +230,6 @@ export default function useReownWallet() {
       return null;
     }
   }, [modal]);
-
-  // 🎯 STRATÉGIE PAR WALLET - Facile à étendre
-  const WALLET_STRATEGIES = {
-    phantom: {
-      detect: () => window.phantom?.bitcoin?.isPhantom === true,
-      sign: async (address, message) => {
-        const provider = window.phantom.bitcoin;
-        await provider.requestAccounts();
-        
-        // Phantom : encode message + convert signature
-        const encoded = new TextEncoder().encode(message);
-        const result = await provider.signMessage(address, encoded);
-        
-        // Convert Uint8Array to Base64
-        const binString = String.fromCodePoint(...result.signature);
-        return btoa(binString);
-      }
-    },
-    
-    okx: {
-      detect: () => window.okxwallet?.bitcoin !== undefined,
-      sign: async (address, message) => {
-        const provider = window.okxwallet.bitcoin;
-        
-        // Detect address type
-        let addressType = 'segwit_native';
-        if (address.startsWith('bc1p') || address.startsWith('tb1p')) addressType = 'taproot';
-        else if (address.startsWith('3') || address.startsWith('2')) addressType = 'segwit_nested';
-        else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) addressType = 'legacy';
-        
-        return await provider.signMessage(message, { from: address, type: addressType });
-      }
-    }
-  };
 
   /**
    * Demande une signature de message
