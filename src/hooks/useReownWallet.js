@@ -31,17 +31,20 @@ const WALLET_STRATEGIES = {
   
   okx: {
     detect: (provider) => {
-      // STRICTE : Vérifier le nom du provider en priorité
       const providerName = provider?.name?.toLowerCase() || '';
-      
-      // OKX UNIQUEMENT si le nom contient 'okx'
       return providerName.includes('okx');
     },
     sign: async (address, message) => {
-      const provider = window.okxwallet.bitcoin;
+      if (!window.okxwallet?.bitcoin) {
+        throw new Error('OKX Wallet non disponible');
+      }
       
-      // 🔧 FORMAT SIMPLIFIÉ : OKX n'a pas besoin du paramètre 'type'
-      return await provider.signMessage(message, { from: address });
+      // OKX attend type: "ecdsa" ou "bip322-simple"
+      // On utilise "ecdsa" par défaut (compatible tous types d'adresses)
+      return await window.okxwallet.bitcoin.signMessage(message, {
+        from: address,
+        type: "ecdsa"
+      });
     }
   }
 };
