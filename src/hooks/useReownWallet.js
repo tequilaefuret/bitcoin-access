@@ -298,7 +298,7 @@ export default function useReownWallet() {
         }
       } else {
         // 🔄 FALLBACK : Wallets standard (Xverse, Leather, etc.)
-        console.log('🔐 Wallet standard (fallback)');
+        console.log('🔐 Wallet standard (fallback) - Utilisation du provider modal uniquement');
         
         try {
           signature = await provider.request({
@@ -317,10 +317,11 @@ export default function useReownWallet() {
             console.log('✅ Signature via signMessage');
           } catch (err2) {
             console.log('⚠️ signMessage échoué, tentative stacks_signMessage...');
-            signature = await provider.request({
+            const result = await provider.request({
               method: 'stacks_signMessage',
               params: { message, network }
             });
+            signature = result.signature || result;
             console.log('✅ Signature via stacks_signMessage');
           }
         }
