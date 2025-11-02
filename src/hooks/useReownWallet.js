@@ -40,12 +40,8 @@ const WALLET_STRATEGIES = {
     sign: async (address, message) => {
       const provider = window.okxwallet.bitcoin;
       
-      let addressType = 'segwit_native';
-      if (address.startsWith('bc1p') || address.startsWith('tb1p')) addressType = 'taproot';
-      else if (address.startsWith('3') || address.startsWith('2')) addressType = 'segwit_nested';
-      else if (address.startsWith('1') || address.startsWith('m') || address.startsWith('n')) addressType = 'legacy';
-      
-      return await provider.signMessage(message, { from: address, type: addressType });
+      // 🔧 FORMAT SIMPLIFIÉ : OKX n'a pas besoin du paramètre 'type'
+      return await provider.signMessage(message, { from: address });
     }
   }
 };
