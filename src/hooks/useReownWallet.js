@@ -35,16 +35,28 @@ const WALLET_STRATEGIES = {
       return providerName.includes('okx');
     },
     sign: async (address, message) => {
+      console.log('🔧 Début signature OKX');
+      console.log('📍 Address:', address);
+      console.log('📝 Message:', message);
+      console.log('🔍 window.okxwallet exists:', !!window.okxwallet);
+      console.log('🔍 window.okxwallet.bitcoin exists:', !!window.okxwallet?.bitcoin);
+      
       if (!window.okxwallet?.bitcoin) {
-        throw new Error('OKX Wallet non disponible');
+        throw new Error('OKX Wallet Bitcoin API non disponible');
       }
       
-      // OKX attend type: "ecdsa" ou "bip322-simple"
-      // On utilise "ecdsa" par défaut (compatible tous types d'adresses)
-      return await window.okxwallet.bitcoin.signMessage(message, {
-        from: address,
-        type: "ecdsa"
-      });
+      console.log('🔧 Appel signMessage avec:', { from: address });
+      
+      try {
+        const signature = await window.okxwallet.bitcoin.signMessage(message, { from: address });
+        console.log('✅ Signature OKX reçue:', signature);
+        return signature;
+      } catch (err) {
+        console.error('❌ Erreur brute OKX:', err);
+        console.error('❌ Message erreur:', err.message);
+        console.error('❌ Code erreur:', err.code);
+        throw err;
+      }
     }
   }
 };
