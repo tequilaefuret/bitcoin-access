@@ -133,11 +133,16 @@ export default function useReownWallet() {
           icons: ['https://avatars.githubusercontent.com/u/37784886']
         };
 
-        const bitcoinAdapter = new BitcoinAdapter({ projectId });
+        const bitcoinAdapter = new BitcoinAdapter({ 
+          projectId,
+          chains: isMainnet 
+            ? ['bip122:000000000019d6689c085ae165831e93'] // Bitcoin mainnet
+            : ['bip122:000000000933ea01ad0ee984209779ba'] // Bitcoin testnet
+        });
 
         const appKitModal = createAppKit({
           adapters: [bitcoinAdapter],
-          networks, // 🆕 Un seul réseau selon environnement
+          networks,
           projectId,
           metadata,
           features: {
@@ -145,7 +150,7 @@ export default function useReownWallet() {
             email: false,
             socials: false
           },
-          defaultNetwork: isMainnet ? bitcoin : bitcoinTestnet, // 🆕 Basé sur BITCOIN_NETWORK
+          defaultNetwork: isMainnet ? bitcoin : bitcoinTestnet,
           enableCoinbase: false,
           enableInjected: true,
           enableWalletConnect: true
@@ -309,55 +314,45 @@ export default function useReownWallet() {
         }
       } else {
         // 🔄 FALLBACK : Wallets standard (Xverse, Leather, etc.)
-        console.log('🔐 Wallet standard (fallback) - Utilisation du provider modal uniquement');
-        
-        try {
-          signature = await provider.request({
-            method: 'personal_sign',
-            params: [message, address],
-            network: network
-          });
-          console.log('✅ Signature via personal_sign');
-        } catch (err) {
-          console.log('⚠️ personal_sign échoué, tentative signMessage...');
-          try {
-            signature = await provider.request({
-              method: 'signMessage',
-              params: { address, message, network }
-            });
-            console.log('✅ Signature via signMessage');
-          } catch (err2) {
-            console.log('⚠️ signMessage échoué, tentative stacks_signMessage...');
-            const result = await provider.request({
-              method: 'stacks_signMessage',
-              params: { message, network }
-            });
-            signature = result.signature || result;
-            console.log('✅ Signature via stacks_signMessage');
-          }
-        }
-      }
+                console.log('🔐 Wallet standard (fallback)');
 
-      if (!signature) throw new Error('Signature non reçue');
+                try {
+                  signature = await provider.request({
+                    method: 'personal_sign',
+                    params: [message, address],
+                    network: network
+                  });
+                  console.log('✅ Signature via personal_sign');
+                } catch (err) {
+                  console.log('⚠️ personal_sign échoué, tentative signMessage...');
+                  signature = await provider.request({
+                    method: 'signMessage',
+                    params: { address, message, network }
+                  });
+                  console.log('✅ Signature via signMessage');
+                }
+              }
 
-      console.log('✅ Signature finale reçue');
+              if (!signature) throw new Error('Signature non reçue');
 
-      return { message, signature, timestamp, address };
+              console.log('✅ Signature finale reçue');
 
-    } catch (err) {
-      console.error('❌ Erreur:', err);
-      
-      if (err.message?.includes('réseau')) {
-        setError(err.message);
-      } else if (err.message?.includes('rejected') || err.message?.includes('refusée')) {
-        setError('Signature refusée par l\'utilisateur');
-      } else {
-        setError(err.message || 'Erreur signature');
-      }
-      
-      throw err;
-    }
-  }, [modal]);
+              return { message, signature, timestamp, address };
+
+            } catch (err) {
+              console.error('❌ Erreur:', err);
+              
+              if (err.message?.includes('réseau')) {
+                setError(err.message);
+              } else if (err.message?.includes('rejected') || err.message?.includes('refusée')) {
+                setError('Signature refusée par l\'utilisateur');
+              } else {
+                setError(err.message || 'Erreur signature');
+              }
+              
+              throw err;
+            }
+          }, [modal]);
 
   /**
    * Déconnecte le wallet

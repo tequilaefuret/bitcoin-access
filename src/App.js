@@ -20,6 +20,7 @@ const BitcoinExclusiveAccess = () => {
   const [transactions, setTransactions] = useState([]);
   const [stats, setStats] = useState(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [isTestMode, setIsTestMode] = useState(false); // 🆕 Mode test
 
   const {
     btcBalance,
@@ -47,221 +48,167 @@ const BitcoinExclusiveAccess = () => {
   // ===== HANDLER : DÉCONNEXION DÉTECTÉE =====
   const handleWalletDisconnected = useCallback(() => {
     console.log('🔌 Gestion de la déconnexion...');
-    // 🆕 Nettoyer TOUS les items localStorage
     localStorage.removeItem('bitcoin_address');
     localStorage.removeItem('btc_auth_token');
+    localStorage.removeItem('walletConnected');
     sessionStorage.setItem('disconnect_timestamp', Date.now().toString());
     setAddress(null);
     setStep('connect');
+    setIsTestMode(false);
     setError('Votre wallet a été déconnecté. Veuillez vous reconnecter.');
   }, [setAddress, setError]);
 
-  // ===== EFFET : RECONNEXION AUTOMATIQUE AU CHARGEMENT =====
-  useEffect(() => {
-    let isMounted = true;
-    
-    const checkExistingSession = async () => {
-      console.log('🔍 Vérification de session sauvegardée...');
-      
-      try {
-        // 🆕 Vérifier JWT ET adresse (les deux sont nécessaires maintenant)
-        const jwt = localStorage.getItem('btc_auth_token');
-        const savedAddress = localStorage.getItem('bitcoin_address');
-        
-        if (!jwt || !savedAddress) {
-          console.log('❌ Pas de session sauvegardée → Page Connexion');
-          if (isMounted) setIsCheckingSession(false);
-          return;
-        }
-        
-        console.log('✅ Session trouvée pour:', savedAddress.slice(0, 10) + '...');
-        
-        // ✅ VÉRIFICATION CRITIQUE : S'assurer que c'est une vraie session et pas un reste
-        // Si on vient de se déconnecter, ne pas reconnecter
-        const disconnectTimestamp = sessionStorage.getItem('disconnect_timestamp');
-        const now = Date.now();
-        
-        if (disconnectTimestamp && (now - parseInt(disconnectTimestamp)) < 5000) {
-          console.log('⚠️ Déconnexion récente détectée, ignorer localStorage');
-          localStorage.removeItem('btc_auth_token');
-          localStorage.removeItem('bitcoin_address');
-          sessionStorage.removeItem('disconnect_timestamp');
-          if (isMounted) setIsCheckingSession(false);
-          return;
-        }
-
-        // 🆕 Configurer session Supabase avec JWT
-        await supabase.auth.setSession({
-          access_token: jwt,
-          refresh_token: jwt
-        });
-
-        // 🆕 Utiliser getUserData (SELECT direct via RLS avec JWT)
-        const user = await getUserData(savedAddress);
-
-        if (!user) {
-          console.log('❌ Session expirée ou invalide (JWT peut-être expiré)');
-          localStorage.removeItem('btc_auth_token');
-          localStorage.removeItem('bitcoin_address');
-          if (isMounted) setIsCheckingSession(false);
-          return;
-        }
-
-        if (user.signature_proof?.verified) {
-          console.log('✅ Signature vérifiée → Restauration Dashboard');
-          console.log('💰 BTC:', user.btc_balance);
-          console.log('💰 wBTC:', user.wbtc_balance);
-          
-          if (isMounted) {
-            // 🆕 Restaurer TOUS les états depuis la BDD
-            setAddress(savedAddress);
-            
-            // Le hook useBitcoinBalance gère les états internes
-            // On appelle checkBitcoinBalance qui va mettre à jour tous les états
-            await checkBitcoinBalance(savedAddress, user.signature_proof);
-            
-            setStep('authorized');
-          }
-        } else {
-          console.log('⚠️ Pas de signature vérifiée → Page Vérification');
-          if (isMounted) {
-            setStep('verify');
-          }
-        }
-
-      } catch (err) {
-        console.error('❌ Erreur vérification session:', err);
-        
-        // 🆕 Si erreur (JWT expiré par exemple), nettoyer la session
-        if (err.message?.includes('JWT') || err.message?.includes('expired')) {
-          console.log('⚠️ JWT expiré, nettoyage session...');
-          localStorage.removeItem('btc_auth_token');
-          localStorage.removeItem('bitcoin_address');
-        }
-      } finally {
-        if (isMounted) setIsCheckingSession(false);
-      }
-    };
-
-    const timer = setTimeout(() => {
-      checkExistingSession();
-    }, 300);
-
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [setAddress, checkBitcoinBalance]); // 🆕 Ajouté checkBitcoinBalance
-
-  // ===== EFFET : DÉTECTION RÉVOCATION WALLET =====
+  // ===== ÉCOUTER DÉCONNEXION WALLET =====
   useEffect(() => {
     if (!modal) return;
 
     const unsubscribe = modal.subscribeState((state) => {
-      // ✅ Pour Leather, vérifier aussi via polling car les events ne marchent pas
-      const checkConnection = () => {
-        try {
-          const isConnected = modal.getIsConnectedState();
-          const currentAddress = modal.getAddress();
-          
-          console.log('🔍 État connexion:', { isConnected, currentAddress, connectedAddress, step });
-          
-          // Si on était connecté et qu'on ne l'est plus
-          if (!isConnected && !currentAddress && connectedAddress && step !== 'connect') {
-            console.warn('⚠️ Wallet révoqué détecté');
-            handleWalletDisconnected();
-          }
-        } catch (err) {
-          console.error('❌ Erreur vérification connexion:', err);
-        }
-      };
-      
-      checkConnection();
-    });
-
-    // ✅ Polling additionnel pour Leather (toutes les 2 secondes)
-    const pollingInterval = setInterval(() => {
-      if (connectedAddress && step !== 'connect') {
-        try {
-          const isConnected = modal.getIsConnectedState();
-          const currentAddress = modal.getAddress();
-          
-          if (!isConnected && !currentAddress) {
-            console.warn('⚠️ [POLLING] Déconnexion détectée');
-            handleWalletDisconnected();
-          }
-        } catch (err) {
-          // Ignorer les erreurs de polling
+      if (state.open === false && connectedAddress && step !== 'connect') {
+        const isConnected = modal.getIsConnectedState();
+        if (!isConnected) {
+          console.warn('⚠️ WALLET DÉCONNECTÉ DÉTECTÉ');
+          handleWalletDisconnected();
         }
       }
-    }, 2000);
+    });
 
-    return () => {
-      unsubscribe();
-      clearInterval(pollingInterval);
-    };
+    return () => unsubscribe?.();
   }, [modal, connectedAddress, step, handleWalletDisconnected]);
 
+  // ===== ÉCOUTER ÉVÉNEMENT DISCONNECT =====
+  useEffect(() => {
+    const handleStorageEvent = (e) => {
+      if (e.key === 'disconnect_timestamp') {
+        console.warn('⚠️ Événement déconnexion reçu');
+        handleWalletDisconnected();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageEvent);
+    return () => window.removeEventListener('storage', handleStorageEvent);
+  }, [handleWalletDisconnected]);
+
+  // ===== VÉRIFICATION SESSION AU CHARGEMENT =====
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      console.log('🔍 Vérification session existante...');
+      
+      try {
+        const savedAddress = localStorage.getItem('bitcoin_address');
+        
+        if (!savedAddress) {
+          console.log('ℹ️ Aucune session sauvegardée');
+          setIsCheckingSession(false);
+          return;
+        }
+
+        console.log('📋 Session trouvée:', savedAddress);
+
+        if (modal) {
+          const modalAddress = modal.getAddress();
+          const isConnected = modal.getIsConnectedState();
+
+          if (!isConnected || !modalAddress || modalAddress !== savedAddress) {
+            console.warn('⚠️ Wallet déconnecté ou adresse différente');
+            localStorage.removeItem('bitcoin_address');
+            localStorage.removeItem('btc_auth_token');
+            setIsCheckingSession(false);
+            return;
+          }
+        }
+
+        const user = await getUserData(savedAddress);
+        
+        if (!user) {
+          console.error('❌ Utilisateur non trouvé en DB');
+          localStorage.removeItem('bitcoin_address');
+          localStorage.removeItem('btc_auth_token');
+          setIsCheckingSession(false);
+          return;
+        }
+
+        if (!user.signature_proof?.verified) {
+          console.warn('⚠️ Signature non vérifiée → Mode test');
+          setIsTestMode(true);
+          await checkBitcoinBalance(savedAddress);
+          setStep('game');
+          setIsCheckingSession(false);
+          return;
+        }
+
+        console.log('✅ Session valide, restauration...');
+        setAddress(savedAddress);
+        await checkBitcoinBalance(savedAddress, user.signature_proof);
+        setStep('authorized');
+        
+      } catch (err) {
+        console.error('❌ Erreur vérification session:', err);
+        localStorage.removeItem('bitcoin_address');
+        localStorage.removeItem('btc_auth_token');
+      } finally {
+        setIsCheckingSession(false);
+      }
+    };
+
+    if (modal !== null) {
+      checkExistingSession();
+    }
+  }, [modal, checkBitcoinBalance, setAddress]);
+
+  // ===== HANDLER : PREMIER ÉCRAN =====
+  const handleConnect = useCallback(() => {
+    setError('');
+    setStep('verify');
+  }, [setError]);
+
   // ===== HANDLER : DÉCONNEXION MANUELLE =====
-  const handleManualDisconnect = async () => {
+  const handleManualDisconnect = useCallback(async () => {
+    console.log('👋 Déconnexion manuelle demandée');
+    
     try {
-      console.log('🔌 Déconnexion manuelle initiée...');
-      
-      // ✅ ÉTAPE 1 : Nettoyer localStorage EN PREMIER
-      localStorage.removeItem('bitcoin_address'); // 🆕 Unifié
-      localStorage.removeItem('btc_auth_token'); // 🆕 Ajouté
-      sessionStorage.setItem('disconnect_timestamp', Date.now().toString());
-      console.log('🗑️ localStorage nettoyé');
-      
-      // ✅ ÉTAPE 2 : Nettoyer les états
-      setAddress(null);
-      setError('');
-      console.log('🗑️ États nettoyés');
-      
-      // ✅ ÉTAPE 3 : Déconnecter le wallet Reown
       await disconnectWallet();
-      console.log('🔌 Wallet Reown déconnecté');
-      
-      // ✅ ÉTAPE 4 : Forcer la redirection (avec un petit délai pour garantir le nettoyage)
-      setTimeout(() => {
-        setStep('connect');
-        console.log('✅ Redirection vers page Connexion');
-      }, 100);
-      
-    } catch (err) {
-      console.error('❌ Erreur déconnexion:', err);
-      
-      // ✅ Forcer quand même la redirection même en cas d'erreur
       localStorage.removeItem('bitcoin_address');
       localStorage.removeItem('btc_auth_token');
       setAddress(null);
       setStep('connect');
-      setError('Déconnexion effectuée avec erreurs mineurs');
+      setIsTestMode(false);
+      console.log('✅ Déconnexion terminée');
+    } catch (err) {
+      console.error('❌ Erreur lors de la déconnexion:', err);
     }
-  };
+  }, [disconnectWallet, setAddress]);
 
-  // ===== HANDLERS DES ÉTAPES =====
-  const handleConnect = useCallback(async () => {
+  // ===== HANDLER : VÉRIFICATION TERMINÉE =====
+  const handleVerify = useCallback(async ({ address, signature, signatureVerified, isTestMode: testMode }) => {
+    console.log('✅ Vérification terminée:', { address, signatureVerified, testMode });
+
     setError('');
-    setTimeout(() => {
-      setStep('verify');
-    }, 1000);
-  }, [setError]);
 
-  const handleVerify = useCallback(async (data) => {
-    console.log('✅ Vérification reçue:', data);
-    
-    const { address, signature, signatureVerified } = data;
-    
-    // Bloquer TOUT accès sans signature vérifiée
-    if (!signatureVerified) {
+    // 🆕 MODE TEST : Accès direct au jeu sans signature
+    if (testMode || !signatureVerified) {
+      console.log('🧪 MODE TEST activé');
+      setIsTestMode(true);
+      
+      try {
+        setAddress(address);
+        localStorage.setItem('bitcoin_address', address);
+        await checkBitcoinBalance(address, null, true); // 🆕 passer isTestMode = true
+        setStep('game');
+      } catch (err) {
+        console.error('❌ Erreur chargement mode test:', err);
+        setError('Erreur lors du chargement du mode test');
+      }
+      return;
+    }
+
+    // MODE AUTHENTIFIÉ : Vérifier signature
+    if (!signature?.verified) {
       console.error('❌ FAILLE BLOQUÉE : Tentative d\'accès sans signature vérifiée');
-      setError('⚠️ Signature cryptographique obligatoire pour accéder au jeu.');
+      setError('⚠️ Signature non vérifiée. Veuillez vous connecter avec votre wallet.');
       setStep('verify');
       return;
     }
     
-    // Vérifier aussi que l'adresse connectée correspond
     if (connectedAddress && connectedAddress !== address) {
       console.error('❌ FAILLE BLOQUÉE : Adresse différente détectée');
       setError('⚠️ L\'adresse connectée ne correspond pas à l\'adresse vérifiée.');
@@ -269,24 +216,16 @@ const BitcoinExclusiveAccess = () => {
       return;
     }
     
-    // Utilisateur déjà créé par verifyAndRegister()
     try {
       setAddress(address);
       localStorage.setItem('bitcoin_address', address);
       console.log('💾 Session sauvegardée avec signature vérifiée');
       
-      // 🆕 MODIFICATION : getUserData appelle maintenant l'Edge Function get-user-data
-      // Plus besoin de JWT car l'Edge Function utilise service_role
       const user = await getUserData(address);
       
       if (user) {
         console.log('✅ Utilisateur chargé depuis BDD');
-        console.log('💰 BTC:', user.btc_balance);
-        console.log('💰 wBTC:', user.wbtc_balance);
-        
-        // Mettre à jour les états via checkBitcoinBalance
         await checkBitcoinBalance(address, signature);
-        
         setStep('authorized');
       } else {
         console.error('❌ Utilisateur non trouvé après création');
@@ -298,10 +237,17 @@ const BitcoinExclusiveAccess = () => {
     }
   }, [checkBitcoinBalance, setAddress, setError, connectedAddress]);
 
-  const handleStartGame = useCallback(async () => {
-    // Vérifier signature en DB avant de lancer le jeu
+  // ===== HANDLER : DÉMARRER JEU (depuis Dashboard) =====
+  const handleGameToPlay = useCallback(async () => {
+    if (isTestMode) {
+      console.log('🧪 Mode test : accès direct au jeu');
+      setStep('game');
+      return;
+    }
+
+    // Mode authentifié : vérifications
     try {
-      const savedAddress = localStorage.getItem('bitcoin_address'); // 🆕 Unifié
+      const savedAddress = localStorage.getItem('bitcoin_address');
       
       if (!savedAddress) {
         throw new Error('Pas de session sauvegardée');
@@ -313,107 +259,135 @@ const BitcoinExclusiveAccess = () => {
         throw new Error('Signature non vérifiée');
       }
       
-      // Vérifier aussi la connexion wallet
       if (modal && !modal.getIsConnectedState()) {
         throw new Error('Wallet déconnecté');
       }
       
-      return await startGame();
+      setStep('game');
       
     } catch (err) {
       console.error('❌ Vérification pré-jeu échouée:', err.message);
       setError('Votre session a expiré. Veuillez vous reconnecter.');
-      localStorage.removeItem('bitcoin_address'); // 🆕 Unifié
-      localStorage.removeItem('btc_auth_token'); // 🆕 Ajouté
-      setStep('connect');
-      return false;
+      setStep('verify');
+      return;
     }
-  }, [modal, startGame, setError]);
 
-  const handleShowHistory = useCallback(async () => {
-    const history = await loadHistory();
-    setTransactions(history);
-    setShowHistory(true);
-  }, [loadHistory]);
-
-  const handleShowStats = useCallback(async () => {
-    const userStats = await loadStats();
-    setStats(userStats);
-    setShowStats(true);
-  }, [loadStats]);
-
-  const handleGameToPlay = useCallback(async () => {
-    if (modal) {
-      const isConnected = modal.getIsConnectedState();
-      
-      if (!isConnected) {
-        console.warn('⚠️ Wallet déconnecté détecté au clic sur Jouer');
+    if (modal && !modal.getIsConnectedState()) {
+      try {
+        console.warn('⚠️ Wallet déconnecté, tentative de reconnexion...');
+        setError('');
         
-        // Rouvrir le modal SANS changer de page
-        try {
-          await modal.open();
+        await modal.open();
+        
+        let attempts = 0;
+        const maxAttempts = 30;
+        
+        const waitForConnection = setInterval(async () => {
+          attempts++;
           
-          // Attendre la reconnexion avec polling
-          let attempts = 0;
-          const maxAttempts = 30; // 30 secondes max
-          
-          const waitForConnection = setInterval(async () => {
-            attempts++;
-            
+          if (modal) {
             const address = modal.getAddress();
-            const connected = modal.getIsConnectedState();
+            const isConnected = modal.getIsConnectedState();
             
-            console.log(`🔄 Tentative ${attempts}: connected=${connected}, address=${address}`);
-            
-            if (address && connected) {
+            if (address && isConnected) {
               clearInterval(waitForConnection);
+              console.log('✅ Reconnexion réussie');
               
-              // Vérifier si cette adresse a déjà signé
-              try {
-                const savedAddress = localStorage.getItem('bitcoin_address'); // 🆕 Unifié
-                
-                if (savedAddress === address) {
-                  console.log('✅ Reconnexion réussie avec adresse connue');
-                  
-                  // Vérifier signature en DB
-                  const user = await getUserData(address);
-                  
-                  if (user?.signature_proof?.verified) {
-                    console.log('✅ Signature valide → Lancer le jeu');
-                    setError('');
-                    setStep('game');
-                  } else {
-                    setError('Signature manquante. Veuillez vous authentifier.');
-                    setStep('verify');
-                  }
-                } else {
-                  setError('Adresse différente détectée. Veuillez utiliser la bonne adresse.');
-                  setStep('verify');
-                }
-              } catch (err) {
-                setError('Erreur lors de la vérification. Réessayez.');
+              const savedAddress = localStorage.getItem('bitcoin_address');
+              if (address === savedAddress) {
+                setStep('game');
+              } else {
+                setError('⚠️ Adresse reconnectée différente. Veuillez utiliser la bonne adresse.');
+                setStep('verify');
               }
             } else if (attempts >= maxAttempts) {
               clearInterval(waitForConnection);
               setError('Délai de reconnexion dépassé. Veuillez réessayer.');
             }
-          }, 1000);
-          
-        } catch (err) {
-          setError('Erreur lors de l\'ouverture du wallet.');
-        }
-        return;
+          }
+        }, 1000);
+        
+      } catch (err) {
+        setError('Erreur lors de l\'ouverture du wallet.');
       }
+      return;
     }
-    
+
     setError('');
     setStep('game');
-  }, [modal, setError]);
+  }, [modal, setError, isTestMode]);
 
+  // ===== HANDLER : LANCER UNE PARTIE =====
+  const handleStartGame = useCallback(async () => {
+    // 🆕 En mode test, pas de vérification
+    if (isTestMode) {
+      console.log('🧪 Mode test : lancement partie sans vérification');
+      return await startGame(true); // 🆕 passer isTestMode = true
+    }
+
+    // Mode authentifié : vérifications strictes
+    try {
+      const savedAddress = localStorage.getItem('bitcoin_address');
+      
+      if (!savedAddress) {
+        throw new Error('Pas de session sauvegardée');
+      }
+      
+      const user = await getUserData(savedAddress);
+      
+      if (!user?.signature_proof?.verified) {
+        throw new Error('Signature non vérifiée');
+      }
+      
+      if (modal && !modal.getIsConnectedState()) {
+        throw new Error('Wallet déconnecté');
+      }
+      
+      return await startGame(false); // 🆕 passer isTestMode = false
+      
+    } catch (err) {
+      console.error('❌ Vérification pré-jeu échouée:', err.message);
+      setError('Votre session a expiré. Veuillez vous reconnecter.');
+      setStep('verify');
+      throw err;
+    }
+  }, [startGame, modal, setError, setStep, isTestMode]);
+
+  // ===== HANDLER : RETOUR DEPUIS JEU =====
   const handleGameBack = useCallback(() => {
     setError('');
-    setStep('authorized');
-  }, [setError]);
+    
+    // 🆕 En mode test, retour à verify
+    if (isTestMode) {
+      setStep('verify');
+    } else {
+      setStep('authorized');
+    }
+  }, [setError, isTestMode]);
+
+  // ===== HANDLER : HISTORIQUE =====
+  const handleShowHistory = useCallback(async () => {
+    if (isTestMode) {
+      setError('L\'historique n\'est pas disponible en mode test');
+      return;
+    }
+
+    const history = await loadHistory();
+    setTransactions(history);
+    setShowHistory(true);
+  }, [loadHistory, isTestMode, setError]);
+
+  // ===== HANDLER : STATISTIQUES =====
+  const handleShowStats = useCallback(async () => {
+    if (isTestMode) {
+      setError('Les statistiques ne sont pas disponibles en mode test');
+      return;
+    }
+
+    const userStats = await loadStats();
+    setStats(userStats);
+    setShowStats(true);
+  }, [loadStats, isTestMode, setError]);
 
   // ===== ÉCRAN DE CHARGEMENT =====
   if (isCheckingSession) {
@@ -437,10 +411,11 @@ const BitcoinExclusiveAccess = () => {
           connectedAddress={connectedAddress}
           connectedWallet={connectedWallet}
           onDisconnect={handleManualDisconnect}
+          isTestMode={isTestMode}
         />
 
         <div className="bg-white rounded-2xl shadow-2xl p-8 mb-6">
-          <ProgressBar currentStep={step} />
+          <ProgressBar currentStep={step} isTestMode={isTestMode} />
 
           {step === 'connect' && (
             <ConnectStep 
@@ -478,6 +453,7 @@ const BitcoinExclusiveAccess = () => {
               onBack={handleGameBack}
               loading={loading}
               error={error}
+              isTestMode={isTestMode}
             />
           )}
         </div>

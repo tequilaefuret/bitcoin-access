@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2 } from 'lucide-react';
+import { KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2, TestTube } from 'lucide-react';
 import useReownWallet from '../../hooks/useReownWallet';
 import { verifyAndRegister, getUserData } from '../../supabaseClient';
 
 export default function VerifyStep({ onVerified }) {
-  const [connectionMethod, setConnectionMethod] = useState(null);
+  const [showManualInput, setShowManualInput] = useState(false);
   const [manualAddress, setManualAddress] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [error, setError] = useState('');
   const [verificationStep, setVerificationStep] = useState('idle');
+  const [isCheckingDB, setIsCheckingDB] = useState(false);
+  const [hasCheckedDB, setHasCheckedDB] = useState(false); // 🆕 Flag pour éviter double vérification
 
   const {
     connectWallet,
@@ -20,6 +22,13 @@ export default function VerifyStep({ onVerified }) {
 
   // ===== FONCTION 1 : Vérifier signature en DB et rediriger =====
   const checkSignatureAndRedirect = useCallback(async (address) => {
+    // 🆕 Vérifier qu'il y a une vraie session stockée
+    const hasStoredSession = localStorage.getItem('walletConnected') === 'true';
+    if (!hasStoredSession) {
+      console.log('⚠️ Pas de session stockée, ignorer auto-connexion');
+      return false;
+    }
+    
     try {
       console.log('🔍 Vérification signature en DB pour:', address);
       
@@ -28,7 +37,7 @@ export default function VerifyStep({ onVerified }) {
       if (user?.signature_proof?.verified) {
         console.log('✅ Signature déjà en DB → Direct au Dashboard sans re-signer');
         
-        setVerificationStep('verifying');
+        setVerificationStep('verifying'); // 🆕 Passer en mode vérification
         
         onVerified({
           address: user.bitcoin_address,
@@ -47,7 +56,7 @@ export default function VerifyStep({ onVerified }) {
       console.log('⚠️ Erreur vérification DB:', err.message);
       return false;
     }
-  }, [onVerified, setVerificationStep]);
+  }, [onVerified]);
 
   // ===== FONCTION 2 : Flux de signature =====
   const handleSignatureFlow = async (address) => {
@@ -70,163 +79,113 @@ export default function VerifyStep({ onVerified }) {
     } catch (err) {
       console.error('❌ Erreur lors de la signature:', err);
       setVerificationStep('idle');
+      setHasCheckedDB(false); // 🆕 Permettre retry
       
       if (err.message.includes('refusée') || err.message.includes('rejected')) {
-        setError('❌ Signature refusée. Vous devez signer le message pour prouver que vous possédez cette adresse.');
+        setError('Signature refusée. Vous devez signer le message pour prouver que vous possédez cette adresse.');
       } else if (err.message.includes('not supported')) {
-        setError('❌ Votre wallet ne supporte pas la signature de messages. Essayez avec Xverse ou Leather.');
+        setError('Votre wallet ne supporte pas la signature de messages.');
       } else {
-        setError(err.message || 'Erreur lors de la signature');
+        setError(`Erreur : ${err.message}`);
       }
     }
   };
 
-  // ===== FONCTION 3 : Vérification solde + signature serveur =====
-  const handleWalletVerification = async (address, signature) => {
-    console.log('🟢 ÉTAPE 2 : Vérification du solde BTC pour', address);
-    setIsVerifying(true);
-
+  // ===== FONCTION 3 : Vérification finale =====
+  const handleWalletVerification = async (address, signatureData) => {
     try {
-      const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK || 'mainnet';
+      console.log('🔐 ÉTAPE 2 : Vérification cryptographique');
+      console.log('📦 Données reçues:', signatureData);
+
+      // 🆕 Extraire les bonnes valeurs selon la structure
+      const finalAddress = signatureData.address || address;
+      const finalMessage = signatureData.message;
+      const finalSignature = signatureData.signature?.signature || signatureData.signature;
       
-      console.log('🔐 Vérification signature serveur...');
-      
-      const verificationResult = await verifyAndRegister({
-        address: address,
-        message: signature.message,
-        signature: signature.signature,
-        network: networkConfig
+      // Déterminer le réseau
+      const bitcoinNetwork = process.env.REACT_APP_BITCOIN_NETWORK || 'testnet4';
+      const network = (bitcoinNetwork === 'bitcoin' || bitcoinNetwork === 'mainnet') ? 'mainnet' : 'testnet';
+
+      console.log('📤 Envoi à verifyAndRegister:', {
+        address: finalAddress,
+        message: finalMessage?.substring(0, 50) + '...',
+        signature: finalSignature?.substring(0, 20) + '...',
+        network
       });
 
-      if (!verificationResult.valid) {
-        const errorMsg = verificationResult.error || 'Signature invalide';
-        throw new Error(errorMsg);
+      const verifyResponse = await verifyAndRegister({
+        address: finalAddress,
+        message: finalMessage,
+        signature: finalSignature,
+        network
+      });
+
+      if (!verifyResponse.success && !verifyResponse.valid) {
+        throw new Error(verifyResponse.error || 'Signature invalide');
       }
 
-      console.log('✅ Signature vérifiée cryptographiquement côté serveur !');
-      
-      const confirmedBalanceBTC = verificationResult.user.btc_balance;
-      console.log('💰 Solde confirmé:', confirmedBalanceBTC, 'BTC (depuis Edge Function)');
-      
-      if (verificationResult.user.signature_proof?.addressType) {
-        console.log('📋 Type d\'adresse:', verificationResult.user.signature_proof.addressType);
-      }
+      console.log('✅ Signature valide ! Utilisateur créé/mis à jour');
 
+      const userData = verifyResponse.user;
+
+      localStorage.setItem('walletConnected', 'true');
+      
       onVerified({
-        address: address,
-        balance: confirmedBalanceBTC,
+        address: userData.bitcoin_address,
+        balance: userData.btc_balance,
         method: 'wallet',
-        signature: verificationResult.user.signature_proof,
+        signature: userData.signature_proof,
         signatureVerified: true
       });
 
     } catch (err) {
-      console.error('❌ Erreur vérification:', err);
-      
-      // Messages d'erreur améliorés
-      if (err.message.includes('cryptographiquement') || err.message.includes('invalide')) {
-        setError('❌ Signature invalide\n\n' + err.message);
-      } else if (err.message.includes('Solde minimum')) {
-        setError('💰 Solde insuffisant\n\n' + err.message);
-      } else {
-        setError(err.message || 'Impossible de vérifier l\'adresse.');
-      }
-      
+      console.error('❌ Vérification échouée:', err);
       setVerificationStep('idle');
-    } finally {
-      setIsVerifying(false);
+      setError(`❌ ${err.message}`);
     }
   };
 
-  // ===== EFFET : Détection wallet déjà connecté =====
-  useEffect(() => {
-    if (connectionMethod === null && modal) {
-      const address = modal.getAddress();
-      const isConnected = modal.getIsConnectedState();
-      
-      if (address && isConnected) {
-        console.log('🎯 Wallet déjà connecté au chargement:', address);
-        setConnectionMethod('wallet');
-        checkSignatureAndRedirect(address);
-      }
-    }
-  }, [connectionMethod, modal, checkSignatureAndRedirect]);
-
-  // ===== EFFET : Redirection auto si wallet connecté + signature existe =====
-  useEffect(() => {
-    let isMounted = true;
-    let hasChecked = false;
-    
-    const checkAndRedirect = async () => {
-      if (hasChecked || !modal) return;
-      
-      if (connectionMethod === 'wallet' && verificationStep === 'idle') {
-        const address = modal.getAddress();
-        const isConnected = modal.getIsConnectedState();
-        
-        if (address && isConnected) {
-          console.log('🔄 Wallet connecté détecté, vérification signature DB...');
-          hasChecked = true;
-          
-          if (isMounted) {
-            const hasSignature = await checkSignatureAndRedirect(address);
-            
-            if (!hasSignature) {
-              console.log('ℹ️ Pas de signature, bouton "Signer le message" affiché');
-            }
-          }
-        }
-      }
-    };
-    
-    const timer = setTimeout(checkAndRedirect, 300);
-    
-    return () => {
-      isMounted = false;
-      clearTimeout(timer);
-    };
-  }, [connectionMethod, verificationStep, modal, checkSignatureAndRedirect]);
-
-  // ===== FONCTION 4 : Connexion wallet =====
-  const handleWalletConnect = async () => {
+  // ===== HANDLER : Connexion Wallet =====
+  const handleWalletConnect = useCallback(async () => {
     setError('');
+    
+    if (!modal) {
+      setError('Modal non initialisé. Veuillez recharger la page.');
+      return;
+    }
 
-    // CAS 1 : Wallet déjà connecté (reconnexion)
-    if (modal) {
-      const existingAddress = modal.getAddress();
-      const isConnected = modal.getIsConnectedState();
+    const address = modal.getAddress();
+    const isConnected = modal.getIsConnectedState();
+
+    if (address && isConnected) {
+      console.log('✅ Wallet déjà connecté:', address);
       
-      if (existingAddress && isConnected) {
-        console.log('🔐 Wallet déjà connecté, vérification DB...');
-        
-        const userData = await getUserData(existingAddress);
-        
-        if (userData?.signature_proof?.verified) {
-          console.log('✅ Signature déjà en DB → Direct au Dashboard');
-          
-          onVerified({
-            address: userData.bitcoin_address,
-            balance: userData.btc_balance,
-            method: 'wallet',
-            signature: userData.signature_proof,
-            signatureVerified: true
-          });
-          return;
-        } else {
-          console.log('⚠️ Pas de signature → Demander signature');
-          await handleSignatureFlow(existingAddress);
-        }
+      // 🆕 Éviter double vérification
+      if (hasCheckedDB) {
+        console.log('⚠️ Vérification DB déjà effectuée, affichage bouton signature');
         return;
       }
+      
+      setIsCheckingDB(true);
+      setHasCheckedDB(true);
+      
+      const alreadySigned = await checkSignatureAndRedirect(address);
+      
+      // 🆕 Garder le loader si redirection en cours
+      if (!alreadySigned) {
+        setIsCheckingDB(false);
+        // 🆕 Déclencher automatiquement la signature
+        await handleSignatureFlow(address);
+      }
+      
+      return;
     }
 
-    // CAS 2 : Nouvelle connexion
+    console.log('🔌 Ouverture du modal de connexion...');
     setVerificationStep('connecting');
 
     try {
-      await connectWallet();
-
-      console.log('📱 Modal ouvert, attente connexion...');
+      await modal.open();
 
       let hasConnected = false;
       let attempts = 0;
@@ -239,17 +198,22 @@ export default function VerifyStep({ onVerified }) {
           const address = modal.getAddress();
           const connected = modal.getIsConnectedState();
           
-          // ✅ Connexion détectée
           if (address && connected && !hasConnected) {
             console.log('🎉 Nouvelle connexion réussie:', address);
             hasConnected = true;
             clearInterval(checkInterval);
+            
+            setIsCheckingDB(true);
+            setHasCheckedDB(true);
             
             const userData = await getUserData(address);
             
             if (userData?.signature_proof?.verified) {
               console.log('✅ Signature déjà en DB → Direct au Dashboard');
               
+              localStorage.setItem('walletConnected', 'true');
+
+              // 🆕 Garder isCheckingDB=true jusqu'à redirection
               onVerified({
                 address: userData.bitcoin_address,
                 balance: userData.btc_balance,
@@ -260,12 +224,13 @@ export default function VerifyStep({ onVerified }) {
               return;
             } else {
               console.log('🆕 Nouvelle adresse → Demander signature');
+              setIsCheckingDB(false);
+              // 🆕 Déclencher automatiquement la signature
               await handleSignatureFlow(address);
             }
             return;
           }
           
-          // Timeout uniquement
           if (attempts >= maxAttempts) {
             clearInterval(checkInterval);
             if (!hasConnected) {
@@ -277,309 +242,257 @@ export default function VerifyStep({ onVerified }) {
       }, 1000);
 
     } catch (err) {
-      setError(walletError || 'Erreur lors de l\'ouverture du wallet');
+      console.error('❌ Erreur ouverture modal:', err);
       setVerificationStep('idle');
-      console.error(err);
+      setError('Erreur lors de l\'ouverture du wallet.');
     }
-  };
+  }, [modal, checkSignatureAndRedirect, onVerified, hasCheckedDB]);
 
-  // ===== FONCTION 5 : Vérification manuelle =====
+  // ===== HANDLER : Saisie Manuelle (Mode Test) =====
   const handleManualVerify = async () => {
-    setError('');
-    
-    const btcRegex = /^(bc1|tb1|[13mn2])[a-zA-HJ-NP-Z0-9]{25,62}$/;
-    if (!btcRegex.test(manualAddress)) {
-      setError('Adresse Bitcoin invalide');
+    if (!manualAddress.trim()) {
+      setError('Veuillez entrer une adresse Bitcoin valide');
       return;
     }
 
     setIsVerifying(true);
+    setError('');
 
     try {
-      const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK;
-      let apiUrl;
+      console.log('🧪 MODE TEST : Vérification adresse manuelle', manualAddress);
+
+      // Vérifier le format de l'adresse
+      const bitcoinNetwork = process.env.REACT_APP_BITCOIN_NETWORK || 'testnet4';
+      const isMainnet = bitcoinNetwork === 'bitcoin' || bitcoinNetwork === 'mainnet';
       
-      if (networkConfig === 'testnet4') {
-        apiUrl = `https://mempool.space/testnet4/api/address/${manualAddress}`;
-      } else if (networkConfig === 'testnet' || networkConfig === 'testnet3') {
-        apiUrl = `https://mempool.space/testnet/api/address/${manualAddress}`;
-      } else {
-        apiUrl = `https://mempool.space/api/address/${manualAddress}`;
+      const validPrefixes = isMainnet 
+        ? ['bc1', '1', '3'] 
+        : ['tb1', 'bcrt1', 'm', 'n', '2'];
+      
+      const isValidFormat = validPrefixes.some(prefix => manualAddress.startsWith(prefix));
+      
+      if (!isValidFormat) {
+        throw new Error(`Adresse invalide pour le réseau ${isMainnet ? 'mainnet' : 'testnet'}`);
       }
 
-      const response = await fetch(apiUrl);
-      if (!response.ok) throw new Error('Erreur API Mempool');
-      
-      const data = await response.json();
-      const confirmedBalance = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
-      const confirmedBalanceBTC = confirmedBalance / 100000000;
-
-      if (confirmedBalanceBTC < 0.000001) {
-        setError('Solde minimum requis : 0.000001 BTC confirmé');
-        setIsVerifying(false);
-        return;
-      }
-
+      // Transmettre au parent en mode TEST (sans signature)
       onVerified({
         address: manualAddress,
-        balance: confirmedBalanceBTC,
+        balance: 0,
         method: 'manual',
-        signature: null
+        signature: null,
+        signatureVerified: false,
+        isTestMode: true
       });
 
     } catch (err) {
-      setError('Impossible de vérifier l\'adresse. Réessayez plus tard.');
-      console.error(err);
+      console.error('❌ Erreur vérification manuelle:', err);
+      setError(err.message || 'Erreur lors de la vérification de l\'adresse');
     } finally {
       setIsVerifying(false);
     }
   };
 
-  // ===== RENDU : Choix de méthode =====
-  if (!connectionMethod) {
-    return (
-      <div className="max-w-2xl mx-auto p-6">
-        <h2 className="text-2xl font-bold mb-6 text-center">
-          Comment souhaitez-vous vous connecter ?
-        </h2>
-
-        <div className="grid md:grid-cols-2 gap-4">
-          <button
-            onClick={() => setConnectionMethod('manual')}
-            className="p-6 border-2 border-gray-300 rounded-lg hover:border-orange-500 hover:bg-orange-50 transition-all group"
-          >
-            <KeyRound className="w-12 h-12 mx-auto mb-4 text-gray-600 group-hover:text-orange-500" />
-            <h3 className="font-bold text-lg mb-2">Saisie manuelle</h3>
-            <p className="text-sm text-gray-600">
-              Entrez votre adresse Bitcoin manuellement
-            </p>
-            <p className="text-xs text-gray-500 mt-2">
-              ✓ Simple et rapide<br />
-              ⚠️ Sans preuve de propriété
-            </p>
-          </button>
-
-          <button
-            onClick={() => setConnectionMethod('wallet')}
-            className="p-6 border-2 border-green-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-all group relative"
-          >
-            <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded-full font-bold">
-              RECOMMANDÉ
-            </div>
-            <Shield className="w-12 h-12 mx-auto mb-4 text-gray-600 group-hover:text-green-500" />
-            <h3 className="font-bold text-lg mb-2">Connexion Wallet</h3>
-            <p className="text-sm text-gray-600">
-              Connectez votre wallet Bitcoin
-            </p>
-            <p className="text-xs text-green-600 mt-2 font-medium">
-              ✓ Signature cryptographique<br />
-              ✓ Preuve de propriété sécurisée
-            </p>
-          </button>
-        </div>
-
-        <div className="mt-6 p-4 bg-blue-50 rounded-lg flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-800">
-            <p className="font-semibold mb-1">Wallets compatibles :</p>
-            <p>Xverse • Leather • OKX • Phantom</p>
-            <p className="text-xs text-blue-600 mt-2">
-              ✓ Tous types d'adresses supportés (Legacy, SegWit, Taproot)
-            </p>
-          </div>
-        </div>
+  return (
+    <div className="space-y-6">
+      <div className="text-center">
+        <KeyRound className="w-20 h-20 text-orange-500 mx-auto mb-4" />
+        <h2 className="text-2xl font-bold mb-2">Vérification Bitcoin</h2>
+        <p className="text-gray-600">
+          Connectez votre wallet pour accéder à votre espace personnel
+        </p>
       </div>
-    );
-  }
 
-  // ===== RENDU : Saisie manuelle =====
-  if (connectionMethod === 'manual') {
-    return (
-      <div className="max-w-md mx-auto p-6">
-        <button
-          onClick={() => setConnectionMethod(null)}
-          className="text-sm text-gray-600 hover:text-gray-800 mb-4"
-        >
-          ← Retour au choix de méthode
-        </button>
-
-        <h2 className="text-2xl font-bold mb-6">Vérifiez votre adresse Bitcoin</h2>
-
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-          <p className="text-sm text-yellow-800">
-            ⚠️ Sans signature cryptographique, vous ne pourrez pas prouver la propriété de l'adresse
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">
-              Adresse Bitcoin
-            </label>
-            <input
-              type="text"
-              value={manualAddress}
-              onChange={(e) => setManualAddress(e.target.value)}
-              placeholder="bc1... ou 1... ou 3..."
-              className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-orange-500"
-              disabled={isVerifying}
-            />
-          </div>
-
-          {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm whitespace-pre-line">
-              {error}
+      {!showManualInput ? (
+        <>
+          {/* 🆕 ENCART : Vérification DB */}
+          {isCheckingDB && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center gap-3">
+                <Loader className="w-5 h-5 animate-spin text-blue-600" />
+                <span className="font-medium text-blue-900">Connexion à l'adresse...</span>
+              </div>
             </div>
           )}
 
-          <button
-            onClick={handleManualVerify}
-            disabled={isVerifying || !manualAddress}
-            className="w-full bg-orange-500 text-white py-3 rounded-lg font-bold hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {isVerifying ? (
-              <>
-                <Loader className="w-5 h-5 animate-spin" />
-                Vérification...
-              </>
-            ) : (
-              <>
-                Vérifier mon solde
-                <ArrowRight className="w-5 h-5" />
-              </>
-            )}
-          </button>
-
-          <p className="text-xs text-gray-500 text-center">
-            Minimum requis : 0.000001 BTC confirmé (≥1 bloc)
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // ===== RENDU : Connexion wallet =====
-  if (connectionMethod === 'wallet') {
-    return (
-      <div className="max-w-md mx-auto p-6">
-        <button
-          onClick={() => {
-            setConnectionMethod(null);
-            setVerificationStep('idle');
-          }}
-          className="text-sm text-gray-600 hover:text-gray-800 mb-4"
-          disabled={verificationStep !== 'idle'}
-        >
-          ← Retour au choix de méthode
-        </button>
-
-        <h2 className="text-2xl font-bold mb-6">Connexion Wallet Bitcoin</h2>
-
-        {verificationStep !== 'idle' && (
-          <div className="bg-white rounded-lg border-2 border-gray-200 p-4 mb-4 space-y-3">
-            <div className={`flex items-center gap-3 ${
-              verificationStep === 'connecting' ? 'text-blue-600' : 
-              verificationStep === 'signing' || verificationStep === 'verifying' ? 'text-green-600' : 
-              'text-gray-400'
-            }`}>
-              {verificationStep === 'connecting' ? (
-                <Loader className="w-5 h-5 animate-spin" />
-              ) : verificationStep === 'signing' || verificationStep === 'verifying' ? (
-                <CheckCircle2 className="w-5 h-5" />
-              ) : (
-                <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
-              )}
-              <span className="font-medium">Connexion au wallet</span>
-            </div>
-
-            <div className={`flex items-center gap-3 ${
-              verificationStep === 'signing' ? 'text-blue-600' : 
-              verificationStep === 'verifying' ? 'text-green-600' : 
-              'text-gray-300'
-            }`}>
-              {verificationStep === 'signing' ? (
-                <Loader className="w-5 h-5 animate-spin" />
-              ) : verificationStep === 'verifying' ? (
-                <CheckCircle2 className="w-5 h-5" />
-              ) : (
-                <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
-              )}
-              <span className="font-medium">Signature du message</span>
-            </div>
-
-            <div className={`flex items-center gap-3 ${
-              verificationStep === 'verifying' ? 'text-blue-600' : 'text-gray-300'
-            }`}>
-              {verificationStep === 'verifying' ? (
-                <Loader className="w-5 h-5 animate-spin" />
-              ) : (
-                <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
-              )}
-              <span className="font-medium">Vérification cryptographique</span>
-            </div>
-          </div>
-        )}
-
-        <div className="space-y-4">
-          <button
-            onClick={handleWalletConnect}
-            disabled={isConnecting || !modal || (verificationStep !== 'idle' && verificationStep !== 'connecting')}
-            className="w-full bg-gradient-to-r from-green-500 to-blue-500 text-white py-3 rounded-lg font-bold hover:from-green-600 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {!modal ? (
-              <>
-                <Loader className="w-5 h-5 animate-spin" />
-                Initialisation...
-              </>
-            ) : verificationStep === 'signing' || verificationStep === 'verifying' ? (
-              <>
-                <Loader className="w-5 h-5 animate-spin" />
-                {verificationStep === 'signing' ? 'Signature en cours...' : 'Vérification...'}
-              </>
-            ) : (() => {
-                const address = modal?.getAddress();
-                const isConnected = modal?.getIsConnectedState();
-                
-                return (address && isConnected) ? (
-                  <>
-                    <Shield className="w-5 h-5" />
-                    Signer le message
-                  </>
+          {/* MODE PRINCIPAL : Connexion Wallet */}
+          {!isCheckingDB && verificationStep !== 'idle' && verificationStep !== 'connecting' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+              <div className={`flex items-center gap-3 ${
+                verificationStep === 'signing' ? 'text-blue-600' : 'text-gray-300'
+              }`}>
+                {verificationStep === 'signing' ? (
+                  <Loader className="w-5 h-5 animate-spin" />
+                ) : verificationStep === 'verifying' ? (
+                  <CheckCircle2 className="w-5 h-5" />
                 ) : (
-                  <>
-                    <Shield className="w-5 h-5" />
-                    Connecter mon wallet
-                  </>
-                );
-              })()}
-          </button>
+                  <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
+                )}
+                <span className="font-medium">Signature du message</span>
+              </div>
 
-          {(error || walletError) && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm whitespace-pre-line">
-              {error || walletError}
+              <div className={`flex items-center gap-3 ${
+                verificationStep === 'verifying' ? 'text-blue-600' : 'text-gray-300'
+              }`}>
+                {verificationStep === 'verifying' ? (
+                  <Loader className="w-5 h-5 animate-spin" />
+                ) : (
+                  <div className="w-5 h-5 border-2 border-gray-300 rounded-full" />
+                )}
+                <span className="font-medium">Vérification cryptographique</span>
+              </div>
             </div>
           )}
 
-          <div className="p-4 bg-green-50 rounded-lg space-y-3 border border-green-200">
-            <p className="text-sm font-semibold text-green-900 flex items-center gap-2">
-              <Shield className="w-4 h-4" />
-              Comment ça fonctionne ?
-            </p>
-            <ol className="text-sm text-green-800 space-y-2 list-decimal list-inside">
-              <li>Cliquez sur "Connecter mon wallet"</li>
-              <li>Choisissez votre wallet (Xverse, Leather, OKX ou Phantom)</li>
-              <li>Autorisez la connexion dans votre wallet</li>
-              <li>Signez un message pour prouver la propriété</li>
-              <li>Vérification automatique du solde BTC</li>
-            </ol>
-            <p className="text-xs text-green-700 mt-2 pt-2 border-t border-green-200">
-              ✓ Tous les types d'adresses Bitcoin sont supportés : Legacy (1...), SegWit (bc1q...) et Taproot (bc1p...)
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+          <div className="space-y-4">
+            <button
+              onClick={handleWalletConnect}
+              disabled={isConnecting || !modal || isCheckingDB || (verificationStep !== 'idle' && verificationStep !== 'connecting')}
+              className="w-full bg-gradient-to-r from-green-500 to-blue-500 text-white py-3 rounded-lg font-bold hover:from-green-600 hover:to-blue-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {!modal ? (
+                <>
+                  <Loader className="w-5 h-5 animate-spin" />
+                  Initialisation...
+                </>
+              ) : isCheckingDB ? (
+                <>
+                  <Loader className="w-5 h-5 animate-spin" />
+                  Vérification...
+                </>
+              ) : verificationStep === 'signing' || verificationStep === 'verifying' ? (
+                <>
+                  <Loader className="w-5 h-5 animate-spin" />
+                  {verificationStep === 'signing' ? 'Signature en cours...' : 'Vérification...'}
+                </>
+              ) : (() => {
+                  const address = modal?.getAddress();
+                  const isConnected = modal?.getIsConnectedState();
+                  
+                  return (address && isConnected && hasCheckedDB) ? (
+                    <>
+                      <Shield className="w-5 h-5" />
+                      Signer le message
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="w-5 h-5" />
+                      Connecter mon wallet
+                    </>
+                  );
+                })()}
+            </button>
 
-  return null;
+            {/* Lien discret pour le mode test */}
+            <div className="text-center">
+              <button
+                onClick={() => setShowManualInput(true)}
+                className="text-sm text-gray-500 hover:text-orange-600 underline flex items-center gap-1 mx-auto"
+              >
+                <TestTube className="w-4 h-4" />
+                Vous n'avez pas de wallet ? Testez quand même
+              </button>
+            </div>
+
+            {(error || walletError) && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm whitespace-pre-line">
+                {error || walletError}
+              </div>
+            )}
+
+            <div className="p-4 bg-green-50 rounded-lg space-y-3 border border-green-200">
+              <p className="text-sm font-semibold text-green-900 flex items-center gap-2">
+                <Shield className="w-4 h-4" />
+                Comment ça fonctionne ?
+              </p>
+              <ul className="text-sm text-green-800 space-y-2">
+                <li className="flex gap-2">
+                  <span>•</span>
+                  <span>Vous connectez votre wallet Bitcoin (Xverse, Leather, OKX, Phantom...)</span>
+                </li>
+                <li className="flex gap-2">
+                  <span>•</span>
+                  <span>Vous signez un message pour prouver que vous possédez l'adresse</span>
+                </li>
+                <li className="flex gap-2">
+                  <span>•</span>
+                  <span>Votre signature est vérifiée cryptographiquement</span>
+                </li>
+                <li className="flex gap-2">
+                  <span>•</span>
+                  <span>Votre solde BTC est converti en wBTC pour jouer</span>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          {/* MODE TEST : Saisie Manuelle */}
+          <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
+            <div className="flex items-start gap-3 mb-3">
+              <TestTube className="w-6 h-6 text-yellow-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-yellow-900 mb-1">Mode Test</h3>
+                <p className="text-sm text-yellow-800">
+                  Vous pouvez tester le site avec n'importe quelle adresse Bitcoin. 
+                  Ce mode vous permet d'accéder au mini-jeu uniquement, sans vérification de propriété.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Adresse Bitcoin
+              </label>
+              <input
+                type="text"
+                value={manualAddress}
+                onChange={(e) => setManualAddress(e.target.value)}
+                placeholder="bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              />
+            </div>
+
+            <button
+              onClick={handleManualVerify}
+              disabled={isVerifying || !manualAddress.trim()}
+              className="w-full bg-orange-500 text-white py-3 rounded-lg font-bold hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isVerifying ? (
+                <>
+                  <Loader className="w-5 h-5 animate-spin" />
+                  Vérification...
+                </>
+              ) : (
+                <>
+                  <ArrowRight className="w-5 h-5" />
+                  Tester avec cette adresse
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                setShowManualInput(false);
+                setManualAddress('');
+                setError('');
+              }}
+              className="w-full text-gray-600 py-2 hover:text-gray-800"
+            >
+              ← Retour à la connexion wallet
+            </button>
+
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+                {error}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }

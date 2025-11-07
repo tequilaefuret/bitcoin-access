@@ -1,4 +1,4 @@
-// src/supabaseClient.js - VERSION SÉCURISÉE AVEC JWT
+// src/supabaseClient.js - VERSION SÉCURISÉE AVEC JWT + CORRECTION VERIFY
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
@@ -21,7 +21,7 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 /**
  * Stocker le JWT dans localStorage
  */
-function storeJWT(jwt: string) {
+function storeJWT(jwt) {
   localStorage.setItem('btc_auth_token', jwt);
   console.log('✅ JWT stocké');
 }
@@ -29,7 +29,7 @@ function storeJWT(jwt: string) {
 /**
  * Récupérer le JWT depuis localStorage
  */
-function getJWT(): string | null {
+function getJWT() {
   return localStorage.getItem('btc_auth_token');
 }
 
@@ -53,16 +53,30 @@ function clearJWT() {
  */
 export async function verifyAndRegister({ address, message, signature, network }) {
   try {
-    console.log('🔐 [verifyAndRegister] Démarrage...');
+    console.log('🔐 [VERIFY-AND-REGISTER] Démarrage...');
     console.log('📍 Adresse:', address);
     console.log('🌐 Réseau:', network);
+    console.log('✍️ Message:', message?.substring(0, 50) + '...');
+    
+    // 🆕 VALIDATION DES PARAMÈTRES
+    if (!address || !message || !signature || !network) {
+      console.error('❌ [VERIFY-AND-REGISTER] Paramètres manquants', {
+        address: !!address,
+        message: !!message, 
+        signature: !!signature,
+        network: !!network
+      });
+      throw new Error('Paramètres manquants pour la vérification');
+    }
     
     // Extraction signature si format objet Xverse
     let signatureString = signature;
     if (typeof signature === 'object' && signature.signature) {
       signatureString = signature.signature;
+      console.log('📝 Signature extraite de l\'objet');
     }
     
+    console.log('🚀 Appel Edge Function...');
     const { data, error } = await supabase.functions.invoke('verify-and-register', {
       body: { 
         address, 
@@ -78,6 +92,7 @@ export async function verifyAndRegister({ address, message, signature, network }
     }
 
     if (!data || !data.valid) {
+      console.error('❌ Vérification échouée:', data);
       throw new Error(data?.error || 'Vérification échouée');
     }
 
@@ -326,16 +341,5 @@ export async function getUserStats(address) {
   }
 }
 
-/**
- * Déconnexion
- */
-export async function logout() {
-  try {
-    console.log('🚪 Déconnexion...');
-    clearJWT();
-    await supabase.auth.signOut();
-    console.log('✅ Déconnexion réussie');
-  } catch (error) {
-    console.error('❌ Erreur déconnexion:', error);
-  }
-}
+// Export functions pour nettoyage
+export { clearJWT, getJWT };

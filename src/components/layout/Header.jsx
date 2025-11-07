@@ -1,8 +1,8 @@
 // src/components/layout/Header.jsx
 import React, { useState } from 'react';
-import { Bitcoin, Wallet, LogOut, ChevronDown } from 'lucide-react';
+import { Bitcoin, Wallet, LogOut, ChevronDown, TestTube } from 'lucide-react';
 
-const Header = ({ connectedAddress, connectedWallet, onDisconnect }) => {
+const Header = ({ connectedAddress, connectedWallet, onDisconnect, isTestMode }) => {
   const [showDropdown, setShowDropdown] = useState(false);
 
   // Formater l'adresse : 6 premiers caractères ... 4 derniers
@@ -54,16 +54,6 @@ const Header = ({ connectedAddress, connectedWallet, onDisconnect }) => {
                   </p>
                 </div>
 
-                {/* Info session */}
-                <div className="px-4 py-3 bg-green-50 border-b border-green-100">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-xs text-green-700 font-medium">
-                      Session active
-                    </p>
-                  </div>
-                </div>
-
                 {/* Bouton déconnexion */}
                 <button
                   onClick={() => {
@@ -73,7 +63,9 @@ const Header = ({ connectedAddress, connectedWallet, onDisconnect }) => {
                   className="w-full px-4 py-3 text-left flex items-center gap-3 text-red-600 hover:bg-red-50 transition-colors duration-150 group"
                 >
                   <LogOut className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-150" />
-                  <span className="font-medium text-sm">Déconnecter le wallet</span>
+                  <span className="font-medium text-sm">
+                    {isTestMode ? 'Quitter le mode test' : 'Déconnecter le wallet'}
+                  </span>
                 </button>
               </div>
             )}
@@ -95,7 +87,7 @@ const Header = ({ connectedAddress, connectedWallet, onDisconnect }) => {
       <div className="mt-4 bg-purple-50 border-l-4 border-purple-500 p-4">
         <p className="text-sm text-purple-800">
           <strong>💎 Système wBTC :</strong> Votre solde BTC est converti 1:1 en wBTC (monnaie virtuelle).
-          Chaque partie coûte 0.0001 wBTC. Votre solde se synchronise automatiquement avec vos BTC réels.
+          Chaque partie coûte 0.000001 wBTC. Votre solde se synchronise automatiquement avec vos BTC réels.
         </p>
       </div>
     </div>
