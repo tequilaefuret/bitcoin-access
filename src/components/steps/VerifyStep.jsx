@@ -88,7 +88,7 @@ export default function VerifyStep({ onVerified }) {
         setError(`Erreur : ${err.message}`);
       }
     }
-  }, [signMessage, setError, setVerificationStep, setHasCheckedDB]);
+  }, [signMessage, setError, setVerificationStep, setHasCheckedDB, handleWalletVerification]);
 
   // ===== FONCTION 3 : Vérification finale =====
   const handleWalletVerification = useCallback(async (address, signatureData) => {    try {
