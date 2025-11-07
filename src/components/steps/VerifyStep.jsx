@@ -58,7 +58,7 @@ export default function VerifyStep({ onVerified }) {
   }, [onVerified]);
 
   // ===== FONCTION 2 : Flux de signature =====
-  const handleSignatureFlow = async (address) => {
+  const handleSignatureFlow = useCallback(async (address) => {
     console.log('🔐 ÉTAPE 1 : Demande de signature pour', address);
     setError('');
     setVerificationStep('signing');
@@ -78,7 +78,7 @@ export default function VerifyStep({ onVerified }) {
     } catch (err) {
       console.error('❌ Erreur lors de la signature:', err);
       setVerificationStep('idle');
-      setHasCheckedDB(false); // 🆕 Permettre retry
+      setHasCheckedDB(false);
       
       if (err.message.includes('refusée') || err.message.includes('rejected')) {
         setError('Signature refusée. Vous devez signer le message pour prouver que vous possédez cette adresse.');
@@ -88,11 +88,10 @@ export default function VerifyStep({ onVerified }) {
         setError(`Erreur : ${err.message}`);
       }
     }
-  };
+  }, [signMessage, setError, setVerificationStep, setHasCheckedDB]);
 
   // ===== FONCTION 3 : Vérification finale =====
-  const handleWalletVerification = async (address, signatureData) => {
-    try {
+  const handleWalletVerification = useCallback(async (address, signatureData) => {    try {
       console.log('🔐 ÉTAPE 2 : Vérification cryptographique');
       console.log('📦 Données reçues:', signatureData);
 
@@ -142,7 +141,7 @@ export default function VerifyStep({ onVerified }) {
       setVerificationStep('idle');
       setError(`❌ ${err.message}`);
     }
-  };
+  }, [onVerified, setVerificationStep, setError]);
 
   // ===== HANDLER : Connexion Wallet =====
   const handleWalletConnect = useCallback(async () => {

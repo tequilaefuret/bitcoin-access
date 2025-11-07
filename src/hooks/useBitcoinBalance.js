@@ -240,7 +240,7 @@ export const useBitcoinBalance = () => {
     } finally {
       setLoading(false);
     }
-  }, [address, btcBalance]);
+  }, [address]);
 
   /**
    * 📜 Charger l'historique (authentifié uniquement)
