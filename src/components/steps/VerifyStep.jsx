@@ -1,3 +1,5 @@
+import React, { useState, useCallback } from 'react';
+import { KeyRound, ArrowRight, Loader, Shield, CheckCircle2, TestTube } from 'lucide-react';
 import useReownWallet from '../../hooks/useReownWallet';
 import { verifyAndRegister, getUserData } from '../../supabaseClient';
 

@@ -11,6 +11,7 @@ import StatsModal from './components/modals/StatsModal';
 import EnvIndicator from './components/ui/EnvIndicator';
 import { useBitcoinBalance } from './hooks/useBitcoinBalance';
 import useReownWallet from './hooks/useReownWallet';
+import { supabase, getUserData } from './supabaseClient';
 
 const BitcoinExclusiveAccess = () => {
   const [step, setStep] = useState('connect');
