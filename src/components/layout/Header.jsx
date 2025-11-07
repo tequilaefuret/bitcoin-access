@@ -1,6 +1,6 @@
 // src/components/layout/Header.jsx
 import React, { useState } from 'react';
-import { Bitcoin, Wallet, LogOut, ChevronDown, TestTube } from 'lucide-react';
+import { Bitcoin, Wallet, LogOut, ChevronDown } from 'lucide-react';
 
 const Header = ({ connectedAddress, connectedWallet, onDisconnect, isTestMode }) => {
   const [showDropdown, setShowDropdown] = useState(false);

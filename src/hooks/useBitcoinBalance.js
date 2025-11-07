@@ -209,7 +209,7 @@ export const useBitcoinBalance = () => {
       const result = await syncUserBalance(address, network);
       
       if (result.success && result.user) {
-        const oldBTC = btcBalance;
+        //const oldBTC = btcBalance;
         const newBTC = result.user.btc_balance;
         const unconfirmedBTC = result.delta || 0;
         

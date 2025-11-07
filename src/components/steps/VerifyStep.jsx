@@ -1,5 +1,3 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { KeyRound, ArrowRight, AlertCircle, Loader, Shield, CheckCircle2, TestTube } from 'lucide-react';
 import useReownWallet from '../../hooks/useReownWallet';
 import { verifyAndRegister, getUserData } from '../../supabaseClient';
 
@@ -13,7 +11,6 @@ export default function VerifyStep({ onVerified }) {
   const [hasCheckedDB, setHasCheckedDB] = useState(false); // 🆕 Flag pour éviter double vérification
 
   const {
-    connectWallet,
     signMessage,
     isConnecting,
     error: walletError,
@@ -246,7 +243,7 @@ export default function VerifyStep({ onVerified }) {
       setVerificationStep('idle');
       setError('Erreur lors de l\'ouverture du wallet.');
     }
-  }, [modal, checkSignatureAndRedirect, onVerified, hasCheckedDB]);
+  }, [modal, checkSignatureAndRedirect, onVerified, hasCheckedDB, handleSignatureFlow]);
 
   // ===== HANDLER : Saisie Manuelle (Mode Test) =====
   const handleManualVerify = async () => {
