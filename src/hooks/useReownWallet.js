@@ -165,11 +165,12 @@ export default function useReownWallet() {
               try {
                 const address = appKitModal.getAddress();
                 const caipAddress = appKitModal.getCaipAddress();
+                const session = appKitModal.getSession();
 
                 console.log('🔍 RAW Address:', address);
                 console.log('🔍 RAW CAIP:', caipAddress);
-                console.log('🔍 Session complète:', appKitModal.getSession());
-                console.log('🔍 Namespaces:', appKitModal.getSession()?.namespaces);
+                console.log('🔍 Session complète:', session);
+                console.log('🔍 Namespaces:', session?.namespaces);
 
                 if (address || caipAddress) {
                   const finalAddress = address || (caipAddress ? caipAddress.split(':').pop() : null);
