@@ -57,40 +57,7 @@ export default function VerifyStep({ onVerified }) {
     }
   }, [onVerified]);
 
-  // ===== FONCTION 2 : Flux de signature =====
-  const handleSignatureFlow = useCallback(async (address) => {
-    console.log('🔐 ÉTAPE 1 : Demande de signature pour', address);
-    setError('');
-    setVerificationStep('signing');
-
-    try {
-      const signature = await signMessage(address);
-
-      if (!signature) {
-        throw new Error('Signature non reçue');
-      }
-
-      console.log('✅ Signature obtenue:', signature);
-
-      setVerificationStep('verifying');
-      await handleWalletVerification(address, signature);
-
-    } catch (err) {
-      console.error('❌ Erreur lors de la signature:', err);
-      setVerificationStep('idle');
-      setHasCheckedDB(false);
-      
-      if (err.message.includes('refusée') || err.message.includes('rejected')) {
-        setError('Signature refusée. Vous devez signer le message pour prouver que vous possédez cette adresse.');
-      } else if (err.message.includes('not supported')) {
-        setError('Votre wallet ne supporte pas la signature de messages.');
-      } else {
-        setError(`Erreur : ${err.message}`);
-      }
-    }
-  }, [signMessage, setError, setVerificationStep, setHasCheckedDB, handleWalletVerification]);
-
-  // ===== FONCTION 3 : Vérification finale =====
+  // ===== FONCTION 2 : Vérification finale =====
   const handleWalletVerification = useCallback(async (address, signatureData) => {    try {
       console.log('🔐 ÉTAPE 2 : Vérification cryptographique');
       console.log('📦 Données reçues:', signatureData);
@@ -141,7 +108,40 @@ export default function VerifyStep({ onVerified }) {
       setVerificationStep('idle');
       setError(`❌ ${err.message}`);
     }
-  }, [onVerified, setVerificationStep, setError]);
+  }, [onVerified]);
+
+  // ===== FONCTION 3 : Flux de signature =====
+  const handleSignatureFlow = useCallback(async (address) => {
+    console.log('🔐 ÉTAPE 1 : Demande de signature pour', address);
+    setError('');
+    setVerificationStep('signing');
+
+    try {
+      const signature = await signMessage(address);
+
+      if (!signature) {
+        throw new Error('Signature non reçue');
+      }
+
+      console.log('✅ Signature obtenue:', signature);
+
+      setVerificationStep('verifying');
+      await handleWalletVerification(address, signature);
+
+    } catch (err) {
+      console.error('❌ Erreur lors de la signature:', err);
+      setVerificationStep('idle');
+      setHasCheckedDB(false);
+      
+      if (err.message.includes('refusée') || err.message.includes('rejected')) {
+        setError('Signature refusée. Vous devez signer le message pour prouver que vous possédez cette adresse.');
+      } else if (err.message.includes('not supported')) {
+        setError('Votre wallet ne supporte pas la signature de messages.');
+      } else {
+        setError(`Erreur : ${err.message}`);
+      }
+    }
+  }, [signMessage, handleWalletVerification]);
 
   // ===== HANDLER : Connexion Wallet =====
   const handleWalletConnect = useCallback(async () => {
