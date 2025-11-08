@@ -161,7 +161,7 @@ export default function useReownWallet() {
           if (!state.open && state.selectedNetworkId && !hasCheckedConnection.current) {
             hasCheckedConnection.current = true;
             
-            setTimeout(() => {
+            setTimeout(async () => {
               try {
                 const address = appKitModal.getAddress();
                 const caipAddress = appKitModal.getCaipAddress();
@@ -170,10 +170,36 @@ export default function useReownWallet() {
                 console.log('🔍 RAW CAIP:', caipAddress);
                 console.log('🔍 State:', state);
 
-                if (address || caipAddress) {
-                  const finalAddress = address || (caipAddress ? caipAddress.split(':').pop() : null);
-                  console.log('✅ Adresse connectée:', finalAddress);
+                // 🆕 RÉCUPÉRATION ADRESSE BITCOIN via provider
+                let bitcoinAddress = null;
+                
+                try {
+                  const provider = await appKitModal.getWalletProvider();
                   
+                  if (provider) {
+                    console.log('🔍 Provider:', provider);
+                    
+                    // Essayer de récupérer les comptes Bitcoin
+                    const accounts = await provider.request({
+                      method: 'getAddresses',
+                      params: {}
+                    });
+                    
+                    console.log('🔍 Accounts:', accounts);
+                    
+                    // Chercher l'adresse Bitcoin (commence par bc1, 1, ou 3)
+                    bitcoinAddress = accounts?.find(addr => 
+                      addr.startsWith('bc1') || addr.startsWith('1') || addr.startsWith('3')
+                    );
+                  }
+                } catch (providerErr) {
+                  console.log('⚠️ Impossible de récupérer via provider:', providerErr);
+                }
+
+                const finalAddress = bitcoinAddress || address;
+                console.log('✅ Adresse finale:', finalAddress);
+
+                if (finalAddress) {
                   // 🆕 VÉRIFICATION RÉSEAU DE L'ADRESSE
                   const addressNetwork = finalAddress.startsWith('bc1') || 
                                         finalAddress.startsWith('1') || 
