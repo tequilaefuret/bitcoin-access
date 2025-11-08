@@ -166,6 +166,11 @@ export default function useReownWallet() {
                 const address = appKitModal.getAddress();
                 const caipAddress = appKitModal.getCaipAddress();
 
+                console.log('🔍 RAW Address:', address);
+                console.log('🔍 RAW CAIP:', caipAddress);
+                console.log('🔍 Session complète:', appKitModal.getSession());
+                console.log('🔍 Namespaces:', appKitModal.getSession()?.namespaces);
+
                 if (address || caipAddress) {
                   const finalAddress = address || (caipAddress ? caipAddress.split(':').pop() : null);
                   console.log('✅ Adresse connectée:', finalAddress);
@@ -380,11 +385,6 @@ export default function useReownWallet() {
     try {
       const address = modal.getAddress();
       const caipAddress = modal.getCaipAddress();
-
-      console.log('🔍 RAW Address:', address);
-      console.log('🔍 RAW CAIP:', caipAddress);
-      console.log('🔍 Session complète:', appKitModal.getSession());
-      console.log('🔍 Namespaces:', appKitModal.getSession()?.namespaces);
       
       if (address || caipAddress) {
         const finalAddress = address || (caipAddress ? caipAddress.split(':').pop() : null);
