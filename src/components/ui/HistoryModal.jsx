@@ -33,7 +33,7 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
       listElement.addEventListener('scroll', handleScroll);
       return () => listElement.removeEventListener('scroll', handleScroll);
     }
-  }, [hasMore, isLoadingMore, messages]);
+  }, [hasMore, isLoadingMore, messages, loadMoreMessages]);
 
   const loadMoreMessages = async () => {
     if (!onLoadMore) return;
