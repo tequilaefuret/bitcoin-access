@@ -1,5 +1,5 @@
 // src/components/ui/HistoryModal.jsx
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { X, History, Loader } from 'lucide-react';
 import { truncateAddress } from '../../supabaseClient';
 
@@ -14,6 +14,19 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
       setMessages(initialMessages);
     }
   }, [initialMessages]);
+
+  // Définir loadMoreMessages AVANT le useEffect avec useCallback
+  const loadMoreMessages = useCallback(async () => {
+    if (!onLoadMore || isLoadingMore) return;
+    
+    setIsLoadingMore(true);
+    const newMessages = await onLoadMore(messages.length);
+    setIsLoadingMore(false);
+    
+    if (newMessages && newMessages.length > 0) {
+      setMessages(prevMessages => [...prevMessages, ...newMessages]);
+    }
+  }, [onLoadMore, messages.length, isLoadingMore]);
 
   // Gérer le scroll pour charger plus
   useEffect(() => {
@@ -33,19 +46,7 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
       listElement.addEventListener('scroll', handleScroll);
       return () => listElement.removeEventListener('scroll', handleScroll);
     }
-  }, [hasMore, isLoadingMore, messages, loadMoreMessages]);
-
-  const loadMoreMessages = async () => {
-    if (!onLoadMore) return;
-    
-    setIsLoadingMore(true);
-    const newMessages = await onLoadMore(messages.length);
-    setIsLoadingMore(false);
-    
-    if (newMessages && newMessages.length > 0) {
-      setMessages([...messages, ...newMessages]);
-    }
-  };
+  }, [hasMore, isLoadingMore, loadMoreMessages]);
 
   // Formater timestamp
   const formatTimestamp = (timestamp) => {
