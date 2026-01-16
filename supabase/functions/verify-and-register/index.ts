@@ -215,26 +215,38 @@ function parseExpiration(exp: string): number {
 async function fetchBitcoinBalance(address: string, network: string): Promise<number> {
   let apiUrl: string;
   
-  if (network === 'testnet4') {
+  if (network === 'testnet4' || network === 'testnet' || network === 'testnet3') {
     apiUrl = `https://mempool.space/testnet4/api/address/${address}`;
-  } else if (network === 'testnet' || network === 'testnet3') {
-    apiUrl = `https://mempool.space/testnet/api/address/${address}`;
   } else {
     apiUrl = `https://mempool.space/api/address/${address}`;
   }
+
+  console.log('🌐 [FETCH_BALANCE] URL:', apiUrl);
 
   const response = await fetch(apiUrl);
   
   if (!response.ok) {
     if (response.status === 404) {
+      console.log('⚠️ [FETCH_BALANCE] Adresse non trouvée (404)');
       return 0;
     }
-    throw new Error('Erreur API Mempool.space');
+    throw new Error(`Erreur API Mempool.space: ${response.status}`);
   }
 
   const data = await response.json();
+  
+  // ✅ LOGS DE DEBUG CRITIQUES
+  console.log('📊 [FETCH_BALANCE] Réponse complète:', JSON.stringify(data, null, 2));
+  console.log('💰 [FETCH_BALANCE] funded_txo_sum:', data.chain_stats.funded_txo_sum);
+  console.log('💸 [FETCH_BALANCE] spent_txo_sum:', data.chain_stats.spent_txo_sum);
+  console.log('🧮 [FETCH_BALANCE] Différence (satoshis):', data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum);
+  
   const confirmedBalance = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
-  return confirmedBalance / 100000000;
+  const confirmedBalanceBTC = confirmedBalance / 100000000;
+  
+  console.log('✅ [FETCH_BALANCE] Balance finale (BTC):', confirmedBalanceBTC);
+  
+  return confirmedBalanceBTC;
 }
 
 // ========================================

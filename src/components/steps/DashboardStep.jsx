@@ -1,6 +1,6 @@
 // src/components/steps/DashboardStep.jsx
 import React from 'react';
-import { Unlock, Bitcoin, Coins, Gamepad2, History, TrendingUp, RefreshCw, Loader } from 'lucide-react';
+import { Bitcoin, Coins, Gamepad2, MessageSquare, History, TrendingUp, RefreshCw, Loader } from 'lucide-react';
 import ErrorAlert from '../ui/ErrorAlert';
 
 const DashboardStep = ({ 
@@ -8,6 +8,9 @@ const DashboardStep = ({
   wbtcAvailable,
   wbtcSpentTotal,
   onStartGame,
+  onPublishMessage,
+  onStartCanvas,
+  isTestMode,
   onSync,
   onShowHistory,
   onShowStats,
@@ -15,15 +18,9 @@ const DashboardStep = ({
   error
 }) => {
   return (
-    <div className="text-center">
-      <Unlock className="w-20 h-20 text-green-500 mx-auto mb-4" />
-      <h2 className="text-2xl font-bold mb-4 text-green-600">Accès autorisé!</h2>
-      <p className="text-gray-600 mb-4">
-        Votre compte wBTC est prêt
-      </p>
-      
+    <div className="text-center">      
       {/* SOLDES */}
-      <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-6 rounded-lg mb-4">
+      <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-6 rounded-lg mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
           <div className="bg-white p-4 rounded-lg shadow">
             <div className="flex items-center justify-center gap-2 mb-2">
@@ -43,62 +40,118 @@ const DashboardStep = ({
           
           <div className="bg-white p-4 rounded-lg shadow">
             <div className="flex items-center justify-center gap-2 mb-2">
-              <Gamepad2 className="w-5 h-5 text-green-600" />
-              <p className="text-sm text-gray-600">Parties Restantes</p>
+              <Coins className="w-5 h-5 text-green-600" />
+              <p className="text-sm text-gray-600">wBTC Dépensé</p>
             </div>
-            <p className="text-2xl font-bold text-green-600">{Math.floor(wbtcAvailable / 0.000001)}</p>
+            <p className="text-2xl font-bold text-green-600">{wbtcSpentTotal.toFixed(8)}</p>
           </div>
-        </div>
-        
-        <div className="text-sm text-gray-600">
-          <p>💰 Total dépensé : {wbtcSpentTotal.toFixed(8)} wBTC</p>
-          <p className="mt-1">💎 Coût par partie : 0.000001 wBTC</p>
         </div>
       </div>
 
       <ErrorAlert error={error} />
       
-      {/* BOUTONS PRINCIPAUX */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <button
-          onClick={onStartGame}
-          className="bg-green-500 text-white px-8 py-4 rounded-lg font-semibold hover:bg-green-600 transition flex items-center justify-center gap-2"
-        >
-          <Gamepad2 className="w-5 h-5" />
-          Jouer au Mini-Jeu
-        </button>
-        
-        <button
-          onClick={onSync}
-          disabled={loading}
-          className="bg-blue-500 text-white px-8 py-4 rounded-lg font-semibold hover:bg-blue-600 transition flex items-center justify-center gap-2 disabled:opacity-50"
-        >
-          {loading ? (
-            <Loader className="w-5 h-5 animate-spin" />
-          ) : (
-            <RefreshCw className="w-5 h-5" />
-          )}
-          Synchroniser
-        </button>
+      {/* SECTION SERVICES DISPONIBLES */}
+      <div className="mb-6">
+        <h3 className="text-xl font-bold text-gray-800 mb-4">📱 Services disponibles</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
+          {/* SERVICE 1 : Mini-Jeu */}
+          <button
+            onClick={onStartGame}
+            className="bg-gradient-to-br from-green-400 to-green-600 text-white p-6 rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200"
+          >
+            <Gamepad2 className="w-12 h-12 mx-auto mb-3" />
+            <h4 className="font-bold text-lg mb-2">Mini-Jeu</h4>
+            <p className="text-sm opacity-90">
+              Testez votre réactivité en cliquant sur les cibles
+            </p>
+            <div className="mt-3 text-xs bg-white/20 rounded-lg py-1 px-3 inline-block">
+              💎 0.000001 wBTC par partie
+            </div>
+          </button>
+
+          {/* SERVICE 2 : Réseau Social */}
+          <button
+            onClick={onPublishMessage}
+            className="bg-gradient-to-br from-blue-400 to-blue-600 text-white p-6 rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-200"
+          >
+            <MessageSquare className="w-12 h-12 mx-auto mb-3" />
+            <h4 className="font-bold text-lg mb-2">Réseau Social</h4>
+            <p className="text-sm opacity-90">
+              Publiez des messages, 1 satoshi par caractère
+            </p>
+            <div className="mt-3 text-xs bg-white/20 rounded-lg py-1 px-3 inline-block">
+              💰 Paiement au caractère
+            </div>
+          </button>
+
+          {/* Canvas Collaboratif */}
+          <button
+            onClick={isTestMode ? undefined : onStartCanvas}
+            disabled={isTestMode}
+            className={`p-6 rounded-xl shadow-lg transition-all duration-200 ${
+              isTestMode
+                ? 'bg-gray-300 cursor-not-allowed opacity-60'
+                : 'bg-gradient-to-br from-orange-400 to-purple-600 text-white hover:shadow-xl hover:scale-105'
+            }`}
+          >
+            <div className="w-12 h-12 mx-auto mb-3 flex items-center justify-center">
+              🎨
+            </div>
+            <h4 className="font-bold text-lg mb-2">Canvas Collaboratif</h4>
+            <p className="text-sm opacity-90">
+              {isTestMode 
+                ? 'Connexion wallet requise' 
+                : 'Peignez pixel par pixel'}
+            </p>
+            <div className="mt-3 text-xs bg-white/20 rounded-lg py-1 px-3 inline-block">
+              💰 1 sat par pixel
+            </div>
+            {isTestMode && (
+              <div className="mt-2 text-xs bg-red-500/20 rounded-lg py-1 px-2">
+                ⚠️ Mode test non disponible
+              </div>
+            )}
+          </button>
+          
+        </div>
       </div>
-      
-      {/* BOUTONS SECONDAIRES */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-        <button
-          onClick={onShowHistory}
-          className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition flex items-center justify-center gap-2"
-        >
-          <History className="w-5 h-5" />
-          Historique
-        </button>
-        
-        <button
-          onClick={onShowStats}
-          className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition flex items-center justify-center gap-2"
-        >
-          <TrendingUp className="w-5 h-5" />
-          Statistiques
-        </button>
+
+      {/* SECTION FONCTIONNALITÉS */}
+      <div>
+        <h3 className="text-lg font-semibold text-gray-700 mb-3">⚙️ Fonctionnalités</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          
+          <button
+            onClick={onSync}
+            disabled={loading}
+            className="bg-blue-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-blue-600 transition flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {loading ? (
+              <Loader className="w-5 h-5 animate-spin" />
+            ) : (
+              <RefreshCw className="w-5 h-5" />
+            )}
+            Synchroniser
+          </button>
+
+          <button
+            onClick={onShowHistory}
+            className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition flex items-center justify-center gap-2"
+          >
+            <History className="w-5 h-5" />
+            Mes messages
+          </button>
+          
+          <button
+            onClick={onShowStats}
+            className="bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition flex items-center justify-center gap-2"
+          >
+            <TrendingUp className="w-5 h-5" />
+            Statistiques
+          </button>
+
+        </div>
       </div>
     </div>
   );

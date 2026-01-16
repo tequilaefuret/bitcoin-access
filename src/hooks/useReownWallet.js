@@ -187,9 +187,10 @@ export default function useReownWallet() {
                     
                     console.log('🔍 Accounts:', accounts);
                     
-                    // Chercher l'adresse Bitcoin (commence par bc1, 1, ou 3)
+                    // Chercher l'adresse Bitcoin (commence par bc1, tb1, 1, ou 3)
                     bitcoinAddress = accounts?.find(addr => 
-                      addr.startsWith('bc1') || addr.startsWith('1') || addr.startsWith('3')
+                      addr.startsWith('bc1') || addr.startsWith('tb1') || 
+                      addr.startsWith('1') || addr.startsWith('3')
                     );
                   }
                 } catch (providerErr) {
@@ -226,8 +227,13 @@ export default function useReownWallet() {
                     return;
                   }
                   
+                  // ✅ MODIFICATION : Mettre à jour l'état mais laisser App.js gérer la navigation
                   setConnectedAddress(finalAddress);
                   setConnectedWallet('bitcoin');
+                  
+                  // 🆕 AJOUT : Sauvegarder l'adresse dans localStorage pour la reconnexion
+                  localStorage.setItem('bitcoin_address', finalAddress);
+                  console.log('💾 Adresse sauvegardée pour reconnexion automatique');
                 }
               } catch (err) {
                 console.error('❌ Erreur récupération adresse:', err);

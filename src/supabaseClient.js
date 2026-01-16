@@ -1,4 +1,4 @@
-// src/supabaseClient.js - VERSION SÉCURISÉE AVEC JWT + CORRECTION VERIFY
+// src/supabaseClient.js - VERSION SÉCURISÉE AVEC JWT + RÉSEAU SOCIAL + HISTORIQUE
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
@@ -43,6 +43,20 @@ function clearJWT() {
 }
 
 // ========================================
+// 🔧 UTILITAIRES
+// ========================================
+
+/**
+ * Tronquer une adresse Bitcoin pour l'affichage
+ * @param {string} address - Adresse Bitcoin complète
+ * @returns {string} Adresse tronquée (ex: bc1q...xyz7)
+ */
+export function truncateAddress(address) {
+  if (!address || address.length < 15) return address;
+  return address.slice(0, 8) + '...' + address.slice(-6);
+}
+
+// ========================================
 // 🔐 FONCTIONS EDGE (Architecture Sécurisée)
 // ========================================
 
@@ -54,11 +68,11 @@ function clearJWT() {
 export async function verifyAndRegister({ address, message, signature, network }) {
   try {
     console.log('🔐 [VERIFY-AND-REGISTER] Démarrage...');
-    console.log('📍 Adresse:', address);
+    console.log('📍 Adresse:', truncateAddress(address));
     console.log('🌐 Réseau:', network);
     console.log('✍️ Message:', message?.substring(0, 50) + '...');
     
-    // 🆕 VALIDATION DES PARAMÈTRES
+    // Validation des paramètres
     if (!address || !message || !signature || !network) {
       console.error('❌ [VERIFY-AND-REGISTER] Paramètres manquants', {
         address: !!address,
@@ -118,7 +132,7 @@ export async function verifyAndRegister({ address, message, signature, network }
  */
 export async function getUserData(address) {
   try {
-    console.log('📊 [getUserData] Récupération pour:', address);
+    console.log('📊 [getUserData] Récupération pour:', truncateAddress(address));
     
     const { data, error } = await supabase.functions.invoke('get-user-data', {
       body: { address }
@@ -234,48 +248,125 @@ export async function deductGameCost(address, amount = 0.000001) {
  * @returns {Promise<object>} { success: true }
  */
 export async function saveGameScore(address, score) {
+}
+
+// ========================================
+// 📝 RÉSEAU SOCIAL - MESSAGES
+// ========================================
+
+/**
+ * Publier un message sur le réseau social
+ * @param {string} address - Adresse Bitcoin de l'auteur
+ * @param {string} content - Contenu du message (max 1000 caractères)
+ * @returns {Promise<object>} { success: true, message: {...}, user: {...} }
+ */
+export async function publishMessage(address, content) {
   try {
-    console.log('🎮 [saveGameScore] Score:', score);
+    console.log('📝 [publishMessage] Publication...');
     
     const jwt = getJWT();
     if (!jwt) {
-      // Non bloquant si pas de JWT
-      console.warn('⚠️ Pas de JWT, score non enregistré');
-      return { success: false };
+      throw new Error('Non authentifié. Reconnectez-vous.');
+    }
+    
+    // Validation
+    if (!content || content.trim().length === 0) {
+      throw new Error('Le message ne peut pas être vide');
+    }
+    
+    if (content.length > 1000) {
+      throw new Error('Message trop long (max 1000 caractères)');
     }
     
     const { data, error } = await supabase.functions.invoke('user-operations', {
       body: { 
-        operation: 'save_score',
+        operation: 'publish_message',
         jwt,
         address,
-        score
+        content: content.trim()
       }
     });
 
     if (error) {
-      console.error('❌ Erreur save_score:', error);
-      return { success: false };
+      console.error('❌ Erreur publish_message:', error);
+      throw new Error(error.message || 'Erreur publication');
     }
 
-    console.log('✅ Score enregistré');
-    return data || { success: true };
+    if (!data || !data.success) {
+      throw new Error(data?.error || 'Publication échouée');
+    }
+
+    console.log('✅ Message publié');
+    return data;
     
   } catch (error) {
-    console.error('❌ [saveGameScore] Erreur:', error);
-    return { success: false };
+    console.error('❌ [publishMessage] Erreur:', error);
+    throw error;
   }
 }
 
 /**
- * Récupérer l'historique
- * @param {string} address - Adresse Bitcoin
- * @param {number} limit - Nombre max (défaut: 20)
- * @returns {Promise<array>} Liste des transactions
+ * Récupérer les messages du réseau social (tous les messages)
+ * @param {number} limit - Nombre de messages (défaut: 20)
+ * @param {number} offset - Offset pour pagination (défaut: 0)
+ * @param {string|null} userAddress - Adresse Bitcoin de l'utilisateur (pour likes/dislikes)
+ * @returns {Promise<array>} Liste des messages avec compteurs sociaux
  */
-export async function getTransactionHistory(address, limit = 20) {
+export async function getMessages(limit = 20, offset = 0, userAddress = null) {
   try {
-    console.log('📜 [getTransactionHistory] Récupération...');
+    console.log('📨 [getMessages] Récupération...', { userAddress: userAddress?.slice(0, 8), limit, offset });
+    
+    // JWT obligatoire pour utilisateur authentifié
+    if (!userAddress) {
+      console.warn('⚠️ Pas d\'adresse utilisateur - accès refusé');
+      return { messages: [], new_balance: null, cost: 0 };
+    }
+
+    const jwt = getJWT();
+    if (!jwt) {
+      console.error('❌ JWT manquant - utilisateur non authentifié');
+      throw new Error('Authentification requise');
+    }
+    
+    const { data, error } = await supabase.functions.invoke('user-operations', {
+      body: { 
+        operation: 'get_messages',
+        limit,
+        offset,
+        address: userAddress,
+        jwt
+      }
+    });
+
+    if (error) {
+      console.error('❌ Erreur get_messages:', error);
+      throw error;
+    }
+
+    const messages = data?.messages || [];
+    const newBalance = data?.new_balance;
+    const cost = data?.cost || 0;
+
+    console.log(`✅ ${messages.length} messages récupérés | Coût: ${cost.toFixed(8)} wBTC`);
+    
+    return { messages, new_balance: newBalance, cost };
+    
+  } catch (error) {
+    console.error('❌ [getMessages] Erreur:', error);
+    throw error;
+  }
+}
+
+/**
+ * Récupérer l'historique des messages de l'utilisateur
+ * @param {string} address - Adresse Bitcoin
+ * @param {number} limit - Nombre de messages (défaut: 20)
+ * @param {number} offset - Offset pour pagination (défaut: 0)
+ * @returns {Promise<array>} Liste des messages de l'utilisateur
+ */
+export async function getUserMessages(address, limit = 20, offset = 0) {
+  try {
+    console.log('📜 [getUserMessages] Récupération historique...');
     
     const jwt = getJWT();
     if (!jwt) {
@@ -284,31 +375,32 @@ export async function getTransactionHistory(address, limit = 20) {
     
     const { data, error } = await supabase.functions.invoke('user-operations', {
       body: { 
-        operation: 'get_history',
+        operation: 'get_user_messages',
         jwt,
         address,
-        limit
+        limit,
+        offset
       }
     });
 
     if (error) {
-      console.error('❌ Erreur get_history:', error);
+      console.error('❌ Erreur get_user_messages:', error);
       return [];
     }
 
-    console.log(`✅ ${data?.transactions?.length || 0} transactions`);
-    return data?.transactions || [];
+    console.log(`✅ ${data?.messages?.length || 0} messages historique`);
+    return data?.messages || [];
     
   } catch (error) {
-    console.error('❌ [getTransactionHistory] Erreur:', error);
+    console.error('❌ [getUserMessages] Erreur:', error);
     return [];
   }
 }
 
 /**
- * Récupérer les statistiques
+ * Récupérer les statistiques utilisateur (adapté pour réseau social)
  * @param {string} address - Adresse Bitcoin
- * @returns {Promise<object|null>} Stats ou null
+ * @returns {Promise<object|null>} Statistiques
  */
 export async function getUserStats(address) {
   try {
@@ -338,6 +430,76 @@ export async function getUserStats(address) {
   } catch (error) {
     console.error('❌ [getUserStats] Erreur:', error);
     return null;
+  }
+}
+
+// ============================================
+// CANVAS - Récupérer tous les pixels
+// ============================================
+export async function getCanvasPixels() {
+  try {
+    const { data, error } = await supabase
+      .from('canvas_pixels')
+      .select('x, y, color, bitcoin_address, updated_at')
+      .order('updated_at', { ascending: false });
+
+    if (error) throw error;
+    return data || [];
+  } catch (err) {
+    console.error('❌ Erreur getCanvasPixels:', err);
+    throw err;
+  }
+}
+
+// ============================================
+// CANVAS - Placer des pixels (avec validation)
+// ============================================
+export async function placeCanvasPixels(address, pixels) {
+  try {
+    const jwt = getJWT();
+    if (!jwt) throw new Error('Non authentifié');
+
+    console.log(`🎨 Envoi de ${pixels.length} pixel(s) pour validation...`);
+
+    const { data, error } = await supabase.functions.invoke('user-operations', {
+      body: { 
+        operation: 'place_pixels',
+        jwt,
+        address, 
+        pixels
+      },
+      headers: {
+        Authorization: `Bearer ${jwt}`
+      }
+    });
+
+    if (error) throw new Error(error.message);
+    if (!data?.success) throw new Error(data?.error || 'Placement pixels échoué');
+
+    console.log(`✅ ${data.pixelsPlaced} pixel(s) placé(s)${data.conflicts > 0 ? `, ${data.conflicts} conflit(s) rejeté(s)` : ''}`);
+
+    return data;
+  } catch (err) {
+    console.error('❌ Erreur placeCanvasPixels:', err);
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================
+// CANVAS - Compter les pixels d'un utilisateur
+// ============================================
+export async function getUserPixelCount(address) {
+  try {
+    const { count, error } = await supabase
+      .from('canvas_pixels')
+      .select('*', { count: 'exact', head: true })
+      .eq('bitcoin_address', address);
+
+    if (error) throw error;
+    return count || 0;
+  } catch (err) {
+    console.error('❌ Erreur getUserPixelCount:', err);
+    throw err;
   }
 }
 

@@ -273,14 +273,45 @@ export default function VerifyStep({ onVerified }) {
         throw new Error(`Adresse invalide pour le réseau ${isMainnet ? 'mainnet' : 'testnet'}`);
       }
 
-      // Transmettre au parent en mode TEST (sans signature)
+      // Vérifier le solde via Mempool.space
+      const networkConfig = process.env.REACT_APP_BITCOIN_NETWORK;
+      let apiUrl;
+      
+      if (networkConfig === 'testnet4') {
+        apiUrl = `https://mempool.space/testnet4/api/address/${manualAddress}`;
+      } else if (networkConfig === 'testnet' || networkConfig === 'testnet3') {
+        apiUrl = `https://mempool.space/testnet/api/address/${manualAddress}`;
+      } else {
+        apiUrl = `https://mempool.space/api/address/${manualAddress}`;
+      }
+
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        if (response.status === 404) {
+          throw new Error('Adresse introuvable ou sans transactions');
+        }
+        throw new Error('Erreur API Mempool');
+      }
+      
+      const data = await response.json();
+      const confirmedBalance = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
+      const confirmedBalanceBTC = confirmedBalance / 100000000;
+
+      console.log('💰 Solde détecté:', confirmedBalanceBTC, 'BTC');
+
+      if (confirmedBalanceBTC < 0.000001) {
+        throw new Error('Solde minimum requis : 0.000001 BTC confirmé');
+      }
+
+      // ✅ CORRECTION : Transmettre au parent en mode TEST
+      // Le parent (App.js) doit gérer isTestMode=true
       onVerified({
         address: manualAddress,
-        balance: 0,
+        balance: confirmedBalanceBTC,
         method: 'manual',
         signature: null,
         signatureVerified: false,
-        isTestMode: true
+        isTestMode: true  // ✅ Indiquer que c'est un mode test
       });
 
     } catch (err) {

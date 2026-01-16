@@ -20,7 +20,7 @@ const corsHeaders = {
 };
 
 // === CONSTANTES ===
-const GAME_COST = 0.000001; // 0.000001 BTC (6 zéros)
+const MESSAGE_COST_PER_CHAR = 0.00000001; // 1 satoshi par caractère
 
 // === VÉRIFICATION JWT ===
 async function verifyJWT(token: string): Promise<{ valid: boolean; address?: string }> {
@@ -38,7 +38,8 @@ async function verifyJWT(token: string): Promise<{ valid: boolean; address?: str
 
     const payload = await verify(token, key);
     
-    console.log('✅ JWT valide pour:', (payload.address as string).slice(0, 15) + '...');
+    const addressTrunc = (payload.address as string).slice(0, 8) + '...' + (payload.address as string).slice(-6);
+    console.log('✅ JWT valide pour:', addressTrunc);
     return { valid: true, address: payload.address as string };
     
   } catch (error: any) {
@@ -77,7 +78,8 @@ async function fetchBitcoinBalance(address: string, network: string): Promise<nu
 // OPÉRATION 1 : SYNC BALANCE
 // ========================================
 async function syncBalance(address: string, network: string) {
-  console.log('🔄 [SYNC] Démarrage pour:', address.slice(0, 15) + '...');
+  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
+  console.log('🔄 [SYNC] Démarrage pour:', addressTrunc);
   
   try {
     const newBtcBalance = await fetchBitcoinBalance(address, network);
@@ -136,7 +138,279 @@ async function syncBalance(address: string, network: string) {
 }
 
 // ========================================
-// OPÉRATION 2 : DEDUCT (Déduire wBTC)
+// OPÉRATION 2 : PUBLISH_MESSAGE
+// ========================================
+async function publishMessage(address: string, content: string) {
+  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
+  console.log('📝 [PUBLISH_MESSAGE] Nouveau message de:', addressTrunc);
+  
+  try {
+    // Calculer coût (espaces comptent, pas les retours à la ligne)
+    const charCount = content.replace(/\n/g, '').length;
+    const cost = charCount * MESSAGE_COST_PER_CHAR;
+    
+    console.log('📊 Caractères:', charCount, '| Coût:', cost, 'wBTC');
+    
+    // Vérifier solde
+    const { data: user, error: fetchError } = await supabase
+      .from('user_balances')
+      .select('wbtc_balance, wbtc_spent_total, last_sync')
+      .eq('bitcoin_address', address)
+      .single();
+
+    if (fetchError || !user) {
+      throw new Error('Utilisateur non trouvé');
+    }
+
+    if (user.wbtc_balance < cost) {
+      throw new Error(`Solde insuffisant. Requis: ${cost.toFixed(8)}, Disponible: ${user.wbtc_balance.toFixed(8)}`);
+    }
+
+    // Déduire wBTC
+    const newWbtc = user.wbtc_balance - cost;
+    const newSpent = (user.wbtc_spent_total || 0) + cost;
+
+    const { data: updatedUser, error: updateError } = await supabase
+      .from('user_balances')
+      .update({
+        wbtc_balance: newWbtc,
+        wbtc_spent_total: newSpent,
+        last_sync: new Date().toISOString()
+      })
+      .eq('bitcoin_address', address)
+      .eq('last_sync', user.last_sync)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    if (!updatedUser) {
+      throw new Error('Conflit de synchronisation. Réessayez.');
+    }
+
+    // Insérer message
+    const { data: message, error: messageError } = await supabase
+      .from('messages')
+      .insert({
+        bitcoin_address: address,
+        content: content,
+        char_count: charCount,
+        cost_wbtc: cost,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (messageError) throw messageError;
+
+    // Enregistrer transaction
+    await supabase.from('transactions').insert({
+      bitcoin_address: address,
+      amount: -cost,
+      type: 'message',
+      created_at: new Date().toISOString()
+    });
+
+    console.log('✅ [PUBLISH_MESSAGE] Message publié');
+    
+    return {
+      success: true,
+      message: message,
+      user: updatedUser
+    };
+    
+  } catch (error: any) {
+    console.error('❌ [PUBLISH_MESSAGE] Erreur:', error.message);
+    throw error;
+  }
+}
+
+// ========================================
+// OPÉRATION 3 : GET_MESSAGES (tous les messages, public)
+// REMPLACE la fonction getMessages dans user-operations/index.ts
+// ========================================
+async function getMessages(limit: number = 20, offset: number = 0, userAddress?: string) {
+  console.log('📨 [GET_MESSAGES] Récupération - Limit:', limit, '| Offset:', offset, '| User:', userAddress?.slice(0, 8));
+  
+  try {
+    // Récupérer messages avec compteurs sociaux
+    const { data: messages, error } = await supabase
+      .from('messages')
+      .select(`
+        *,
+        likes:message_likes(count),
+        dislikes:message_dislikes(count),
+        comments:messages!parent_id(count),
+        reposts:messages!repost_of(count)
+      `)
+      .is('parent_id', null)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    // Si pas d'utilisateur, retourner sans vérifier likes/dislikes
+    if (!userAddress) {
+      const formatted = messages.map((msg: any) => ({
+        ...msg,
+        likes_count: msg.likes?.[0]?.count || 0,
+        dislikes_count: msg.dislikes?.[0]?.count || 0,
+        comments_count: msg.comments?.[0]?.count || 0,
+        reposts_count: msg.reposts?.[0]?.count || 0,
+        user_has_liked: false,
+        user_has_disliked: false
+      }));
+
+      console.log(`✅ [GET_MESSAGES] ${formatted.length} messages (mode public)`);
+      
+      return {
+        success: true,
+        messages: formatted,
+        count: formatted.length
+      };
+    }
+
+    // Récupérer les likes/dislikes de l'utilisateur
+    const messageIds = messages.map((m: any) => m.id);
+    
+    console.log('🔍 [DEBUG] Recherche likes/dislikes pour:', userAddress.slice(0, 8));
+    console.log('🔍 [DEBUG] Message IDs:', messageIds.map(id => id.slice(0, 8)));
+
+    const { data: userLikes, error: likesError } = await supabase
+      .from('message_likes')
+      .select('message_id')
+      .eq('bitcoin_address', userAddress)
+      .in('message_id', messageIds);
+
+    console.log('🔍 [DEBUG] Likes trouvés:', userLikes?.length || 0, userLikes);
+    if (likesError) console.error('❌ [DEBUG] Erreur likes:', likesError);
+
+    const { data: userDislikes, error: dislikesError } = await supabase
+      .from('message_dislikes')
+      .select('message_id')
+      .eq('bitcoin_address', userAddress)
+      .in('message_id', messageIds);
+
+    console.log('🔍 [DEBUG] Dislikes trouvés:', userDislikes?.length || 0, userDislikes);
+    if (dislikesError) console.error('❌ [DEBUG] Erreur dislikes:', dislikesError);
+
+    // Formater avec toutes les infos
+    const formatted = messages.map((msg: any) => ({
+      ...msg,
+      likes_count: msg.likes?.[0]?.count || 0,
+      dislikes_count: msg.dislikes?.[0]?.count || 0,
+      comments_count: msg.comments?.[0]?.count || 0,
+      reposts_count: msg.reposts?.[0]?.count || 0,
+      user_has_liked: userLikes?.some((l: any) => l.message_id === msg.id) || false,
+      user_has_disliked: userDislikes?.some((d: any) => d.message_id === msg.id) || false
+    }));
+
+    console.log('🔍 [DEBUG] Premier message formaté:', {
+      id: formatted[0]?.id.slice(0, 8),
+      likes_count: formatted[0]?.likes_count,
+      dislikes_count: formatted[0]?.dislikes_count,
+      user_has_liked: formatted[0]?.user_has_liked,
+      user_has_disliked: formatted[0]?.user_has_disliked
+    });
+
+    console.log(`✅ [GET_MESSAGES] ${formatted.length} messages (user: ${userAddress.slice(0, 8)})`);
+    
+    return {
+      success: true,
+      messages: formatted,
+      count: formatted.length
+    };
+    
+  } catch (error: any) {
+    console.error('❌ [GET_MESSAGES] Erreur:', error.message);
+    throw error;
+  }
+}
+
+// ========================================
+// OPÉRATION 4 : GET_USER_MESSAGES (historique utilisateur)
+// ========================================
+async function getUserMessages(address: string, limit: number = 20, offset: number = 0) {
+  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
+  console.log('📜 [GET_USER_MESSAGES] Récupération pour:', addressTrunc, '| Limit:', limit, '| Offset:', offset);
+  
+  try {
+    const { data: messages, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('bitcoin_address', address)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) throw error;
+
+    console.log(`✅ [GET_USER_MESSAGES] ${messages?.length || 0} messages récupérés`);
+    
+    return {
+      success: true,
+      messages: messages || [],
+      count: messages?.length || 0
+    };
+    
+  } catch (error: any) {
+    console.error('❌ [GET_USER_MESSAGES] Erreur:', error.message);
+    throw error;
+  }
+}
+
+// ========================================
+// OPÉRATION 5 : GET_STATS
+// ========================================
+async function getStats(address: string) {
+  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
+  console.log('📊 [GET_STATS] Récupération pour:', addressTrunc);
+  
+  try {
+    const { data: balance, error: balanceError } = await supabase
+      .from('user_balances')
+      .select('*')
+      .eq('bitcoin_address', address)
+      .single();
+
+    if (balanceError) throw balanceError;
+
+    // Compter messages publiés
+    const { data: messages, error: messagesError } = await supabase
+      .from('messages')
+      .select('cost_wbtc')
+      .eq('bitcoin_address', address);
+
+    if (messagesError) throw messagesError;
+
+    const totalMessages = messages?.length || 0;
+    const totalCost = messages?.reduce((sum: number, msg: any) => sum + parseFloat(msg.cost_wbtc), 0) || 0;
+    const avgCost = totalMessages > 0 ? totalCost / totalMessages : 0;
+
+    console.log('✅ [GET_STATS] Terminé');
+    
+    return {
+      success: true,
+      stats: {
+        btc_balance: balance.btc_balance,
+        wbtc_available: balance.wbtc_balance,
+        wbtc_spent_total: balance.wbtc_spent_total || 0,
+        total_messages: totalMessages,
+        total_cost_messages: totalCost,
+        average_cost_per_message: avgCost,
+        characters_remaining: Math.floor(balance.wbtc_balance / MESSAGE_COST_PER_CHAR)
+      }
+    };
+    
+  } catch (error: any) {
+    console.error('❌ [GET_STATS] Erreur:', error.message);
+    throw error;
+  }
+}
+
+
+// ========================================
+// OPÉRATION 6 : DEDUCT (Déduire wBTC)
 // ========================================
 async function deductWBTC(address: string, amount: number) {
   console.log('💳 [DEDUCT] Déduction de', amount, 'wBTC pour:', address.slice(0, 15) + '...');
@@ -199,7 +473,7 @@ async function deductWBTC(address: string, amount: number) {
 }
 
 // ========================================
-// OPÉRATION 3 : SAVE_SCORE
+// OPÉRATION 7 : SAVE_SCORE
 // ========================================
 async function saveScore(address: string, score: number) {
   console.log('💾 [SAVE_SCORE] Score:', score, 'pour:', address.slice(0, 15) + '...');
@@ -241,83 +515,170 @@ async function saveScore(address: string, score: number) {
 }
 
 // ========================================
-// OPÉRATION 4 : GET_HISTORY
+// OPÉRATION 8 : PLACE_PIXELS (Canvas)
 // ========================================
-async function getHistory(address: string, limit: number = 20) {
-  console.log('📜 [GET_HISTORY] Récupération pour:', address.slice(0, 15) + '...');
+async function placePixels(address: string, pixels: Array<{ x: number; y: number; color: string }>) {
+  console.log(`🎨 [PLACE_PIXELS] Placement de ${pixels.length} pixels pour:`, address.slice(0, 15) + '...');
   
   try {
-    const { data: transactions, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('bitcoin_address', address)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    // Validation des pixels
+    if (!pixels || !Array.isArray(pixels) || pixels.length === 0) {
+      throw new Error('Aucun pixel fourni');
+    }
 
-    if (error) throw error;
+    if (pixels.length > 1000) {
+      throw new Error('Maximum 1000 pixels par validation');
+    }
 
-    console.log(`✅ [GET_HISTORY] ${transactions?.length || 0} transactions`);
-    
-    return {
-      success: true,
-      transactions: transactions || []
-    };
-    
-  } catch (error: any) {
-    console.error('❌ [GET_HISTORY] Erreur:', error.message);
-    throw error;
-  }
-}
+    // Valider chaque pixel
+    const validColors = [
+      '#FFFFFF', '#E4E4E4', '#888888', '#222222',
+      '#FFA7D1', '#E50000', '#E59500', '#A06A42',
+      '#E5D900', '#94E044', '#02BE01', '#00D3DD',
+      '#0083C7', '#0000EA', '#CF6EE4', '#820080'
+    ];
 
-// ========================================
-// OPÉRATION 5 : GET_STATS
-// ========================================
-async function getStats(address: string) {
-  console.log('📊 [GET_STATS] Récupération pour:', address.slice(0, 15) + '...');
-  
-  try {
-    const { data: balance, error: balanceError } = await supabase
+    for (const pixel of pixels) {
+      if (
+        typeof pixel.x !== 'number' || pixel.x < 0 || pixel.x >= 100 ||
+        typeof pixel.y !== 'number' || pixel.y < 0 || pixel.y >= 100 ||
+        !validColors.includes(pixel.color)
+      ) {
+        throw new Error('Pixel invalide détecté');
+      }
+    }
+
+    // Calcul du coût total
+    const costPerPixel = 0.00000001;
+    const totalCost = pixels.length * costPerPixel;
+
+    console.log(`💰 Coût total: ${totalCost} wBTC`);
+
+    // Vérifier le solde
+    const { data: user, error: userError } = await supabase
       .from('user_balances')
-      .select('*')
+      .select('wbtc_balance, wbtc_spent_total, last_sync')
       .eq('bitcoin_address', address)
       .single();
 
-    if (balanceError) throw balanceError;
+    if (userError || !user) {
+      throw new Error('Utilisateur non trouvé');
+    }
 
-    const { data: games, error: gamesError } = await supabase
-      .from('transactions')
-      .select('game_score')
+    if (user.wbtc_balance < totalCost) {
+      throw new Error(`Solde insuffisant. Requis: ${totalCost} wBTC, Disponible: ${user.wbtc_balance} wBTC`);
+    }
+
+    // Récupérer les pixels existants pour détecter les conflits
+    const { data: existingPixels, error: fetchError } = await supabase
+      .from('canvas_pixels')
+      .select('x, y, bitcoin_address, created_at')
+      .in('x', pixels.map(p => p.x))
+      .in('y', pixels.map(p => p.y));
+
+    if (fetchError) {
+      throw new Error('Erreur vérification conflits');
+    }
+
+    // Créer un map des pixels existants
+    const existingMap = new Map(
+      (existingPixels || []).map((p: any) => [`${p.x},${p.y}`, p])
+    );
+
+    // Séparer pixels valides et conflits
+    const validPixels = [];
+    const conflicts = [];
+    const now = new Date().toISOString();
+
+    for (const pixel of pixels) {
+      const key = `${pixel.x},${pixel.y}`;
+      const existing = existingMap.get(key);
+      
+      if (existing && existing.bitcoin_address !== address) {
+        // Conflit : pixel appartient à quelqu'un d'autre
+        conflicts.push(pixel);
+      } else {
+        // Pixel valide : soit nouveau, soit appartient déjà à l'utilisateur
+        validPixels.push(pixel);
+      }
+    }
+
+    if (validPixels.length === 0) {
+      throw new Error(`Tous les pixels sont en conflit avec d'autres utilisateurs (${conflicts.length} conflits)`);
+    }
+
+    // Calculer le coût réel (seulement les pixels valides)
+    const actualCost = validPixels.length * costPerPixel;
+
+    // Débiter le solde
+    const { data: updatedUser, error: updateError } = await supabase
+      .from('user_balances')
+      .update({
+        wbtc_balance: user.wbtc_balance - actualCost,
+        wbtc_spent_total: (user.wbtc_spent_total || 0) + actualCost,
+        last_sync: now
+      })
       .eq('bitcoin_address', address)
-      .eq('type', 'game')
-      .not('game_score', 'is', null);
+      .eq('last_sync', user.last_sync)
+      .select()
+      .single();
 
-    if (gamesError) throw gamesError;
+    if (updateError) {
+      throw new Error('Erreur débit solde');
+    }
 
-    const totalGames = games?.length || 0;
-    const bestScore = totalGames > 0 
-      ? Math.max(...games.map((g: any) => g.game_score)) 
-      : 0;
-    const avgScore = totalGames > 0
-      ? games.reduce((sum: number, g: any) => sum + g.game_score, 0) / totalGames
-      : 0;
+    if (!updatedUser) {
+      throw new Error('Conflit de synchronisation. Réessayez.');
+    }
 
-    console.log('✅ [GET_STATS] Terminé');
-    
+    // Insérer/Mettre à jour les pixels valides (UPSERT)
+    const pixelsToUpsert = validPixels.map((p: any) => ({
+      x: p.x,
+      y: p.y,
+      color: p.color,
+      bitcoin_address: address,
+      created_at: existingMap.has(`${p.x},${p.y}`) ? existingMap.get(`${p.x},${p.y}`).created_at : now,
+      updated_at: now
+    }));
+
+    const { error: upsertError } = await supabase
+      .from('canvas_pixels')
+      .upsert(pixelsToUpsert, { onConflict: 'x,y' });
+
+    if (upsertError) {
+      console.error('❌ Erreur insertion pixels:', upsertError);
+      // Rollback: rembourser l'utilisateur
+      await supabase
+        .from('user_balances')
+        .update({
+          wbtc_balance: user.wbtc_balance,
+          wbtc_spent_total: user.wbtc_spent_total,
+          last_sync: user.last_sync
+        })
+        .eq('bitcoin_address', address);
+
+      throw new Error('Erreur placement pixels');
+    }
+
+    // Enregistrer la transaction
+    await supabase.from('transactions').insert({
+      bitcoin_address: address,
+      amount: -actualCost,
+      type: 'canvas',
+      created_at: now
+    });
+
+    console.log(`✅ [PLACE_PIXELS] ${validPixels.length} pixels placés, ${conflicts.length} conflits rejetés`);
+
     return {
       success: true,
-      stats: {
-        btc_balance: balance.btc_balance,
-        wbtc_available: balance.wbtc_balance,
-        wbtc_spent_total: balance.wbtc_spent_total || 0,
-        total_games: totalGames,
-        best_score: bestScore,
-        average_score: Math.round(avgScore),
-        games_remaining: Math.floor(balance.wbtc_balance / GAME_COST)
-      }
+      user: updatedUser,
+      pixelsPlaced: validPixels.length,
+      conflicts: conflicts.length
     };
     
   } catch (error: any) {
-    console.error('❌ [GET_STATS] Erreur:', error.message);
+    console.error('❌ [PLACE_PIXELS] Erreur:', error.message);
     throw error;
   }
 }
@@ -332,13 +693,17 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { operation, jwt, address, network, amount, score, limit } = body;
+    const { operation, jwt, address, network, content, limit, offset, amount, score, pixels } = body;
 
     console.log('🔧 [HANDLER] Opération:', operation);
+    console.log('🔍 [DEBUG] JWT reçu:', jwt ? 'OUI' : 'NON');
+    console.log('🔍 [DEBUG] Address:', address);
 
-    // Validation JWT
+    // ========================================
+    // VALIDATION JWT OBLIGATOIRE (plus d'exception)
+    // ========================================
     if (!jwt) {
-      throw new Error('JWT manquant');
+      throw new Error('JWT manquant - Connexion requise');
     }
 
     const jwtVerification = await verifyJWT(jwt);
@@ -350,7 +715,6 @@ serve(async (req) => {
       );
     }
 
-    // Vérifier que l'adresse correspond au JWT
     if (jwtVerification.address !== address) {
       return new Response(
         JSON.stringify({ success: false, error: 'Adresse non autorisée' }),
@@ -366,7 +730,7 @@ serve(async (req) => {
         if (!network) throw new Error('Paramètre "network" manquant');
         result = await syncBalance(address, network);
         break;
-      
+
       case 'deduct':
         if (!amount) throw new Error('Paramètre "amount" manquant');
         result = await deductWBTC(address, amount);
@@ -381,8 +745,97 @@ serve(async (req) => {
         result = await getHistory(address, limit || 20);
         break;
       
+      case 'publish_message':
+        if (!content) throw new Error('Paramètre "content" manquant');
+        if (content.length > 1000) throw new Error('Message trop long (max 1000 caractères)');
+        result = await publishMessage(address, content);
+        break;
+      
+      case 'get_messages':
+        console.log('📨 [GET_MESSAGES] Demande de chargement:', limit || 20, 'messages');
+        
+        // ÉTAPE 1 : Charger les messages d'abord pour connaître le nombre exact
+        const messagesResult = await getMessages(limit || 20, offset || 0, address);
+        
+        if (!messagesResult.success) {
+          throw new Error('Erreur chargement messages');
+        }
+        
+        const actualCount = messagesResult.messages?.length || 0;
+        const READ_COST_PER_MESSAGE = 0.00000001; // 1 satoshi par message
+        const totalCost = actualCount * READ_COST_PER_MESSAGE;
+        
+        console.log(`💰 [GET_MESSAGES] ${actualCount} messages chargés → Coût: ${totalCost.toFixed(8)} wBTC`);
+        
+        // ÉTAPE 2 : Si pas de messages, pas de débit (gratuit)
+        if (actualCount === 0) {
+          console.log('ℹ️ [GET_MESSAGES] Aucun message → Gratuit');
+          result = messagesResult;
+          break;
+        }
+        
+        // ÉTAPE 3 : Vérifier le solde
+        const { data: user, error: balanceError } = await supabase
+          .from('user_balances')
+          .select('wbtc_balance, wbtc_spent_total, last_sync')
+          .eq('bitcoin_address', address)
+          .single();
+
+        if (balanceError || !user) {
+          throw new Error('Utilisateur non trouvé');
+        }
+
+        if (user.wbtc_balance < totalCost) {
+          throw new Error(
+            `Solde insuffisant pour charger ${actualCount} messages. ` +
+            `Requis: ${totalCost.toFixed(8)} wBTC, Disponible: ${user.wbtc_balance.toFixed(8)} wBTC`
+          );
+        }
+
+        // ÉTAPE 4 : Déduire le coût réel
+        const { error: updateError } = await supabase
+          .from('user_balances')
+          .update({
+            wbtc_balance: user.wbtc_balance - totalCost,
+            wbtc_spent_total: (user.wbtc_spent_total || 0) + totalCost,
+            last_sync: new Date().toISOString()
+          })
+          .eq('bitcoin_address', address)
+          .eq('last_sync', user.last_sync); // Lock optimiste
+
+        if (updateError) {
+          console.error('❌ Erreur déduction:', updateError.message);
+          throw new Error('Erreur déduction solde');
+        }
+
+        // ÉTAPE 5 : Enregistrer transaction
+        await supabase.from('transactions').insert({
+          bitcoin_address: address,
+          amount: -totalCost,
+          type: 'read_messages',
+          created_at: new Date().toISOString()
+        });
+
+        console.log(`✅ [GET_MESSAGES] ${totalCost.toFixed(8)} wBTC déduit`);
+        
+        // ÉTAPE 6 : Retourner les messages + nouveau solde
+        result = {
+          ...messagesResult,
+          new_balance: user.wbtc_balance - totalCost,
+          cost: totalCost
+        };
+        break;
+      
+      case 'get_user_messages':
+        result = await getUserMessages(address, limit || 20, offset || 0);
+        break;
+      
       case 'get_stats':
         result = await getStats(address);
+        break;
+
+      case 'place_pixels':
+        result = await placePixels(address, pixels);
         break;
       
       default:
