@@ -255,14 +255,16 @@ export async function saveGameScore(address, score) {
 // ========================================
 
 /**
- * Publier un message sur le réseau social
+ * Publier un message ou un commentaire sur le réseau social
  * @param {string} address - Adresse Bitcoin de l'auteur
  * @param {string} content - Contenu du message (max 1000 caractères)
+ * @param {string|null} parentId - ID du message parent (pour commentaires)
  * @returns {Promise<object>} { success: true, message: {...}, user: {...} }
  */
-export async function publishMessage(address, content) {
+export async function publishMessage(address, content, parentId = null) {
   try {
-    console.log('📝 [publishMessage] Publication...');
+    const logType = parentId ? '💬 [publishComment]' : '📝 [publishMessage]';
+    console.log(`${logType} Publication...`);
     
     const jwt = getJWT();
     if (!jwt) {
@@ -278,17 +280,27 @@ export async function publishMessage(address, content) {
       throw new Error('Message trop long (max 1000 caractères)');
     }
     
+    const body = { 
+      operation: 'publish_message',
+      jwt,
+      address,
+      content: content.trim()
+    };
+    
+    // Ajouter parentId si c'est un commentaire
+    if (parentId) {
+      body.parentId = parentId;
+      console.log('💬 Commentaire du message:', parentId.slice(0, 8));
+    }
+    
+    console.log('🔍 [DEBUG] Body envoyé:', body);
+
     const { data, error } = await supabase.functions.invoke('user-operations', {
-      body: { 
-        operation: 'publish_message',
-        jwt,
-        address,
-        content: content.trim()
-      }
+      body
     });
 
     if (error) {
-      console.error('❌ Erreur publish_message:', error);
+      console.error('❌ Erreur publication:', error);
       throw new Error(error.message || 'Erreur publication');
     }
 
@@ -296,7 +308,7 @@ export async function publishMessage(address, content) {
       throw new Error(data?.error || 'Publication échouée');
     }
 
-    console.log('✅ Message publié');
+    console.log(`✅ ${parentId ? 'Commentaire' : 'Message'} publié`);
     return data;
     
   } catch (error) {
@@ -306,15 +318,17 @@ export async function publishMessage(address, content) {
 }
 
 /**
- * Récupérer les messages du réseau social (tous les messages)
+ * Récupérer les messages du réseau social (tous les messages) ou les commentaires d'un message
  * @param {number} limit - Nombre de messages (défaut: 20)
  * @param {number} offset - Offset pour pagination (défaut: 0)
  * @param {string|null} userAddress - Adresse Bitcoin de l'utilisateur (pour likes/dislikes)
+ * @param {string|null} parentId - ID du message parent (pour charger les commentaires)
  * @returns {Promise<array>} Liste des messages avec compteurs sociaux
  */
-export async function getMessages(limit = 20, offset = 0, userAddress = null) {
+export async function getMessages(limit = 20, offset = 0, userAddress = null, parentId = null) {
   try {
-    console.log('📨 [getMessages] Récupération...', { userAddress: userAddress?.slice(0, 8), limit, offset });
+    const logType = parentId ? '💬 [getComments]' : '📨 [getMessages]';
+    console.log(`${logType} Récupération...`, { userAddress: userAddress?.slice(0, 8), limit, offset, parentId: parentId?.slice(0, 8) });
     
     // JWT obligatoire pour utilisateur authentifié
     if (!userAddress) {
@@ -328,14 +342,21 @@ export async function getMessages(limit = 20, offset = 0, userAddress = null) {
       throw new Error('Authentification requise');
     }
     
+    const body = { 
+      operation: 'get_messages',
+      limit,
+      offset,
+      address: userAddress,
+      jwt
+    };
+    
+    // Ajouter parentId si on charge des commentaires
+    if (parentId) {
+      body.parentId = parentId;
+    }
+    
     const { data, error } = await supabase.functions.invoke('user-operations', {
-      body: { 
-        operation: 'get_messages',
-        limit,
-        offset,
-        address: userAddress,
-        jwt
-      }
+      body
     });
 
     if (error) {
@@ -347,7 +368,7 @@ export async function getMessages(limit = 20, offset = 0, userAddress = null) {
     const newBalance = data?.new_balance;
     const cost = data?.cost || 0;
 
-    console.log(`✅ ${messages.length} messages récupérés | Coût: ${cost.toFixed(8)} wBTC`);
+    console.log(`✅ ${messages.length} ${parentId ? 'commentaires' : 'messages'} récupérés | Coût: ${cost.toFixed(8)} wBTC`);
     
     return { messages, new_balance: newBalance, cost };
     

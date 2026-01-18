@@ -39,6 +39,7 @@ const BitcoinExclusiveAccess = () => {
     saveGameScore,
     publishMessage,
     loadMessages,
+    loadComments,
     loadUserMessages,
     manualSync,
     loadStats,
@@ -408,8 +409,14 @@ const BitcoinExclusiveAccess = () => {
   }, [setError, isTestMode, setStep]);
 
   // ===== HANDLER : PUBLICATION MESSAGE =====
-  const handlePublishMessage = useCallback(async (content) => {
+  const handlePublishMessage = useCallback(async (content, isTestMode = false, parentId = null) => {
     try {
+      // 🆕 En mode test, utiliser le hook directement sans vérifications
+      if (isTestMode) {
+        return await publishMessage(content, isTestMode, parentId);
+      }
+      
+      // Mode authentifié : vérifications de sécurité
       const savedAddress = localStorage.getItem('bitcoin_address');
       
       if (!savedAddress) {
@@ -426,13 +433,16 @@ const BitcoinExclusiveAccess = () => {
         throw new Error('Wallet déconnecté');
       }
       
-      return await publishMessage(content);
+      const result = await publishMessage(content, isTestMode, parentId);
+      
+      // ✅ Retourner le résultat complet (pas juste true/false)
+      return result;
       
     } catch (err) {
       console.error('❌ Vérification pré-publication échouée:', err.message);
       setError('Votre session a expiré. Veuillez vous reconnecter.');
       handleManualDisconnect();
-      return false;
+      return { success: false, error: err.message };
     }
   }, [publishMessage, modal, setError, handleManualDisconnect]);
 
@@ -553,6 +563,7 @@ const BitcoinExclusiveAccess = () => {
               wbtcAvailable={wbtcAvailable}
               onPublishMessage={handlePublishMessage}
               onLoadMessages={loadMessages}
+              onLoadComments={loadComments}
               onSocialAction={socialAction}
               loading={loading}
               error={error}

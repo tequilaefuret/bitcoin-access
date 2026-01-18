@@ -140,7 +140,7 @@ async function syncBalance(address: string, network: string) {
 // ========================================
 // OPÉRATION 2 : PUBLISH_MESSAGE
 // ========================================
-async function publishMessage(address: string, content: string) {
+async function publishMessage(address: string, content: string, parentId?: string) {
   const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
   console.log('📝 [PUBLISH_MESSAGE] Nouveau message de:', addressTrunc);
   
@@ -188,16 +188,24 @@ async function publishMessage(address: string, content: string) {
       throw new Error('Conflit de synchronisation. Réessayez.');
     }
 
-    // Insérer message
+    // Insérer message (avec parent_id optionnel pour commentaires)
+    const insertData: any = {
+      bitcoin_address: address,
+      content: content,
+      char_count: charCount,
+      cost_wbtc: cost,
+      created_at: new Date().toISOString()
+    };
+
+    // Si parentId fourni, c'est un commentaire
+    if (parentId) {
+      insertData.parent_id = parentId;
+      console.log('💬 Commentaire du message:', parentId.slice(0, 8));
+    }
+
     const { data: message, error: messageError } = await supabase
       .from('messages')
-      .insert({
-        bitcoin_address: address,
-        content: content,
-        char_count: charCount,
-        cost_wbtc: cost,
-        created_at: new Date().toISOString()
-      })
+      .insert(insertData)
       .select()
       .single();
 
@@ -229,12 +237,13 @@ async function publishMessage(address: string, content: string) {
 // OPÉRATION 3 : GET_MESSAGES (tous les messages, public)
 // REMPLACE la fonction getMessages dans user-operations/index.ts
 // ========================================
-async function getMessages(limit: number = 20, offset: number = 0, userAddress?: string) {
-  console.log('📨 [GET_MESSAGES] Récupération - Limit:', limit, '| Offset:', offset, '| User:', userAddress?.slice(0, 8));
+async function getMessages(limit: number = 20, offset: number = 0, userAddress?: string, parentId?: string) {
+  const parentInfo = parentId ? `Parent: ${parentId.slice(0, 8)}` : 'Posts principaux';
+  console.log('📨 [GET_MESSAGES] Params reçus:', { limit, offset, userAddress: userAddress?.slice(0, 8), parentId });
   
   try {
-    // Récupérer messages avec compteurs sociaux
-    const { data: messages, error } = await supabase
+    // Construction de la requête selon si on veut les posts ou les commentaires
+    let query = supabase
       .from('messages')
       .select(`
         *,
@@ -243,10 +252,20 @@ async function getMessages(limit: number = 20, offset: number = 0, userAddress?:
         comments:messages!parent_id(count),
         reposts:messages!repost_of(count)
       `)
-      .is('parent_id', null)
-      .is('deleted_at', null)
+      .is('deleted_at', null);
+
+    // Filtre : soit posts principaux (parent_id null), soit commentaires d'un message spécifique
+    if (parentId) {
+      query = query.eq('parent_id', parentId);
+    } else {
+      query = query.is('parent_id', null);
+    }
+
+    query = query
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
+
+    const { data: messages, error } = await query;
 
     if (error) throw error;
 
@@ -274,26 +293,17 @@ async function getMessages(limit: number = 20, offset: number = 0, userAddress?:
     // Récupérer les likes/dislikes de l'utilisateur
     const messageIds = messages.map((m: any) => m.id);
     
-    console.log('🔍 [DEBUG] Recherche likes/dislikes pour:', userAddress.slice(0, 8));
-    console.log('🔍 [DEBUG] Message IDs:', messageIds.map(id => id.slice(0, 8)));
-
-    const { data: userLikes, error: likesError } = await supabase
+    const { data: userLikes } = await supabase
       .from('message_likes')
       .select('message_id')
       .eq('bitcoin_address', userAddress)
       .in('message_id', messageIds);
 
-    console.log('🔍 [DEBUG] Likes trouvés:', userLikes?.length || 0, userLikes);
-    if (likesError) console.error('❌ [DEBUG] Erreur likes:', likesError);
-
-    const { data: userDislikes, error: dislikesError } = await supabase
+    const { data: userDislikes } = await supabase
       .from('message_dislikes')
       .select('message_id')
       .eq('bitcoin_address', userAddress)
       .in('message_id', messageIds);
-
-    console.log('🔍 [DEBUG] Dislikes trouvés:', userDislikes?.length || 0, userDislikes);
-    if (dislikesError) console.error('❌ [DEBUG] Erreur dislikes:', dislikesError);
 
     // Formater avec toutes les infos
     const formatted = messages.map((msg: any) => ({
@@ -306,15 +316,7 @@ async function getMessages(limit: number = 20, offset: number = 0, userAddress?:
       user_has_disliked: userDislikes?.some((d: any) => d.message_id === msg.id) || false
     }));
 
-    console.log('🔍 [DEBUG] Premier message formaté:', {
-      id: formatted[0]?.id.slice(0, 8),
-      likes_count: formatted[0]?.likes_count,
-      dislikes_count: formatted[0]?.dislikes_count,
-      user_has_liked: formatted[0]?.user_has_liked,
-      user_has_disliked: formatted[0]?.user_has_disliked
-    });
-
-    console.log(`✅ [GET_MESSAGES] ${formatted.length} messages (user: ${userAddress.slice(0, 8)})`);
+    console.log(`✅ [GET_MESSAGES] ${formatted.length} ${parentId ? 'commentaires' : 'messages'}`);
     
     return {
       success: true,
@@ -693,7 +695,7 @@ serve(async (req) => {
 
   try {
     const body = await req.json();
-    const { operation, jwt, address, network, content, limit, offset, amount, score, pixels } = body;
+    const { operation, jwt, address, network, content, limit, offset, amount, score, pixels, parentId } = body;
 
     console.log('🔧 [HANDLER] Opération:', operation);
     console.log('🔍 [DEBUG] JWT reçu:', jwt ? 'OUI' : 'NON');
@@ -748,14 +750,14 @@ serve(async (req) => {
       case 'publish_message':
         if (!content) throw new Error('Paramètre "content" manquant');
         if (content.length > 1000) throw new Error('Message trop long (max 1000 caractères)');
-        result = await publishMessage(address, content);
+        result = await publishMessage(address, content, parentId);
         break;
       
       case 'get_messages':
         console.log('📨 [GET_MESSAGES] Demande de chargement:', limit || 20, 'messages');
         
         // ÉTAPE 1 : Charger les messages d'abord pour connaître le nombre exact
-        const messagesResult = await getMessages(limit || 20, offset || 0, address);
+        const messagesResult = await getMessages(limit || 20, offset || 0, address, body.parentId);
         
         if (!messagesResult.success) {
           throw new Error('Erreur chargement messages');

@@ -260,7 +260,7 @@ export const useBitcoinBalance = () => {
   /**
    * 📝 Publier un message
    */
-  const publishMessageCallback = useCallback(async (content, isTestMode = false) => {
+  const publishMessageCallback = useCallback(async (content, isTestMode = false, parentId = null) => {
     setError('');
     
     try {
@@ -300,8 +300,7 @@ export const useBitcoinBalance = () => {
       }
       
       // MODE AUTHENTIFIÉ : Publication en BDD
-      console.log('💳 Publication en BDD pour utilisateur authentifié');
-      const result = await publishMessage(address, content);
+      const result = await publishMessage(address, content, parentId);
       
       if (!result.success) {
         throw new Error(result.error || 'Publication échouée');
@@ -314,7 +313,7 @@ export const useBitcoinBalance = () => {
       
       console.log('✅ Message publié. Nouveau solde:', result.user.wbtc_balance);
       setError('');
-      return true;
+      return result;
       
     } catch (err) {
       console.error('❌ Erreur publication message:', err);
@@ -372,6 +371,34 @@ export const useBitcoinBalance = () => {
         setError('Erreur chargement messages : ' + err.message);
       }
       
+      return [];
+    } finally {
+      setLoading(false);
+    }
+  }, [address]);
+  
+  /**
+   * 💬 Charger les commentaires d'un message
+   */
+  const loadComments = useCallback(async (parentId, limit = 20, offset = 0) => {
+    try {
+      setLoading(true);
+      console.log('💬 Chargement commentaires du message:', parentId.slice(0, 8));
+      
+      const result = await getMessages(limit, offset, address, parentId);
+      
+      // Mise à jour du solde si retourné
+      if (result.new_balance !== null && result.new_balance !== undefined) {
+        setWbtcAvailable(result.new_balance);
+        console.log(`💰 Nouveau solde après lecture commentaires: ${result.new_balance.toFixed(8)} wBTC`);
+      }
+      
+      console.log(`✅ ${result.messages.length} commentaires récupérés`);
+      return result.messages;
+      
+    } catch (err) {
+      console.error('❌ Erreur chargement commentaires:', err);
+      setError('Erreur chargement commentaires : ' + err.message);
       return [];
     } finally {
       setLoading(false);
@@ -609,6 +636,7 @@ export const useBitcoinBalance = () => {
     loadCanvasPixels,
     submitCanvasPixels,
     loadUserPixelCount,
+    loadComments,
     socialAction
   };
 };

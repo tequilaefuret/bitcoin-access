@@ -69,6 +69,7 @@ const SocialStep = ({
   wbtcAvailable,
   onPublishMessage,
   onLoadMessages,
+  onLoadComments,
   onSocialAction,
   onBack,
   loading,
@@ -335,9 +336,29 @@ const SocialStep = ({
     }
   };
 
-  // Commenter (placeholder)
-  const handleComment = (messageId) => {
-    alert('Fonction commentaire en développement');
+  // Publier un commentaire
+  const handleComment = async (messageId, commentText, onSuccess) => {
+    if (!commentText.trim()) return;
+    
+    const result = await onPublishMessage(commentText.trim(), isTestMode, messageId);
+    
+    if (result && result.success) {
+      // Mettre à jour le compteur du message parent dans le fil principal
+      setMessages(prevMessages => prevMessages.map(msg => 
+        msg.id === messageId 
+          ? { ...msg, comments_count: msg.comments_count + 1 }
+          : msg
+      ));
+      
+      // Passer le vrai message retourné par le backend
+      if (onSuccess) onSuccess(result.message);
+    }
+  };
+
+  // Charger les commentaires d'un message
+  const handleLoadComments = async (messageId) => {
+    if (isTestMode) return [];
+    return await onLoadComments(messageId);
   };
 
   // Repost (placeholder)
@@ -449,6 +470,7 @@ const SocialStep = ({
                 onLike={handleLike}
                 onDislike={handleDislike}
                 onComment={handleComment}
+                onLoadComments={handleLoadComments}
                 onRepost={handleRepost}
                 onDelete={handleDelete}
                 onUserClick={handleUserClick}
