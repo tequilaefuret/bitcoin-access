@@ -1,6 +1,20 @@
 -- Harden social graph and message reaction tables.
 -- This migration is safe to apply on top of the current schema.
 
+-- Legacy production projects did not all have the collaborative canvas table.
+-- Create the missing prerequisite before adding its index. Existing projects and
+-- their canvas data are left untouched.
+create table if not exists public.canvas_pixels (
+  x integer not null check (x between 0 and 99),
+  y integer not null check (y between 0 and 99),
+  color text not null check (color ~ '^#[0-9A-Fa-f]{6}$'),
+  bitcoin_address text not null
+    references public.user_balances(bitcoin_address) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (x, y)
+);
+
 -- Prevent duplicate follow relationships and self-following.
 create unique index if not exists follows_follower_following_unique
   on public.follows (follower_address, following_address);
