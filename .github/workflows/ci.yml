@@ -1,0 +1,61 @@
+name: Validate change
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      CI: true
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+    steps:
+      - name: Check out the release
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Validate frontend and deployment structure
+        run: npm run verify
+
+      - name: Test transactional billing migrations
+        run: npm run test:billing:sql
+
+      - name: Test Opinion evaluation dataset
+        run: python3 services/opinion-worker/evaluation/test_dataset.py

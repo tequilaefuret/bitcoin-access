@@ -1,0 +1,26 @@
+services:
+  opinion-worker:
+    build:
+      context: ./services/opinion-worker
+      args:
+        EMBEDDING_MODEL: intfloat/multilingual-e5-small
+    environment:
+      DATABASE_URL_FILE: /run/secrets/opinion_database_url
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
+      EMBEDDING_MODEL_PATH: /opt/opinion-model
+      BATCH_SIZE: ${BATCH_SIZE:-8}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-2}
+      DISCOVERY_REFRESH_INTERVAL_SECONDS: ${DISCOVERY_REFRESH_INTERVAL_SECONDS:-300}
+      TREND_REFRESH_INTERVAL_SECONDS: ${TREND_REFRESH_INTERVAL_SECONDS:-300}
+      VISIBILITY_TIMEOUT_SECONDS: ${VISIBILITY_TIMEOUT_SECONDS:-300}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-5}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    secrets:
+      - opinion_database_url
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+secrets:
+  opinion_database_url:
+    file: .secrets/opinion_database_url

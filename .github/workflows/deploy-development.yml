@@ -1,0 +1,62 @@
+name: Deploy development
+
+on:
+  push:
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-development
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Database, Edge Functions, frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: development
+      url: ${{ vars.APP_URL }}
+
+    env:
+      CI: true
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      NETLIFY_SITE_ID: ${{ vars.NETLIFY_SITE_ID }}
+      DEPLOYMENT_ENVIRONMENT: ${{ vars.DEPLOYMENT_ENVIRONMENT }}
+      APP_URL: ${{ vars.APP_URL }}
+      REACT_APP_SUPABASE_ANON_KEY: ${{ secrets.REACT_APP_SUPABASE_ANON_KEY }}
+      REACT_APP_WALLETCONNECT_PROJECT_ID: ${{ secrets.REACT_APP_WALLETCONNECT_PROJECT_ID }}
+      REACT_APP_AUTH_API_URL: ${{ vars.REACT_APP_AUTH_API_URL }}
+
+    steps:
+      - name: Check out the development commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          version: 2.113.0
+
+      - name: Install Netlify CLI
+        run: npm install --global netlify-cli@27.1.1
+
+      - name: Deploy development safely
+        run: npm run deploy:development

@@ -5,3 +5,12 @@
 [build.environment]
   NODE_VERSION = "22.20.0"
   NPM_CONFIG_LEGACY_PEER_DEPS = "true"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "base-uri 'self'; frame-ancestors 'none'; object-src 'none'"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Strict-Transport-Security = "max-age=31536000"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"

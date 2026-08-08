@@ -3,43 +3,190 @@ import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
-const environment = process.env.REACT_APP_ENVIRONMENT || 'development';
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('⚠️ Variables Supabase manquantes');
-}
-
-console.log(`🌍 Environnement : ${environment}`);
-console.log(`🔗 Supabase URL : ${supabaseUrl?.substring(0, 30)}...`);
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+const isLocalDevelopment = process.env.NODE_ENV === 'development'
+  && typeof window !== 'undefined'
+  && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const authApiBaseUrl = (
+  process.env.REACT_APP_AUTH_API_URL
+  || (isLocalDevelopment ? '/api/auth' : `${supabaseUrl}/functions/v1`)
+).replace(/\/$/, '');
+let accessToken = null;
+let sessionRefreshPromise = null;
+
+if (typeof window !== 'undefined') {
+  localStorage.removeItem('btc_auth_token');
+  localStorage.removeItem('bitcoin_address');
+  localStorage.removeItem('walletConnected');
+}
 
 // ========================================
 // 🔐 GESTION JWT
 // ========================================
 
-/**
- * Stocker le JWT dans localStorage
- */
 function storeJWT(jwt) {
-  localStorage.setItem('btc_auth_token', jwt);
-  console.log('✅ JWT stocké');
-}
-
-/**
- * Récupérer le JWT depuis localStorage
- */
-function getJWT() {
-  return localStorage.getItem('btc_auth_token');
-}
-
-/**
- * Supprimer le JWT
- */
-function clearJWT() {
+  accessToken = jwt || null;
   localStorage.removeItem('btc_auth_token');
   localStorage.removeItem('bitcoin_address');
-  console.log('🗑️ JWT supprimé');
+  localStorage.removeItem('walletConnected');
+}
+
+function getJWT() {
+  return accessToken;
+}
+
+function clearJWT() {
+  accessToken = null;
+  localStorage.removeItem('btc_auth_token');
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(payload));
+  } catch {
+    return null;
+  }
+}
+
+function accessTokenNeedsRefresh(token) {
+  const payload = decodeJwtPayload(token || '');
+  if (!payload?.exp) return true;
+  return payload.exp * 1000 <= Date.now() + 60_000;
+}
+
+async function authApiRequest(functionName, body) {
+  const response = await fetch(`${authApiBaseUrl}/${functionName}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${supabaseAnonKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.error || 'Authentication service unavailable');
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+async function edgeFunctionErrorMessage(error, fallback) {
+  const response = error?.context;
+  if (response && typeof response.clone === 'function') {
+    try {
+      const payload = await response.clone().json();
+      if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+    } catch {
+      // Fall through to the SDK message when the response is not JSON.
+    }
+  }
+  return error?.message || fallback;
+}
+
+export async function restoreSession() {
+  if (sessionRefreshPromise) return sessionRefreshPromise;
+
+  const refresh = async () => {
+    try {
+      return await authApiRequest('auth-session', { action: 'refresh' });
+    } catch (error) {
+      if (error.status !== 409) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return authApiRequest('auth-session', { action: 'refresh' });
+    }
+  };
+
+  sessionRefreshPromise = refresh()
+    .then((data) => {
+      if (!data.authenticated || !data.accessToken || !data.address) return null;
+      storeJWT(data.accessToken);
+      return { address: data.address };
+    })
+    .catch((error) => {
+      clearJWT();
+      if (error.status === 401) return null;
+      throw error;
+    })
+    .finally(() => {
+      sessionRefreshPromise = null;
+    });
+
+  return sessionRefreshPromise;
+}
+
+export async function logoutSession() {
+  try {
+    await authApiRequest('auth-session', { action: 'logout' });
+  } catch (error) {
+    if (error.status !== 401) throw error;
+  } finally {
+    clearJWT();
+  }
+}
+
+export async function loginWithPassword(identifier, password) {
+  const data = await authApiRequest('password-auth', {
+    action: 'login',
+    identifier,
+    password,
+  });
+  if (!data.authenticated || !data.accessToken || !data.address) {
+    throw new Error(data.error || 'Unable to sign in');
+  }
+
+  storeJWT(data.accessToken);
+  return { address: data.address };
+}
+
+export async function configurePassword(password, { reset = false } = {}) {
+  const jwt = await getAuthenticatedJWT();
+  const data = await authApiRequest('password-auth', {
+    action: reset ? 'reset' : 'set',
+    password,
+    accessToken: jwt,
+  });
+  if (!data.configured) throw new Error(data.error || 'Unable to save the password');
+  return data;
+}
+
+export async function skipPasswordSetup() {
+  const jwt = await getAuthenticatedJWT();
+  const data = await authApiRequest('password-auth', {
+    action: 'skip',
+    accessToken: jwt,
+  });
+  if (!data.skipped) throw new Error(data.error || 'Unable to continue without a password');
+  return data;
+}
+
+export async function getAuthenticatedJWT() {
+  if (accessToken && !accessTokenNeedsRefresh(accessToken)) return accessToken;
+  const session = await restoreSession();
+  if (!session || !accessToken) throw new Error('Non authentifié. Reconnectez-vous.');
+  return accessToken;
+}
+
+export async function requestAuthChallenge({
+  address,
+  network = 'mainnet',
+  personaId = null,
+  methodId = null,
+  walletName = null,
+  purpose = 'login',
+}) {
+  return authApiRequest('auth-challenge', {
+    address,
+    network,
+    personaId,
+    methodId,
+    walletName,
+    purpose,
+  });
 }
 
 // ========================================
@@ -65,64 +212,38 @@ export function truncateAddress(address) {
  * @param {object} params - { address, message, signature, network }
  * @returns {Promise<object>} { valid: true, jwt, user }
  */
-export async function verifyAndRegister({ address, message, signature, network }) {
-  try {
-    console.log('🔐 [VERIFY-AND-REGISTER] Démarrage...');
-    console.log('📍 Adresse:', truncateAddress(address));
-    console.log('🌐 Réseau:', network);
-    console.log('✍️ Message:', message?.substring(0, 50) + '...');
-    
-    // Validation des paramètres
-    if (!address || !message || !signature || !network) {
-      console.error('❌ [VERIFY-AND-REGISTER] Paramètres manquants', {
-        address: !!address,
-        message: !!message, 
-        signature: !!signature,
-        network: !!network
-      });
-      throw new Error('Paramètres manquants pour la vérification');
-    }
+export async function verifyAndRegister({
+  address,
+  message,
+  signature,
+  network,
+  personaId = null,
+  methodId = null,
+  authRequest = null,
+  proofFormat = null
+}) {
+  if (!address || !message || !signature || !network) {
+    throw new Error('Paramètres manquants pour la vérification');
+  }
     
     // Extraction signature si format objet Xverse
-    let signatureString = signature;
-    if (typeof signature === 'object' && signature.signature) {
-      signatureString = signature.signature;
-      console.log('📝 Signature extraite de l\'objet');
-    }
-    
-    console.log('🚀 Appel Edge Function...');
-    const { data, error } = await supabase.functions.invoke('verify-and-register', {
-      body: { 
+  const signatureString = typeof signature === 'object' && signature.signature
+    ? signature.signature
+    : signature;
+  const data = await authApiRequest('verify-and-register', {
         address, 
         message, 
         signature: signatureString, 
-        network 
-      }
+        network,
+        personaId,
+        methodId,
+        authRequest,
+        proofFormat,
     });
 
-    if (error) {
-      console.error('❌ Erreur Edge Function:', error);
-      throw new Error(error.message || 'Erreur de vérification');
-    }
-
-    if (!data || !data.valid) {
-      console.error('❌ Vérification échouée:', data);
-      throw new Error(data?.error || 'Vérification échouée');
-    }
-
-    console.log('✅ Signature vérifiée !');
-    console.log('🔑 JWT reçu');
-    
-    // Stocker JWT et adresse
-    storeJWT(data.jwt);
-    localStorage.setItem('bitcoin_address', address);
-
-    return data; // { valid: true, jwt, user }
-    
-  } catch (error) {
-    console.error('❌ [verifyAndRegister] Erreur:', error);
-    throw error;
-  }
+  if (!data?.valid) throw new Error(data?.error || 'Vérification échouée');
+  storeJWT(data.jwt);
+  return data;
 }
 
 /**
@@ -130,124 +251,146 @@ export async function verifyAndRegister({ address, message, signature, network }
  * @param {string} address - Adresse Bitcoin
  * @returns {Promise<object|null>} Données utilisateur ou null
  */
-export async function getUserData(address) {
+export async function getUserData(address, { throwOnError = false } = {}) {
   try {
-    console.log('📊 [getUserData] Récupération pour:', truncateAddress(address));
-    
+    const jwt = await getAuthenticatedJWT();
     const { data, error } = await supabase.functions.invoke('get-user-data', {
-      body: { address }
+      body: { address, jwt }
     });
 
     if (error) {
-      console.error('❌ Erreur get-user-data:', error);
+      if (throwOnError) {
+        throw new Error(error.message || 'Impossible de charger le profil utilisateur');
+      }
       return null;
     }
 
     if (!data || !data.exists) {
-      console.log('ℹ️ Utilisateur non trouvé');
       return null;
     }
 
-    console.log('✅ Données récupérées');
-    return data.user;
+    const user = data.user || {};
+    const normalizedProfile = user.profile || null;
+    const profileDisplayName =
+      normalizedProfile?.display_name ||
+      user.display_name ||
+      user.profile_display_name ||
+      null;
+
+    return {
+      ...user,
+      profile: normalizedProfile,
+      display_name: profileDisplayName,
+      profile_display_name: profileDisplayName,
+      has_profile: Boolean(user.has_profile || profileDisplayName)
+    };
     
   } catch (error) {
-    console.error('❌ [getUserData] Erreur:', error);
+    if (throwOnError) throw error;
     return null;
   }
 }
 
-/**
- * Synchroniser solde BTC → wBTC
- * @param {string} address - Adresse Bitcoin
- * @param {string} network - 'testnet4' ou 'bitcoin'
- * @returns {Promise<object>} { success: true, user, delta }
- */
-export async function syncUserBalance(address, network) {
-  try {
-    console.log('🔄 [syncUserBalance] Synchronisation...');
-    
-    const jwt = getJWT();
-    if (!jwt) {
-      throw new Error('Non authentifié. Reconnectez-vous.');
-    }
-    
-    const { data, error } = await supabase.functions.invoke('user-operations', {
-      body: { 
-        operation: 'sync',
-        jwt,
-        address,
-        network
-      }
-    });
-
-    if (error) {
-      console.error('❌ Erreur sync:', error);
-      throw new Error(error.message || 'Erreur synchronisation');
-    }
-
-    if (!data || !data.success) {
-      throw new Error(data?.error || 'Synchronisation échouée');
-    }
-
-    console.log('✅ Synchronisation réussie. Delta:', data.delta);
-    return data;
-    
-  } catch (error) {
-    console.error('❌ [syncUserBalance] Erreur:', error);
-    throw error;
+function createRequestId() {
+  const cryptoApi = typeof window !== 'undefined' ? window.crypto : null;
+  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
+  if (typeof cryptoApi?.getRandomValues !== 'function') {
+    throw new Error('Ce navigateur ne permet pas de sécuriser cette requête. Mettez-le à jour.');
   }
+
+  const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+}
+
+export async function getPublicProfile(address) {
+  const { data, error } = await supabase.functions.invoke('get-public-profile', {
+    body: { address },
+  });
+  if (error) throw new Error(error.message || 'Unable to load profile');
+  if (!data?.exists) return null;
+
+  return {
+    bitcoin_address: address,
+    profile: data.profile,
+    display_name: data.profile?.display_name || null,
+    has_profile: Boolean(data.profile),
+    ownership_verified: Boolean(data.profile?.ownership_verified),
+    created_at: data.profile?.created_at || null,
+  };
+}
+
+export async function getPublicUserMessages(address, limit = 25, offset = 0) {
+  const { data, error } = await supabase.functions.invoke('get-public-profile', {
+    body: { address, action: 'messages', limit, offset },
+  });
+  if (error) throw new Error(error.message || 'Unable to load public messages');
+  return Array.isArray(data?.messages) ? data.messages : [];
+}
+
+export async function getPublicUserUsefulMessages(address, limit = 25, offset = 0) {
+  const { data, error } = await supabase.functions.invoke('get-public-profile', {
+    body: { address, action: 'useful', limit, offset },
+  });
+  if (error) {
+    throw new Error(await edgeFunctionErrorMessage(error, 'Unable to load Useful posts'));
+  }
+  return Array.isArray(data?.messages) ? data.messages : [];
+}
+
+async function invokeEdgeFunction(functionName, body, fallbackMessage) {
+  const { data, error } = await supabase.functions.invoke(functionName, { body });
+  if (error) throw new Error(await edgeFunctionErrorMessage(error, fallbackMessage));
+  if (data?.success === false) throw new Error(data.error || fallbackMessage);
+  return data;
+}
+
+async function invokeUserOperation(address, operation, payload = {}, fallbackMessage = 'Operation failed') {
+  if (!address) throw new Error('Authentification requise');
+  const jwt = await getAuthenticatedJWT();
+  return invokeEdgeFunction('user-operations', {
+    operation,
+    jwt,
+    address,
+    ...payload,
+  }, fallbackMessage);
 }
 
 /**
- * Déduire wBTC pour jouer
+ * Créer ou mettre à jour le pseudo du profil utilisateur
+ * @param {string} address - Adresse Bitcoin
+ * @param {string} displayName - Pseudo unique (3 à 50 caractères)
+ * @param {string} bio - Bio optionnelle
+ * @returns {Promise<object>} Profil sauvegardé
+ */
+export async function upsertUserProfile(address, displayName, bio = '') {
+  const data = await invokeUserOperation(address, 'upsert_profile', {
+    displayName: typeof displayName === 'string' ? displayName.trim() : '',
+    bio: typeof bio === 'string' ? bio.trim() : '',
+  }, 'Erreur sauvegarde profil');
+  return data.profile || data;
+}
+
+/**
+ * Synchroniser solde BTC → shells
+ * @param {string} address - Adresse Bitcoin
+ * @param {string} network - 'mainnet' ou 'bitcoin'
+ * @returns {Promise<object>} { success: true, user, delta }
+ */
+export async function syncUserBalance(address, network) {
+  return invokeUserOperation(address, 'sync', { network }, 'Erreur synchronisation');
+}
+
+/**
+ * Déduire shells pour jouer
  * @param {string} address - Adresse Bitcoin
  * @param {number} amount - Montant (défaut: 0.000001)
  * @returns {Promise<object>} { success: true, user }
  */
-export async function deductGameCost(address, amount = 0.000001) {
-  try {
-    console.log('💳 [deductGameCost] Déduction de', amount, 'wBTC');
-    
-    const jwt = getJWT();
-    if (!jwt) {
-      throw new Error('Non authentifié. Reconnectez-vous.');
-    }
-    
-    const { data, error } = await supabase.functions.invoke('user-operations', {
-      body: { 
-        operation: 'deduct',
-        jwt,
-        address,
-        amount
-      }
-    });
-
-    if (error) {
-      console.error('❌ Erreur deduct:', error);
-      throw new Error(error.message || 'Erreur déduction');
-    }
-
-    if (!data || !data.success) {
-      throw new Error(data?.error || 'Déduction échouée');
-    }
-
-    console.log('✅ Déduction réussie');
-    return data;
-    
-  } catch (error) {
-    console.error('❌ [deductGameCost] Erreur:', error);
-    throw error;
-  }
-}
-
-/**
- * Enregistrer le score
- * @param {string} address - Adresse Bitcoin
- * @param {number} score - Score obtenu
- * @returns {Promise<object>} { success: true }
- */
-export async function saveGameScore(address, score) {
+export async function deductGameCost(address) {
+  return invokeUserOperation(address, 'deduct', {}, 'Erreur déduction');
 }
 
 // ========================================
@@ -262,59 +405,15 @@ export async function saveGameScore(address, score) {
  * @returns {Promise<object>} { success: true, message: {...}, user: {...} }
  */
 export async function publishMessage(address, content, parentId = null) {
-  try {
-    const logType = parentId ? '💬 [publishComment]' : '📝 [publishMessage]';
-    console.log(`${logType} Publication...`);
-    
-    const jwt = getJWT();
-    if (!jwt) {
-      throw new Error('Non authentifié. Reconnectez-vous.');
-    }
-    
-    // Validation
-    if (!content || content.trim().length === 0) {
-      throw new Error('Le message ne peut pas être vide');
-    }
-    
-    if (content.length > 1000) {
-      throw new Error('Message trop long (max 1000 caractères)');
-    }
-    
-    const body = { 
-      operation: 'publish_message',
-      jwt,
-      address,
-      content: content.trim()
-    };
-    
-    // Ajouter parentId si c'est un commentaire
-    if (parentId) {
-      body.parentId = parentId;
-      console.log('💬 Commentaire du message:', parentId.slice(0, 8));
-    }
-    
-    console.log('🔍 [DEBUG] Body envoyé:', body);
+  const cleanedContent = typeof content === 'string' ? content.trim() : '';
+  if (!cleanedContent) throw new Error('Le message ne peut pas être vide');
+  if (cleanedContent.length > 1000) throw new Error('Message trop long (max 1000 caractères)');
 
-    const { data, error } = await supabase.functions.invoke('user-operations', {
-      body
-    });
-
-    if (error) {
-      console.error('❌ Erreur publication:', error);
-      throw new Error(error.message || 'Erreur publication');
-    }
-
-    if (!data || !data.success) {
-      throw new Error(data?.error || 'Publication échouée');
-    }
-
-    console.log(`✅ ${parentId ? 'Commentaire' : 'Message'} publié`);
-    return data;
-    
-  } catch (error) {
-    console.error('❌ [publishMessage] Erreur:', error);
-    throw error;
-  }
+  return invokeUserOperation(address, 'publish_message', {
+      requestId: createRequestId(),
+      content: cleanedContent,
+      ...(parentId ? { parentId } : {}),
+  }, 'Erreur publication');
 }
 
 /**
@@ -323,59 +422,72 @@ export async function publishMessage(address, content, parentId = null) {
  * @param {number} offset - Offset pour pagination (défaut: 0)
  * @param {string|null} userAddress - Adresse Bitcoin de l'utilisateur (pour likes/dislikes)
  * @param {string|null} parentId - ID du message parent (pour charger les commentaires)
+ * @param {'recent'|'followed'} sortMode - Fil global ou comptes suivis
  * @returns {Promise<array>} Liste des messages avec compteurs sociaux
  */
-export async function getMessages(limit = 20, offset = 0, userAddress = null, parentId = null) {
-  try {
-    const logType = parentId ? '💬 [getComments]' : '📨 [getMessages]';
-    console.log(`${logType} Récupération...`, { userAddress: userAddress?.slice(0, 8), limit, offset, parentId: parentId?.slice(0, 8) });
-    
-    // JWT obligatoire pour utilisateur authentifié
-    if (!userAddress) {
-      console.warn('⚠️ Pas d\'adresse utilisateur - accès refusé');
-      return { messages: [], new_balance: null, cost: 0 };
-    }
-
-    const jwt = getJWT();
-    if (!jwt) {
-      console.error('❌ JWT manquant - utilisateur non authentifié');
-      throw new Error('Authentification requise');
-    }
-    
-    const body = { 
-      operation: 'get_messages',
+export async function getMessages(limit = 20, offset = 0, userAddress = null, parentId = null, sortMode = 'recent') {
+  const data = await invokeUserOperation(userAddress, 'get_messages', {
+      requestId: createRequestId(),
       limit,
       offset,
-      address: userAddress,
-      jwt
-    };
-    
-    // Ajouter parentId si on charge des commentaires
-    if (parentId) {
-      body.parentId = parentId;
-    }
-    
-    const { data, error } = await supabase.functions.invoke('user-operations', {
-      body
-    });
+      sortMode,
+      ...(parentId ? { parentId } : {}),
+  }, 'Erreur chargement des messages');
+  return {
+    messages: data?.messages || [],
+    new_balance: data?.new_balance,
+    cost: data?.cost || 0,
+  };
+}
 
-    if (error) {
-      console.error('❌ Erreur get_messages:', error);
-      throw error;
-    }
+/**
+ * Ajouter ou retirer le signal Useful d'une publication.
+ * L'ajout coûte 0.00000001 shell ; le retrait est gratuit.
+ */
+export async function toggleMessageUseful(address, messageId) {
+  return invokeUserOperation(address, 'toggle_message_useful', { messageId }, 'Le vote Useful a échoué');
+}
 
-    const messages = data?.messages || [];
-    const newBalance = data?.new_balance;
-    const cost = data?.cost || 0;
+export async function createMessageRepost(address, messageId, quoteContent = '') {
+  return invokeUserOperation(address, 'repost_message', {
+    messageId,
+    quoteContent: typeof quoteContent === 'string' ? quoteContent.trim() : '',
+  }, 'Le repost a échoué');
+}
 
-    console.log(`✅ ${messages.length} ${parentId ? 'commentaires' : 'messages'} récupérés | Coût: ${cost.toFixed(8)} wBTC`);
-    
-    return { messages, new_balance: newBalance, cost };
-    
-  } catch (error) {
-    console.error('❌ [getMessages] Erreur:', error);
-    throw error;
-  }
+export async function listFollowingAddresses(address) {
+  const jwt = await getAuthenticatedJWT();
+  const data = await invokeEdgeFunction('social-follow', {
+    jwt, address, action: 'list_following',
+  }, 'Unable to load followed users');
+  return Array.isArray(data?.following) ? data.following : [];
+}
+
+export async function setFollowingAddress(address, targetAddress, follow) {
+  const jwt = await getAuthenticatedJWT();
+  const data = await invokeEdgeFunction('social-follow', {
+      jwt,
+      address,
+      targetAddress,
+      action: follow ? 'follow' : 'unfollow',
+  }, 'Unable to update follow');
+  return Array.isArray(data.following) ? data.following : [];
+}
+
+/**
+ * Charger les sujets Opinion et leur sélection de publications.
+ * La répartition interne des perspectives n'est jamais renvoyée au navigateur.
+ */
+export async function getOpinionTopics(address) {
+  const data = await invokeUserOperation(address, 'get_opinion_topics', {}, 'Chargement du mode Opinion échoué');
+  return data.topics || [];
+}
+
+/**
+ * Sauvegarder la position privée du lecteur pour un sujet.
+ */
+export async function setPrivateTopicStance(address, topicId, stance) {
+  return invokeUserOperation(address, 'set_private_topic_stance', { topicId, stance }, 'Sauvegarde de la position privée échouée');
 }
 
 /**
@@ -386,36 +498,8 @@ export async function getMessages(limit = 20, offset = 0, userAddress = null, pa
  * @returns {Promise<array>} Liste des messages de l'utilisateur
  */
 export async function getUserMessages(address, limit = 20, offset = 0) {
-  try {
-    console.log('📜 [getUserMessages] Récupération historique...');
-    
-    const jwt = getJWT();
-    if (!jwt) {
-      throw new Error('Non authentifié');
-    }
-    
-    const { data, error } = await supabase.functions.invoke('user-operations', {
-      body: { 
-        operation: 'get_user_messages',
-        jwt,
-        address,
-        limit,
-        offset
-      }
-    });
-
-    if (error) {
-      console.error('❌ Erreur get_user_messages:', error);
-      return [];
-    }
-
-    console.log(`✅ ${data?.messages?.length || 0} messages historique`);
-    return data?.messages || [];
-    
-  } catch (error) {
-    console.error('❌ [getUserMessages] Erreur:', error);
-    return [];
-  }
+  const data = await invokeUserOperation(address, 'get_user_messages', { limit, offset }, 'Erreur chargement historique');
+  return data?.messages || [];
 }
 
 /**
@@ -424,104 +508,59 @@ export async function getUserMessages(address, limit = 20, offset = 0) {
  * @returns {Promise<object|null>} Statistiques
  */
 export async function getUserStats(address) {
-  try {
-    console.log('📊 [getUserStats] Récupération...');
-    
-    const jwt = getJWT();
-    if (!jwt) {
-      throw new Error('Non authentifié');
-    }
-    
-    const { data, error } = await supabase.functions.invoke('user-operations', {
-      body: { 
-        operation: 'get_stats',
-        jwt,
-        address
-      }
-    });
+  const data = await invokeUserOperation(address, 'get_stats', {}, 'Erreur chargement des statistiques');
+  return data?.stats || null;
+}
 
-    if (error) {
-      console.error('❌ Erreur get_stats:', error);
-      return null;
-    }
+/**
+ * Récupérer l'historique des dépenses de l'utilisateur
+ * @param {string} address - Adresse Bitcoin
+ * @param {number} limit - Nombre d'éléments (défaut: 20)
+ * @returns {Promise<array>} Liste des événements de dépense
+ */
+export async function getSpendingHistory(address, limit = 20) {
+  const data = await invokeUserOperation(address, 'get_history', { limit }, 'Erreur chargement historique');
+  return data?.history || [];
+}
 
-    console.log('✅ Stats récupérées');
-    return data?.stats || null;
-    
-  } catch (error) {
-    console.error('❌ [getUserStats] Erreur:', error);
-    return null;
-  }
+export async function deleteMessage(address, messageId) {
+  const jwt = await getAuthenticatedJWT();
+  return invokeEdgeFunction('social-delete', {
+    jwt,
+    bitcoinAddress: address,
+    messageId,
+  }, 'Delete failed');
 }
 
 // ============================================
 // CANVAS - Récupérer tous les pixels
 // ============================================
 export async function getCanvasPixels() {
-  try {
-    const { data, error } = await supabase
-      .from('canvas_pixels')
-      .select('x, y, color, bitcoin_address, updated_at')
-      .order('updated_at', { ascending: false });
-
-    if (error) throw error;
-    return data || [];
-  } catch (err) {
-    console.error('❌ Erreur getCanvasPixels:', err);
-    throw err;
-  }
+  const { data, error } = await supabase
+    .from('canvas_pixels')
+    .select('x, y, color, bitcoin_address, updated_at')
+    .order('updated_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
 }
 
 // ============================================
 // CANVAS - Placer des pixels (avec validation)
 // ============================================
 export async function placeCanvasPixels(address, pixels) {
-  try {
-    const jwt = getJWT();
-    if (!jwt) throw new Error('Non authentifié');
-
-    console.log(`🎨 Envoi de ${pixels.length} pixel(s) pour validation...`);
-
-    const { data, error } = await supabase.functions.invoke('user-operations', {
-      body: { 
-        operation: 'place_pixels',
-        jwt,
-        address, 
-        pixels
-      },
-      headers: {
-        Authorization: `Bearer ${jwt}`
-      }
-    });
-
-    if (error) throw new Error(error.message);
-    if (!data?.success) throw new Error(data?.error || 'Placement pixels échoué');
-
-    console.log(`✅ ${data.pixelsPlaced} pixel(s) placé(s)${data.conflicts > 0 ? `, ${data.conflicts} conflit(s) rejeté(s)` : ''}`);
-
-    return data;
-  } catch (err) {
-    console.error('❌ Erreur placeCanvasPixels:', err);
-    return { success: false, error: err.message };
-  }
+  return invokeUserOperation(address, 'place_pixels', { pixels }, 'Placement pixels échoué');
 }
 
 // ============================================
 // CANVAS - Compter les pixels d'un utilisateur
 // ============================================
 export async function getUserPixelCount(address) {
-  try {
-    const { count, error } = await supabase
-      .from('canvas_pixels')
-      .select('*', { count: 'exact', head: true })
-      .eq('bitcoin_address', address);
-
-    if (error) throw error;
-    return count || 0;
-  } catch (err) {
-    console.error('❌ Erreur getUserPixelCount:', err);
-    throw err;
-  }
+  const { count, error } = await supabase
+    .from('canvas_pixels')
+    .select('*', { count: 'exact', head: true })
+    .eq('bitcoin_address', address);
+  if (error) throw error;
+  return count || 0;
 }
 
 // Export functions pour nettoyage

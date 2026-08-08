@@ -1,320 +1,423 @@
-// src/components/social/MessageCard.jsx
 import React, { useState } from 'react';
-import { Heart, MessageCircle, Repeat2, Trash2, ThumbsDown } from 'lucide-react';
-import { truncateAddress } from '../../supabaseClient';
+import { Lightbulb, MessageCircle, Quote, Repeat2, Trash2, X } from 'lucide-react';
 
-const MessageCard = ({ 
+const TEXT_PREVIEW_LENGTH = 150;
+
+const ExpandableText = ({ text }) => {
+  const [expanded, setExpanded] = useState(false);
+  const safeText = text || '';
+  const isLong = safeText.length > TEXT_PREVIEW_LENGTH;
+  const visibleText = expanded || !isLong
+    ? safeText
+    : `${safeText.slice(0, TEXT_PREVIEW_LENGTH).trim()}...`;
+
+  return (
+    <div className="mb-3 text-gray-700">
+      <p className="whitespace-pre-wrap">{visibleText}</p>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((current) => !current)}
+          className="mt-1 text-xs font-semibold text-orange-700 hover:text-orange-900"
+        >
+          {expanded ? 'See less' : 'See more'}
+        </button>
+      )}
+    </div>
+  );
+};
+
+const MessageCard = ({
   message,
   currentAddress,
-  isTestMode,
-  onLike,
-  onDislike,
+  onUseful,
   onComment,
   onLoadComments,
   onRepost,
   onDelete,
   onUserClick,
+  isFollowed = false,
   showActions = true
 }) => {
-  // ===== TOUS LES ÉTATS D'ABORD =====
   const [showComments, setShowComments] = useState(false);
   const [showCommentForm, setShowCommentForm] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [comments, setComments] = useState([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [commentsLoaded, setCommentsLoaded] = useState(false);
-  
-  // États locaux pour gestion optimiste des likes/dislikes
-  const [localLikesCount, setLocalLikesCount] = useState(message.likes_count || 0);
-  const [localDislikesCount, setLocalDislikesCount] = useState(message.dislikes_count || 0);
-  const [localUserHasLiked, setLocalUserHasLiked] = useState(message.user_has_liked || false);
-  const [localUserHasDisliked, setLocalUserHasDisliked] = useState(message.user_has_disliked || false);
+  const [localUsefulCount, setLocalUsefulCount] = useState(Number(message.useful_count) || 0);
+  const [localUserMarkedUseful, setLocalUserMarkedUseful] = useState(
+    Boolean(message.user_has_marked_useful)
+  );
   const [localCommentsCount, setLocalCommentsCount] = useState(message.comments_count || 0);
-  
-  // ===== HANDLERS ENSUITE =====
-  // Handler like local
-  const handleLocalLike = async () => {
-    const action = localUserHasLiked ? 'remove_like' : 'like';
-    
-    // Mise à jour optimiste locale
-    if (action === 'like') {
-      setLocalLikesCount(localLikesCount + 1);
-      setLocalDislikesCount(localUserHasDisliked ? localDislikesCount - 1 : localDislikesCount);
-      setLocalUserHasLiked(true);
-      setLocalUserHasDisliked(false);
-    } else {
-      setLocalLikesCount(localLikesCount - 1);
-      setLocalUserHasLiked(false);
-    }
-    
-    // Appel backend
-    if (onLike) await onLike(message.id);
+  const [usefulError, setUsefulError] = useState('');
+  const [usefulLoading, setUsefulLoading] = useState(false);
+  const [localRepostsCount, setLocalRepostsCount] = useState(Number(message.reposts_count) || 0);
+  const [localUserReposted, setLocalUserReposted] = useState(Boolean(message.user_has_reposted));
+  const [showRepostOptions, setShowRepostOptions] = useState(false);
+  const [showQuoteComposer, setShowQuoteComposer] = useState(false);
+  const [quoteText, setQuoteText] = useState('');
+  const [repostLoading, setRepostLoading] = useState(false);
+  const [repostError, setRepostError] = useState('');
+
+  const authorAddress = message.bitcoin_address || null;
+  const isOwnMessage = authorAddress === currentAddress;
+
+  const formatTimestamp = (timestamp) => {
+    const date = new Date(timestamp);
+    const diffMs = Date.now() - date.getTime();
+    const diffMins = Math.max(0, Math.floor(diffMs / 60000));
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
+
+    return date.toLocaleDateString('en-US', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    });
   };
 
-  // Handler dislike local
-  const handleLocalDislike = async () => {
-    const action = localUserHasDisliked ? 'remove_dislike' : 'dislike';
-    
-    // Mise à jour optimiste locale
-    if (action === 'dislike') {
-      setLocalDislikesCount(localDislikesCount + 1);
-      setLocalLikesCount(localUserHasLiked ? localLikesCount - 1 : localLikesCount);
-      setLocalUserHasDisliked(true);
-      setLocalUserHasLiked(false);
-    } else {
-      setLocalDislikesCount(localDislikesCount - 1);
-      setLocalUserHasDisliked(false);
+  const displayAddress = message.display_name ? `@${message.display_name}` : '@anonymous';
+
+  const handleUseful = async () => {
+    if (!onUseful || isOwnMessage || usefulLoading) return;
+
+    const previousActive = localUserMarkedUseful;
+    const previousCount = localUsefulCount;
+    const optimisticActive = !previousActive;
+
+    setUsefulError('');
+    setUsefulLoading(true);
+    setLocalUserMarkedUseful(optimisticActive);
+    setLocalUsefulCount(Math.max(0, previousCount + (optimisticActive ? 1 : -1)));
+
+    try {
+      const result = await onUseful(message.id);
+      if (result) {
+        setLocalUserMarkedUseful(Boolean(result.active));
+        setLocalUsefulCount(Number(result.useful_count) || 0);
+      }
+    } catch (error) {
+      setLocalUserMarkedUseful(previousActive);
+      setLocalUsefulCount(previousCount);
+      setUsefulError(error.message || 'Useful could not be saved.');
+    } finally {
+      setUsefulLoading(false);
     }
-    
-    // Appel backend
-    if (onDislike) await onDislike(message.id);
   };
 
-  // Charger les commentaires d'un message
   const loadComments = async () => {
-    if (loadingComments || commentsLoaded) return;
-    
+    if (loadingComments || commentsLoaded || !onLoadComments) return;
+
     setLoadingComments(true);
     try {
-      // Appeler onLoadComments passé en prop
       const loadedComments = await onLoadComments(message.id);
-      setComments(loadedComments);
+      setComments(loadedComments || []);
       setCommentsLoaded(true);
-    } catch (err) {
-      console.error('Erreur chargement commentaires:', err);
+    } catch {
+      setComments([]);
     } finally {
       setLoadingComments(false);
     }
   };
 
-  // ===== VARIABLES ET FONCTIONS UTILITAIRES =====
-  // Vérifier si l'utilisateur actuel est l'auteur
-  const isOwnMessage = message.bitcoin_address === currentAddress || 
-                       (isTestMode && message.isTest);
-  
-  // Formater timestamp
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    
-    // Utiliser getTime() pour comparer en UTC (évite les décalages timezone)
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    
-    if (diffMins < 1) return 'À l\'instant';
-    if (diffMins < 60) return `Il y a ${diffMins}min`;
-    if (diffMins < 1440) return `Il y a ${Math.floor(diffMins / 60)}h`;
-    
-    // Afficher dans la timezone locale de l'utilisateur (pas de timeZone forcé)
-    return date.toLocaleDateString('fr-FR', { 
-      day: '2-digit', 
-      month: '2-digit', 
-      year: 'numeric'
-    });
+  const submitRepost = async (quoteContent = '') => {
+    if (!onRepost || repostLoading) return;
+    const isQuote = Boolean(quoteContent.trim());
+    setRepostLoading(true);
+    setRepostError('');
+    try {
+      const result = await onRepost(message.id, quoteContent);
+      if (result) {
+        if (!isQuote) setLocalUserReposted(Boolean(result.active));
+        setLocalRepostsCount(Number(result.reposts_count) || 0);
+      }
+      setShowRepostOptions(false);
+      setShowQuoteComposer(false);
+      setQuoteText('');
+    } catch (error) {
+      setRepostError(error.message || 'The repost could not be saved.');
+    } finally {
+      setRepostLoading(false);
+    }
   };
 
-  const displayAddress = message.isDemo || message.isTest 
-    ? message.author 
-    : truncateAddress(message.bitcoin_address);
+  const originalMessage = message.reposted_message || null;
+  const repostedText = originalMessage?.content || message.content || '';
+  const repostedCharacterCount = repostedText.replace(/\n/g, '').length;
+  const quotedCharacterCount = quoteText.trim().replace(/\n/g, '').length;
 
-  // ===== RENDU =====
   return (
-    <div className={`border-b border-gray-100 pb-4 ${
-      message.isTest ? 'bg-yellow-50 p-3 rounded-lg' : ''
-    }`}>
-      {/* Header */}
-      <div className="flex justify-between items-start mb-2">
-        <button
-          onClick={() => onUserClick && onUserClick(message.bitcoin_address)}
-          className={`font-semibold text-sm hover:underline ${
-            message.isDemo ? 'text-blue-600' : 
-            message.isTest ? 'text-yellow-600' : 
-            'text-gray-800'
-          }`}
-        >
-          {displayAddress}
-        </button>
-        
+    <article className="border-b border-gray-100 pb-4">
+      <div className="mb-2 flex items-start justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onUserClick?.(authorAddress)}
+            disabled={!authorAddress || !onUserClick}
+            title={displayAddress}
+            className={`text-sm font-semibold text-gray-800 hover:underline ${
+              !authorAddress || !onUserClick ? 'cursor-default hover:no-underline' : ''
+            }`}
+          >
+            {displayAddress}
+          </button>
+          {isFollowed && (
+            <span className="rounded-full bg-orange-100 px-2 py-1 text-[11px] font-semibold text-orange-700">
+              Following
+            </span>
+          )}
+        </div>
+
         <div className="flex items-center gap-3">
           <span className="text-xs text-gray-500">
             {formatTimestamp(message.created_at || message.timestamp)}
           </span>
-          
-          {/* Bouton supprimer (seulement pour ses propres messages) */}
           {isOwnMessage && showActions && onDelete && (
             <button
+              type="button"
               onClick={() => onDelete(message.id)}
-              className="text-red-500 hover:text-red-700 transition"
-              title="Supprimer"
+              className="text-red-500 transition hover:text-red-700"
+              title="Delete"
             >
-              <Trash2 className="w-4 h-4" />
+              <Trash2 className="h-4 w-4" />
             </button>
           )}
         </div>
       </div>
 
-      {/* Indicateur repost */}
       {message.repost_of && (
-        <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-          <Repeat2 className="w-3 h-3" />
-          Repost
+        <div className="mb-1 flex items-center gap-1 text-xs text-gray-500">
+          <Repeat2 className="h-3 w-3" />
+          {message.repost_kind === 'quote' ? 'Quoted' : 'Reposted'}
         </div>
       )}
 
-      {/* Contenu */}
-      <p className="text-gray-700 whitespace-pre-wrap mb-3">{message.content}</p>
+      {message.content && <ExpandableText text={message.content} />}
 
-      {/* Actions */}
+      {message.repost_of && (
+        originalMessage ? (
+          <div className="mb-3 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <button
+              type="button"
+              onClick={() => onUserClick?.(originalMessage.bitcoin_address)}
+              disabled={!originalMessage.bitcoin_address || !onUserClick}
+              className="text-xs font-bold text-slate-700 hover:underline disabled:no-underline"
+            >
+              {originalMessage.display_name ? `@${originalMessage.display_name}` : '@anonymous'}
+            </button>
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+              {originalMessage.content}
+            </p>
+            <p className="mt-2 text-[11px] text-slate-400">
+              {formatTimestamp(originalMessage.created_at)}
+            </p>
+          </div>
+        ) : (
+          <div className="mb-3 rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+            Original post unavailable.
+          </div>
+        )
+      )}
+
       {showActions && (
-        <div className="flex items-center gap-4 text-sm">
-          {/* Like */}
+        <div className="flex flex-wrap items-center gap-4 text-sm">
           <button
-            onClick={handleLocalLike}
-            disabled={!onLike}
-            className={`flex items-center gap-1 transition ${
-              localUserHasLiked 
-                ? 'text-red-500 font-semibold' 
-                : 'text-gray-500 hover:text-red-500'
-            } disabled:cursor-not-allowed`}
+            type="button"
+            onClick={handleUseful}
+            disabled={!onUseful || isOwnMessage || usefulLoading}
+            title={isOwnMessage
+              ? 'You cannot mark your own post as useful'
+              : localUserMarkedUseful
+                ? 'Remove Useful (free)'
+                : 'Mark as useful (costs 1 satoshi)'}
+            className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
+              localUserMarkedUseful
+                ? 'bg-amber-100 font-semibold text-amber-800'
+                : 'text-gray-500 hover:bg-amber-50 hover:text-amber-700'
+            } disabled:cursor-not-allowed disabled:opacity-50`}
           >
-            <Heart className={`w-4 h-4 ${localUserHasLiked ? 'fill-current' : ''}`} />
-            <span>{localLikesCount}</span>
+            <Lightbulb className={`h-4 w-4 ${localUserMarkedUseful ? 'fill-current' : ''}`} />
+            <span>Useful</span>
+            <span>{localUsefulCount}</span>
           </button>
 
-          {/* Dislike */}
           <button
-            onClick={handleLocalDislike}
-            disabled={!onDislike}
-            className={`flex items-center gap-1 transition ${
-              localUserHasDisliked 
-                ? 'text-blue-500 font-semibold' 
-                : 'text-gray-500 hover:text-blue-500'
-            } disabled:cursor-not-allowed`}
-          >
-            <ThumbsDown className={`w-4 h-4 ${localUserHasDisliked ? 'fill-current' : ''}`} />
-            <span>{localDislikesCount}</span>
-          </button>
-
-          {/* Commentaires */}
-          <button
+            type="button"
             onClick={() => {
-              setShowComments(!showComments);
-              if (!showComments && !commentsLoaded) {
-                loadComments();
-              }
+              setShowComments((current) => !current);
+              if (!showComments && !commentsLoaded) loadComments();
             }}
-            className="flex items-center gap-1 text-gray-500 hover:text-orange-500 transition"
+            className="flex items-center gap-1 text-gray-500 transition hover:text-orange-600"
           >
-            <MessageCircle className="w-4 h-4" />
+            <MessageCircle className="h-4 w-4" />
             <span>{localCommentsCount}</span>
           </button>
 
-          {/* Repost */}
           <button
-            onClick={() => onRepost && onRepost(message.id)}
+            type="button"
+            onClick={() => setShowRepostOptions((current) => !current)}
             disabled={!onRepost || isOwnMessage}
-            className="flex items-center gap-1 text-gray-500 hover:text-green-500 transition disabled:cursor-not-allowed disabled:opacity-50"
-            title={isOwnMessage ? "Impossible de reposter son propre message" : "Reposter"}
+            className={`flex items-center gap-1 transition disabled:cursor-not-allowed disabled:opacity-50 ${
+              localUserReposted ? 'font-semibold text-green-700' : 'text-gray-500 hover:text-green-600'
+            }`}
+            title={isOwnMessage ? 'You cannot repost your own message' : 'Repost'}
           >
-            <Repeat2 className="w-4 h-4" />
-            <span>{message.reposts_count || 0}</span>
+            <Repeat2 className="h-4 w-4" />
+            <span>{localRepostsCount}</span>
           </button>
         </div>
       )}
 
-      {/* Zone commentaires */}
+      {usefulError && <p className="mt-2 text-xs text-red-600">{usefulError}</p>}
+      {repostError && <p className="mt-2 text-xs text-red-600">{repostError}</p>}
+
+      {showActions && showRepostOptions && (
+        <div className="mt-3 flex w-fit overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+          <button
+            type="button"
+            onClick={() => submitRepost('')}
+            disabled={repostLoading}
+            aria-label={localUserReposted ? 'Undo repost' : 'Repost'}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <Repeat2 className="h-4 w-4" />
+            {localUserReposted ? 'Undo repost' : 'Repost'}
+            {!localUserReposted && (
+              <span aria-hidden="true" className="text-xs font-normal text-slate-400">
+                {repostedCharacterCount} sats
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setShowQuoteComposer(true);
+              setShowRepostOptions(false);
+            }}
+            className="inline-flex items-center gap-2 border-l border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Quote className="h-4 w-4" />
+            Quote
+          </button>
+        </div>
+      )}
+
+      {showActions && showQuoteComposer && (
+        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Add a comment</span>
+            <button type="button" onClick={() => setShowQuoteComposer(false)} className="text-slate-400 hover:text-slate-700">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <textarea
+            value={quoteText}
+            onChange={(event) => setQuoteText(event.target.value)}
+            maxLength={1000}
+            rows={3}
+            placeholder="Why are you sharing this?"
+            className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-orange-400"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <span className="text-xs text-slate-400">
+              {quoteText.length} / 1000 · {repostedCharacterCount + quotedCharacterCount} sats
+            </span>
+            <button
+              type="button"
+              onClick={() => submitRepost(quoteText.trim())}
+              disabled={!quoteText.trim() || repostLoading}
+              className="rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+            >
+              Publish quote
+            </button>
+          </div>
+        </div>
+      )}
+
       {showComments && (
-        <div className="mt-4 pt-4 border-t border-gray-200">
-          {/* Bouton ajouter commentaire */}
+        <div className="mt-4 border-t border-gray-200 pt-4">
           {!showCommentForm && (
             <button
+              type="button"
               onClick={() => setShowCommentForm(true)}
-              className="text-sm text-orange-600 hover:text-orange-700 font-semibold mb-3"
+              className="mb-3 text-sm font-semibold text-orange-700 hover:text-orange-900"
             >
-              + Ajouter un commentaire
+              + Add a comment
             </button>
           )}
 
-          {/* Formulaire de commentaire */}
           {showCommentForm && (
-            <div className="mb-4 p-3 bg-gray-50 rounded">
+            <div className="mb-4 rounded-lg bg-gray-50 p-3">
               <textarea
                 value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                placeholder="Écrivez votre commentaire..."
-                className="w-full p-2 border rounded resize-none focus:outline-none focus:ring-2 focus:ring-orange-500"
+                onChange={(event) => setCommentText(event.target.value)}
+                placeholder="Write your comment..."
+                maxLength={1000}
+                className="w-full resize-none rounded border p-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
                 rows={3}
               />
-              <div className="flex justify-between items-center mt-2">
-                <span className="text-xs text-gray-500">
-                  {commentText.replace(/\n/g, '').length} caractères • Coût: {(commentText.replace(/\n/g, '').length * 0.00000001).toFixed(8)} wBTC
-                </span>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span className="text-xs text-gray-500">{commentText.length} / 1000</span>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={() => {
                       setShowCommentForm(false);
                       setCommentText('');
                     }}
                     className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
                   >
-                    Annuler
+                    Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={async () => {
-                      if (onComment) {
-                        await onComment(message.id, commentText, async (newComment) => {
-                          // Incrémenter le compteur local
-                          setLocalCommentsCount(localCommentsCount + 1);
-                          
-                          // Ajouter le nouveau commentaire localement
-                          if (newComment) {
-                            setComments(prevComments => [newComment, ...prevComments]);
-                          }
-                          
-                          // Réinitialiser le formulaire
-                          setCommentText('');
-                          setShowCommentForm(false);
-                        });
-                      }
+                      if (!onComment) return;
+                      await onComment(message.id, commentText, (newComment) => {
+                        setLocalCommentsCount((count) => count + 1);
+                        if (newComment) setComments((current) => [newComment, ...current]);
+                        setCommentText('');
+                        setShowCommentForm(false);
+                      });
                     }}
-                    disabled={commentText.trim().length === 0}
-                    className="px-3 py-1 text-sm bg-orange-600 text-white rounded hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!commentText.trim()}
+                    className="rounded bg-orange-600 px-3 py-1 text-sm text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Publier
+                    Publish
                   </button>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Liste des commentaires */}
           {loadingComments ? (
-            <p className="text-sm text-gray-500">Chargement des commentaires...</p>
+            <p className="text-sm text-gray-500">Loading comments...</p>
           ) : comments.length > 0 ? (
-            <div className="space-y-3 pl-4 border-l-2 border-gray-200">
-              {comments.map(comment => (
+            <div className="space-y-3 border-l-2 border-gray-200 pl-4">
+              {comments.map((comment) => (
                 <MessageCard
                   key={comment.id}
                   message={comment}
                   currentAddress={currentAddress}
-                  isTestMode={isTestMode}
-                  onLike={onLike}
-                  onDislike={onDislike}
+                  onUseful={onUseful}
                   onComment={onComment}
                   onLoadComments={onLoadComments}
                   onRepost={onRepost}
                   onDelete={onDelete}
                   onUserClick={onUserClick}
-                  showActions={true}
+                  showActions
                 />
               ))}
             </div>
           ) : (
-            <p className="text-sm text-gray-500 italic">Aucun commentaire</p>
+            <p className="text-sm italic text-gray-500">No comments yet</p>
           )}
         </div>
       )}
-    </div>
+    </article>
   );
 };
 

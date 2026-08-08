@@ -7,6 +7,8 @@
 
 # testing
 /coverage
+__pycache__/
+*.py[cod]
 
 # production
 /build
@@ -20,6 +22,8 @@
 .env.test.local
 .env.production
 .env.production.local
+.env.opinion-worker
+.secrets/*
 
 # macOS
 .DS_Store

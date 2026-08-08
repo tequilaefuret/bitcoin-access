@@ -1,0 +1,7 @@
+services:
+  opinion-worker:
+    restart: always
+
+secrets:
+  opinion_database_url:
+    file: /etc/danaus/opinion_database_url

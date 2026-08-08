@@ -1,0 +1,82 @@
+name: Repair migration history
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Environment whose migration history must be repaired
+        required: true
+        type: choice
+        options:
+          - development
+          - production
+      migration_version:
+        description: Numeric prefix of one migration file (example 202608080003)
+        required: true
+        type: string
+      confirmation:
+        description: Type REPAIR to confirm that this exact SQL file was already applied manually
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repair-migration-history-${{ inputs.target_environment }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: inputs.confirmation == 'REPAIR'
+    name: Mark one verified migration as applied
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.target_environment }}
+
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      MIGRATION_VERSION: ${{ inputs.migration_version }}
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate the requested migration
+        shell: bash
+        run: |
+          if [[ ! "$MIGRATION_VERSION" =~ ^[0-9]{12,14}$ ]]; then
+            echo "Migration version must contain 12 to 14 digits."
+            exit 1
+          fi
+
+          shopt -s nullglob
+          matching_files=(supabase/migrations/"${MIGRATION_VERSION}"_*.sql)
+          if [ "${#matching_files[@]}" -ne 1 ]; then
+            echo "Expected exactly one repository migration for version $MIGRATION_VERSION."
+            exit 1
+          fi
+
+          echo "Migration selected: ${matching_files[0]}"
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v2
+        with:
+          version: 2.113.0
+
+      - name: Link the selected Supabase project
+        run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Show history before repair
+        run: supabase migration list --linked
+
+      - name: Mark the verified migration as already applied
+        run: supabase migration repair --status applied "$MIGRATION_VERSION"
+
+      - name: Show history after repair
+        run: supabase migration list --linked

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Palette, Grid3x3, ZoomIn, ZoomOut, Eye, EyeOff, ArrowLeft, Check, X } from 'lucide-react';
 
-// Palette de 16 couleurs (r/place style)
+  // 16-color palette (r/place style)
 const COLORS = [
   '#FFFFFF', '#E4E4E4', '#888888', '#222222',
   '#FFA7D1', '#E50000', '#E59500', '#A06A42',
@@ -10,12 +10,12 @@ const COLORS = [
 ];
 
 const CANVAS_SIZE = 100; // 100x100 pixels
-const PIXEL_COST = 0.00000001; // 1 satoshi par pixel
-const MAX_PIXELS = 1000; // Limite par validation
+  const PIXEL_COST = 0.00000001; // 1 satoshi per pixel
+  const MAX_PIXELS = 1000; // Validation limit
 
 const CanvasStep = ({
   address,
-  wbtcAvailable,
+  shellsAvailable,
   onSubmitPixels,
   onLoadCanvas,
   onLoadUserPixelCount,
@@ -91,7 +91,7 @@ const CanvasStep = ({
     pixelMap.forEach((pixel) => {
       const isMyPixel = pixel.bitcoin_address === address;
       
-      // Filtrage "Mes pixels uniquement"
+      // "My pixels only" filtering
       if (showOnlyMyPixels && !isMyPixel) {
         // Dessiner pixel transparent/gris
         ctx.globalAlpha = 0.2;
@@ -105,7 +105,7 @@ const CanvasStep = ({
       const y = pixel.y * pixelSize + pan.y;
       ctx.fillRect(x, y, pixelSize, pixelSize);
 
-      // Bordure spéciale pour pixels en attente
+      // Special border for pending pixels
       if (pixel.isPending) {
         ctx.globalAlpha = 1;
         ctx.strokeStyle = '#FFD700'; // Or
@@ -146,7 +146,7 @@ const CanvasStep = ({
 
     // Vérifier limite
     if (pendingPixels.length >= MAX_PIXELS) {
-      alert(`Limite atteinte : ${MAX_PIXELS} pixels max par validation`);
+      alert(`Limit reached: ${MAX_PIXELS} pixels max per validation`);
       return;
     }
 
@@ -159,7 +159,7 @@ const CanvasStep = ({
 
   // Pan (déplacement)
   const handleMouseDown = (e) => {
-    if (e.button === 1 || e.ctrlKey) { // Clic molette ou Ctrl+clic
+    if (e.button === 1 || e.ctrlKey) {
       setIsPanning(true);
       setLastPanPoint({ x: e.clientX, y: e.clientY });
       e.preventDefault();
@@ -184,19 +184,19 @@ const CanvasStep = ({
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 2, 20));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 2, 2));
 
-  // Annuler pixels en attente
+  // Clear pending pixels
   const handleClearPending = () => {
     setPendingPixels([]);
   };
 
-  // Valider les pixels
+  // Validate pixels
   const handleValidate = async () => {
     if (pendingPixels.length === 0) return;
 
     const totalCost = pendingPixels.length * PIXEL_COST;
 
-    if (wbtcAvailable < totalCost) {
-      alert(`Solde insuffisant. Requis: ${totalCost.toFixed(8)} wBTC`);
+    if (shellsAvailable < totalCost) {
+      alert(`Insufficient balance. Required: ${totalCost.toFixed(8)} shells`);
       return;
     }
 
@@ -208,7 +208,7 @@ const CanvasStep = ({
         alert(`✅ ${result.pixelsPlaced} pixel(s) placé(s)\n⚠️ ${result.conflicts} conflit(s) rejeté(s)`);
       }
       
-      // Vider pixels en attente et recharger
+      // Clear pending pixels and reload
       setPendingPixels([]);
       await loadCanvas();
       await loadPixelCount();
@@ -229,35 +229,35 @@ const CanvasStep = ({
               className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
-              <span>Retour au Dashboard</span>
+              <span>Back to network</span>
             </button>
             
             <h2 className="text-3xl font-bold bg-gradient-to-r from-orange-600 to-purple-600 text-transparent bg-clip-text">
-              🎨 Canvas Collaboratif
+              🎨 Collaborative Canvas
             </h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
             <div className="bg-gradient-to-br from-orange-100 to-orange-50 rounded-xl p-4">
-              <p className="text-sm text-gray-600 mb-1">Mes pixels placés</p>
+              <p className="text-sm text-gray-600 mb-1">My placed pixels</p>
               <p className="text-2xl font-bold text-orange-600">{userPixelCount}</p>
             </div>
             
             <div className="bg-gradient-to-br from-purple-100 to-purple-50 rounded-xl p-4">
-              <p className="text-sm text-gray-600 mb-1">En attente</p>
+              <p className="text-sm text-gray-600 mb-1">Pending</p>
               <p className="text-2xl font-bold text-purple-600">{pendingPixels.length} / {MAX_PIXELS}</p>
             </div>
             
             <div className="bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl p-4">
-              <p className="text-sm text-gray-600 mb-1">Solde disponible</p>
-              <p className="text-2xl font-bold text-blue-600">{wbtcAvailable.toFixed(8)} wBTC</p>
+              <p className="text-sm text-gray-600 mb-1">Available balance</p>
+              <p className="text-2xl font-bold text-blue-600">{shellsAvailable.toFixed(8)} shells</p>
             </div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           
-          {/* Panneau latéral */}
+          {/* Side panel */}
           <div className="lg:col-span-1 space-y-6">
             
             {/* Palette de couleurs */}
@@ -282,7 +282,7 @@ const CanvasStep = ({
                 ))}
               </div>
               <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                <p className="text-xs text-gray-600 mb-1">Couleur sélectionnée</p>
+                <p className="text-xs text-gray-600 mb-1">Selected color</p>
                 <div className="flex items-center gap-2">
                   <div 
                     className="w-8 h-8 rounded border-2 border-gray-300"
@@ -293,9 +293,9 @@ const CanvasStep = ({
               </div>
             </div>
 
-            {/* Contrôles */}
+            {/* Controls */}
             <div className="bg-white rounded-2xl shadow-xl p-6 space-y-3">
-              <h3 className="font-bold text-lg mb-4">Contrôles</h3>
+              <h3 className="font-bold text-lg mb-4">Controls</h3>
               
               <button
                 onClick={() => setShowGrid(!showGrid)}
@@ -307,7 +307,7 @@ const CanvasStep = ({
               >
                 <span className="flex items-center gap-2">
                   <Grid3x3 className="w-4 h-4" />
-                  Grille
+                  Grid
                 </span>
                 {showGrid ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
               </button>
@@ -320,7 +320,7 @@ const CanvasStep = ({
                     : 'bg-gray-100 text-gray-700'
                 }`}
               >
-                <span>Mes pixels uniquement</span>
+                <span>My pixels only</span>
                 {showOnlyMyPixels ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
               </button>
 
@@ -342,7 +342,7 @@ const CanvasStep = ({
               </div>
 
               <p className="text-xs text-gray-500 text-center">
-                Ctrl+clic ou molette pour déplacer
+                Ctrl+click or middle mouse to pan
               </p>
             </div>
 
@@ -352,12 +352,12 @@ const CanvasStep = ({
                 <h3 className="font-bold text-lg mb-3">Validation</h3>
                 <div className="space-y-2 text-sm mb-4">
                   <div className="flex justify-between">
-                    <span>Pixels en attente:</span>
+                    <span>Pending pixels:</span>
                     <span className="font-bold">{pendingPixels.length}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Coût total:</span>
-                    <span className="font-bold">{totalCost.toFixed(8)} wBTC</span>
+                    <span>Total cost:</span>
+                    <span className="font-bold">{totalCost.toFixed(8)} shells</span>
                   </div>
                 </div>
 
@@ -368,15 +368,15 @@ const CanvasStep = ({
                     className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition-colors disabled:opacity-50"
                   >
                     <X className="w-4 h-4" />
-                    Annuler
+                    Cancel
                   </button>
                   <button
                     onClick={handleValidate}
-                    disabled={loading || wbtcAvailable < totalCost}
+                    disabled={loading || shellsAvailable < totalCost}
                     className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Check className="w-4 h-4" />
-                    {loading ? 'Validation...' : 'Valider'}
+                    {loading ? 'Validating...' : 'Validate'}
                   </button>
                 </div>
               </div>
@@ -412,7 +412,7 @@ const CanvasStep = ({
               )}
 
               <div className="mt-4 p-4 bg-blue-50 rounded-lg text-sm text-blue-800">
-                💡 <strong>Astuce:</strong> Cliquez sur le canvas pour placer des pixels. Ils auront une bordure dorée et seront validés après avoir cliqué sur "Valider".
+                💡 <strong>Tip:</strong> Click the canvas to place pixels. They will get a gold border and will be validated after you click "Validate".
               </div>
             </div>
           </div>
