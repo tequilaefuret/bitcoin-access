@@ -1,32 +1,43 @@
 // supabase/functions/social-delete/index.ts
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
+import {
+  assertAllowedOrigin,
+  corsHeaders as buildCorsHeaders,
+  jsonResponse,
+  verifyAccessToken,
+} from '../_shared/auth.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+const supabase = createClient(
+  Deno.env.get('SUPABASE_URL') ?? '',
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+);
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
-
+    assertAllowedOrigin(req);
+    if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
     const body = await req.json();
-    const { messageId, bitcoinAddress } = body;
+    const { messageId, bitcoinAddress, jwt } = body;
     
     console.log('🗑️ social-delete:', { messageId: messageId?.slice(0, 8), address: bitcoinAddress?.slice(0, 8) });
 
-    if (!messageId || !bitcoinAddress) {
+    if (!messageId || !bitcoinAddress || !jwt) {
       return new Response(
         JSON.stringify({ error: 'Paramètres manquants' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const auth = await verifyAccessToken(jwt, supabase);
+    if (!auth.valid || auth.address !== bitcoinAddress) {
+      return new Response(
+        JSON.stringify({ error: 'Non autorisé' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -70,11 +81,11 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Erreur social-delete:', error.message);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    const status = error?.message === 'Origin not allowed' ? 403 : 500;
+    return jsonResponse(req, {
+      error: status === 403 ? error.message : 'Unable to delete message',
+    }, status);
   }
 });

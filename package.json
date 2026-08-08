@@ -3,24 +3,54 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "@keystonehq/bc-ur-registry": "^0.8.0",
+    "@ngraveio/bc-ur": "^1.1.13",
     "@reown/appkit": "^1.8.8",
     "@reown/appkit-adapter-bitcoin": "^1.8.8",
+    "@scure/bip32": "^1.7.0",
     "@supabase/supabase-js": "^2.58.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
     "@walletconnect/utils": "^2.21.10",
+    "@zxing/browser": "^0.2.1",
+    "@zxing/library": "^0.23.0",
+    "bitcoinjs-lib": "^6.1.7",
+    "bs58check": "^3.0.1",
+    "buffer": "^6.0.3",
     "lucide-react": "^0.544.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-scripts": "^5.0.1",
     "web-vitals": "^2.1.4"
   },
   "scripts": {
-    "start": "cross-env GENERATE_SOURCEMAP=false react-scripts start",
+    "start": "cross-env HOST=127.0.0.1 CHOKIDAR_USEPOLLING=true WATCHPACK_POLLING=true GENERATE_SOURCEMAP=false react-scripts start",
     "build": "cross-env GENERATE_SOURCEMAP=false react-scripts build",
     "test": "react-scripts test",
+    "test:ci": "react-scripts test --watchAll=false --runInBand",
+    "test:billing:sql": "sh scripts/test-billing-sql.sh",
+    "validate:deployment": "sh scripts/validate-deployment-structure.sh",
+    "verify": "npm run validate:deployment && npm run test:ci && npm run build",
+    "deploy:development": "sh scripts/deploy-environment.sh development",
+    "deploy:production": "sh scripts/deploy-environment.sh production",
+    "supabase:dev:push": "sh scripts/supabase-db-push-dev.sh",
+    "supabase:dev:push:dry-run": "sh scripts/supabase-db-push-dev.sh --dry-run",
+    "opinion:up": "docker compose -f docker-compose.opinion.yml up -d --build",
+    "opinion:logs": "docker compose -f docker-compose.opinion.yml logs -f opinion-worker",
+    "opinion:down": "docker compose -f docker-compose.opinion.yml down",
+    "opinion:test:dataset": "python3 services/opinion-worker/evaluation/test_dataset.py",
+    "opinion:evaluate": "docker compose -f docker-compose.opinion.yml run --rm --no-deps --entrypoint python opinion-worker evaluation/evaluate.py",
+    "opinion:evaluate:discovery": "docker compose -f docker-compose.opinion.yml run --rm --no-deps --entrypoint python opinion-worker evaluation/evaluate_discovery.py",
+    "opinion:dev:verify": "sh scripts/run-opinion-dev-sql.sh verify",
+    "opinion:dev:test:quality": "sh scripts/run-opinion-dev-sql.sh test-quality",
+    "opinion:dev:test:trends": "sh scripts/run-opinion-dev-sql.sh test-trends",
+    "opinion:dev:test:discovery": "sh scripts/run-opinion-dev-sql.sh test-discovery",
+    "opinion:prod:up": "docker compose -f docker-compose.opinion.yml -f docker-compose.opinion.production.yml up -d --build",
+    "opinion:prod:logs": "docker compose -f docker-compose.opinion.yml -f docker-compose.opinion.production.yml logs -f opinion-worker",
+    "opinion:prod:down": "docker compose -f docker-compose.opinion.yml -f docker-compose.opinion.production.yml down",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
@@ -42,10 +72,20 @@
     ]
   },
   "devDependencies": {
+    "@noble/curves": "^1.9.7",
     "ajv": "^8.17.1",
     "autoprefixer": "^10.4.21",
     "cross-env": "^10.1.0",
+    "http-proxy-middleware": "^2.0.9",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.18"
+  },
+  "overrides": {
+    "@sats-connect/core": {
+      "axios": "1.19.0"
+    },
+    "viem": {
+      "ws": "8.21.3"
+    }
   }
 }

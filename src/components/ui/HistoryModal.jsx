@@ -1,21 +1,18 @@
 // src/components/ui/HistoryModal.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { X, History, Loader } from 'lucide-react';
-import { truncateAddress } from '../../supabaseClient';
 
 const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, hasMore }) => {
   const [messages, setMessages] = useState([]);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const listRef = useRef(null);
 
-  // Initialiser les messages
   useEffect(() => {
     if (initialMessages) {
       setMessages(initialMessages);
     }
   }, [initialMessages]);
 
-  // Définir loadMoreMessages AVANT le useEffect avec useCallback
   const loadMoreMessages = useCallback(async () => {
     if (!onLoadMore || isLoadingMore) return;
     
@@ -28,7 +25,6 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
     }
   }, [onLoadMore, messages.length, isLoadingMore]);
 
-  // Gérer le scroll pour charger plus
   useEffect(() => {
     const handleScroll = () => {
       if (!listRef.current || !hasMore || isLoadingMore) return;
@@ -48,10 +44,9 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
     }
   }, [hasMore, isLoadingMore, loadMoreMessages]);
 
-  // Formater timestamp
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
-    return date.toLocaleString('fr-FR', {
+    return date.toLocaleString('en-US', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
@@ -69,7 +64,7 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
         <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-200">
           <h2 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
             <History className="w-6 h-6 text-orange-500" />
-            Mes messages publiés
+            My published messages
           </h2>
           <button
             onClick={onClose}
@@ -83,11 +78,11 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
         <div className="mb-4 text-sm text-gray-600">
           {messages.length > 0 ? (
             <p>
-              {messages.length} message{messages.length > 1 ? 's' : ''} affiché{messages.length > 1 ? 's' : ''}
-              {hasMore && ' - Faites défiler pour charger plus'}
+              {messages.length} message{messages.length > 1 ? 's' : ''} shown
+              {hasMore && ' - Scroll to load more'}
             </p>
           ) : (
-            <p>Aucun message publié pour le moment</p>
+            <p>No messages published yet</p>
           )}
         </div>
 
@@ -99,8 +94,8 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
           {messages.length === 0 ? (
             <div className="text-center py-12 text-gray-500">
               <History className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <p>Vous n'avez pas encore publié de message</p>
-              <p className="text-sm mt-2">Vos messages apparaîtront ici</p>
+              <p>You have not published a message yet</p>
+              <p className="text-sm mt-2">Your messages will appear here</p>
             </div>
           ) : (
             <>
@@ -113,7 +108,7 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
                   <div className="flex justify-between items-start mb-2">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-sm text-orange-600">
-                        {truncateAddress(msg.bitcoin_address)}
+                        {msg.bitcoin_address ? `@${msg.bitcoin_address.slice(0, 6)}…` : '@anonymous'}
                       </span>
                       <span className="text-xs text-gray-500">
                         {formatTimestamp(msg.created_at)}
@@ -121,11 +116,8 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
                     </div>
                     <div className="text-right">
                       <span className="text-xs text-gray-600">
-                        {msg.char_count} caractères
+                        {msg.char_count} characters
                       </span>
-                      <p className="text-xs text-orange-600 font-semibold">
-                        {msg.cost_wbtc?.toFixed(8)} wBTC
-                      </p>
                     </div>
                   </div>
 
@@ -140,14 +132,14 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
               {isLoadingMore && (
                 <div className="text-center py-4">
                   <Loader className="w-6 h-6 animate-spin inline-block text-orange-500" />
-                  <p className="text-sm text-gray-600 mt-2">Chargement...</p>
+                  <p className="text-sm text-gray-600 mt-2">Loading...</p>
                 </div>
               )}
 
               {/* Message fin de liste */}
               {!hasMore && messages.length > 0 && (
                 <div className="text-center py-4 text-gray-400 text-sm">
-                  Tous vos messages ont été chargés
+                  All of your messages have been loaded
                 </div>
               )}
             </>
@@ -160,7 +152,7 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
             onClick={onClose}
             className="w-full bg-gray-200 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-300 transition"
           >
-            Fermer
+            Close
           </button>
         </div>
       </div>

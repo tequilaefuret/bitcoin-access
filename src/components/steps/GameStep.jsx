@@ -1,16 +1,14 @@
 // src/components/steps/GameStep.jsx
 import React, { useState, useEffect } from 'react';
-import { Gamepad2, Loader, TestTube } from 'lucide-react';
+import { Gamepad2, Loader } from 'lucide-react';
 import ErrorAlert from '../ui/ErrorAlert';
 
 const GameStep = ({ 
-  wbtcAvailable,
+  shellsAvailable,
   onStartGame,
-  onUpdateScore,
   onBack,
   loading,
-  error,
-  isTestMode
+  error
 }) => {
   const [score, setScore] = useState(0);
   const [gameActive, setGameActive] = useState(false);
@@ -24,12 +22,8 @@ const GameStep = ({
       return () => clearTimeout(timer);
     } else if (timeLeft === 0) {
       setGameActive(false);
-      // Notifier le parent du score final (sauf en mode test)
-      if (score > 0 && onUpdateScore && !isTestMode) {
-        onUpdateScore(score);
-      }
     }
-  }, [gameActive, timeLeft, score, onUpdateScore, isTestMode]);
+  }, [gameActive, timeLeft]);
 
   const moveTarget = () => {
     if (gameActive) {
@@ -42,11 +36,9 @@ const GameStep = ({
   };
 
   const handleStartGame = async () => {
-    // Appeler la fonction parent pour débiter wBTC
     const success = await onStartGame();
     
     if (success) {
-      // Lancer le jeu
       setScore(0);
       setTimeLeft(30);
       setGameActive(true);
@@ -62,28 +54,12 @@ const GameStep = ({
       <Gamepad2 className="w-20 h-20 text-purple-500 mx-auto mb-4" />
       <h2 className="text-2xl font-bold mb-4 text-center">🎯 Click Challenge</h2>
       
-      {/* 🆕 BANDEAU MODE TEST */}
-      {isTestMode && (
-        <div className="mb-4 bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <TestTube className="w-6 h-6 text-yellow-600 flex-shrink-0" />
-            <div>
-              <h4 className="font-bold text-yellow-900 mb-1">Mode Test Actif</h4>
-              <p className="text-sm text-yellow-800">
-                Vous utilisez une adresse non vérifiée. Vos scores ne seront pas sauvegardés.
-                Connectez votre wallet pour accéder au contenu complet et sauvegarder vos performances.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="bg-purple-50 p-4 rounded-lg mb-4 flex justify-between items-center">
         <p className="text-purple-800 font-semibold">
-          💎 Solde : {wbtcAvailable.toFixed(8)} wBTC
+          💎 Balance: {shellsAvailable.toFixed(8)} shells
         </p>
         <p className="text-purple-600">
-          🎮 {Math.floor(wbtcAvailable / 0.000001)} parties restantes
+          🎮 {Math.floor(shellsAvailable / 0.000001)} games left
         </p>
       </div>
 
@@ -95,7 +71,7 @@ const GameStep = ({
             Score: <span className="text-purple-600">{score}</span>
           </div>
           <div className="text-xl font-bold">
-            Temps: <span className="text-orange-600">{timeLeft}s</span>
+            Time: <span className="text-orange-600">{timeLeft}s</span>
           </div>
         </div>
 
@@ -103,17 +79,12 @@ const GameStep = ({
           <div className="text-center py-12">
             <p className="text-gray-600 mb-4">
               {score > 0 
-                ? `🎉 Score final : ${score} points!` 
-                : 'Cliquez sur les cibles le plus rapidement possible pendant 30 secondes!'}
+                ? `🎉 Final score: ${score} points!` 
+                : 'Click the targets as fast as possible for 30 seconds!'}
             </p>
-            {score === 0 && !isTestMode && (
+            {score === 0 && (
               <p className="text-sm text-purple-600 mb-4">
-                💰 Cette partie coûtera 0.000001 wBTC
-              </p>
-            )}
-            {score === 0 && isTestMode && (
-              <p className="text-sm text-yellow-700 mb-4">
-                🧪 Mode test - Parties illimitées
+                💰 This game costs 0.000001 shells
               </p>
             )}
             <button
@@ -124,11 +95,11 @@ const GameStep = ({
               {loading ? (
                 <>
                   <Loader className="w-5 h-5 animate-spin" />
-                  Préparation...
+                  Preparing...
                 </>
               ) : (
                 <>
-                  {score > 0 ? '🔄 Rejouer' : '▶️ Démarrer'}
+                  {score > 0 ? '🔄 Replay' : '▶️ Start'}
                 </>
               )}
             </button>
@@ -154,7 +125,7 @@ const GameStep = ({
         onClick={onBack}
         className="w-full bg-gray-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-600 transition"
       >
-        {isTestMode ? '← Retour à la vérification' : '← Retour au tableau de bord'}
+        ← Back to network
       </button>
     </div>
   );

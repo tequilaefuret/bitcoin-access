@@ -1,65 +1,18 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { createAppKit } from '@reown/appkit';
 import { BitcoinAdapter } from '@reown/appkit-adapter-bitcoin';
-import { bitcoin, bitcoinTestnet } from '@reown/appkit/networks';
+import { bitcoin } from '@reown/appkit/networks';
+import {
+  detectWalletBrand,
+  detectWalletCapabilities,
+  signMessageWithProvider,
+  signPsbtWithProvider,
+} from '../lib/bitcoinWalletProvider';
+import { normalizeBitcoinAddress } from '../lib/bitcoinAddress';
 
 // ✅ SINGLETON GLOBAL : Une seule instance du modal pour toute l'application
 let globalModalInstance = null;
 let globalModalInitializing = false;
-
-// 🎯 STRATÉGIES DE WALLETS - Détection stricte par nom
-const WALLET_STRATEGIES = {
-  phantom: {
-    detect: (provider) => {
-      // STRICTE : Vérifier le nom du provider en priorité
-      const providerName = provider?.name?.toLowerCase() || '';
-      
-      // Phantom UNIQUEMENT si le nom contient 'phantom'
-      return providerName.includes('phantom');
-    },
-    sign: async (address, message) => {
-      const provider = window.phantom.bitcoin;
-      await provider.requestAccounts();
-      
-      const encoded = new TextEncoder().encode(message);
-      const result = await provider.signMessage(address, encoded);
-      
-      const binString = String.fromCodePoint(...result.signature);
-      return btoa(binString);
-    }
-  },
-  
-  okx: {
-    detect: (provider) => {
-      const providerName = provider?.name?.toLowerCase() || '';
-      return providerName.includes('okx');
-    },
-    sign: async (address, message) => {
-      console.log('🔧 Début signature OKX');
-      console.log('📍 Address:', address);
-      console.log('📝 Message:', message);
-      console.log('🔍 window.okxwallet exists:', !!window.okxwallet);
-      console.log('🔍 window.okxwallet.bitcoin exists:', !!window.okxwallet?.bitcoin);
-      
-      if (!window.okxwallet?.bitcoin) {
-        throw new Error('OKX Wallet Bitcoin API non disponible');
-      }
-      
-      console.log('🔧 Appel signMessage avec:', { from: address });
-      
-      try {
-        const signature = await window.okxwallet.bitcoin.signMessage(message, { from: address });
-        console.log('✅ Signature OKX reçue:', signature);
-        return signature;
-      } catch (err) {
-        console.error('❌ Erreur brute OKX:', err);
-        console.error('❌ Message erreur:', err.message);
-        console.error('❌ Code erreur:', err.code);
-        throw err;
-      }
-    }
-  }
-};
 
 /**
  * Hook personnalisé pour gérer la connexion Bitcoin via Reown AppKit
@@ -72,6 +25,7 @@ export default function useReownWallet() {
   const [modal, setModal] = useState(globalModalInstance);
   const [connectedAddress, setConnectedAddress] = useState(null);
   const [connectedWallet, setConnectedWallet] = useState(null);
+  const [walletProfile, setWalletProfile] = useState(null);
   
   const hasCheckedConnection = useRef(false);
 
@@ -88,7 +42,6 @@ export default function useReownWallet() {
 
       // ✅ Si en cours d'initialisation, attendre
       if (globalModalInitializing) {
-        console.log('⏳ Initialisation déjà en cours, attente...');
         const checkInterval = setInterval(() => {
           if (globalModalInstance) {
             setModal(globalModalInstance);
@@ -105,26 +58,12 @@ export default function useReownWallet() {
         const projectId = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID;
         
         if (!projectId) {
-          console.error('⚠️ Project ID manquant dans .env.local');
           setError('Configuration manquante (Project ID)');
           globalModalInitializing = false;
           return;
         }
 
-        // 🆕 DÉTECTION RÉSEAU BASÉE SUR BITCOIN_NETWORK (plus fiable que ENVIRONMENT)
-        const bitcoinNetwork = process.env.REACT_APP_BITCOIN_NETWORK || 'testnet4';
-        // ⚠️ Accepter 'bitcoin' OU 'mainnet' comme valeurs pour mainnet
-        const isMainnet = bitcoinNetwork === 'bitcoin' || bitcoinNetwork === 'mainnet';
-        
-        console.log('🌐 Configuration réseau AppKit:', {
-          BITCOIN_NETWORK: bitcoinNetwork,
-          isMainnet: isMainnet,
-          network: isMainnet ? 'bitcoin (mainnet)' : 'bitcoinTestnet'
-        });
-
-        // 🆕 IMPORTANT : Ne proposer QUE le réseau approprié
-        // Cela force Leather à utiliser le bon réseau
-        const networks = isMainnet ? [bitcoin] : [bitcoinTestnet];
+        const networks = [bitcoin];
 
         const metadata = {
           name: 'Bitcoin Exclusive Access',
@@ -135,9 +74,7 @@ export default function useReownWallet() {
 
         const bitcoinAdapter = new BitcoinAdapter({ 
           projectId,
-          chains: isMainnet 
-            ? ['bip122:000000000019d6689c085ae165831e93'] // Bitcoin mainnet
-            : ['bip122:000000000933ea01ad0ee984209779ba'] // Bitcoin testnet
+          chains: ['bip122:000000000019d6689c085ae165831e93'] // Bitcoin mainnet
         });
 
         const appKitModal = createAppKit({
@@ -150,7 +87,7 @@ export default function useReownWallet() {
             email: false,
             socials: false
           },
-          defaultNetwork: isMainnet ? bitcoin : bitcoinTestnet,
+          defaultNetwork: bitcoin,
           enableCoinbase: false,
           enableInjected: true,
           enableWalletConnect: true
@@ -166,77 +103,33 @@ export default function useReownWallet() {
                 const address = appKitModal.getAddress();
                 const caipAddress = appKitModal.getCaipAddress();
 
-                console.log('🔍 RAW Address:', address);
-                console.log('🔍 RAW CAIP:', caipAddress);
-                console.log('🔍 State:', state);
-
-                // 🆕 RÉCUPÉRATION ADRESSE BITCOIN via provider
-                let bitcoinAddress = null;
+                let provider = null;
                 
                 try {
-                  const provider = await appKitModal.getWalletProvider();
+                  provider = await appKitModal.getWalletProvider();
                   
-                  if (provider) {
-                    console.log('🔍 Provider:', provider);
-                    
-                    // Essayer de récupérer les comptes Bitcoin
-                    const accounts = await provider.request({
-                      method: 'getAddresses',
-                      params: {}
-                    });
-                    
-                    console.log('🔍 Accounts:', accounts);
-                    
-                    // Chercher l'adresse Bitcoin (commence par bc1, tb1, 1, ou 3)
-                    bitcoinAddress = accounts?.find(addr => 
-                      addr.startsWith('bc1') || addr.startsWith('tb1') || 
-                      addr.startsWith('1') || addr.startsWith('3')
-                    );
-                  }
-                } catch (providerErr) {
-                  console.log('⚠️ Impossible de récupérer via provider:', providerErr);
+                } catch {
                 }
 
-                const finalAddress = bitcoinAddress || address;
-                console.log('✅ Adresse finale:', finalAddress);
-
+                // AppKit a déjà obtenu et autorisé cette adresse pendant la connexion.
+                // Ne pas rappeler getAddresses ici: certains wallets refusent deux requêtes concurrentes.
+                const finalAddress = normalizeBitcoinAddress(address || caipAddress);
                 if (finalAddress) {
+                  const brand = detectWalletBrand(provider);
+                  const capabilities = detectWalletCapabilities(provider);
+
                   // 🆕 VÉRIFICATION RÉSEAU DE L'ADRESSE
-                  const addressNetwork = finalAddress.startsWith('bc1') || 
-                                        finalAddress.startsWith('1') || 
-                                        finalAddress.startsWith('3')
-                    ? 'mainnet'
-                    : 'testnet';
-                  
-                  const expectedNetwork = isMainnet ? 'mainnet' : 'testnet';
-                  
-                  if (addressNetwork !== expectedNetwork) {
-                    console.error('❌ Mauvais réseau détecté !');
-                    console.error('Attendu:', expectedNetwork);
-                    console.error('Adresse:', addressNetwork);
-                    
-                    setError(
-                      `Mauvais réseau !\n\n` +
-                      `Ce site nécessite une connexion sur le réseau ${expectedNetwork} de Bitcoin.\n` +
-                      `Votre wallet est actuellement paramétré sur le réseau ${addressNetwork}.\n\n` +
-                      `Veuillez changer de réseau dans votre wallet avant de vous connecter.`
-                    );
-                    
-                    // Déconnecter automatiquement
-                    appKitModal.disconnect();
-                    return;
-                  }
-                  
                   // ✅ MODIFICATION : Mettre à jour l'état mais laisser App.js gérer la navigation
                   setConnectedAddress(finalAddress);
                   setConnectedWallet('bitcoin');
+                  setWalletProfile({
+                    brand,
+                    name: provider?.name || brand,
+                    capabilities
+                  });
                   
-                  // 🆕 AJOUT : Sauvegarder l'adresse dans localStorage pour la reconnexion
-                  localStorage.setItem('bitcoin_address', finalAddress);
-                  console.log('💾 Adresse sauvegardée pour reconnexion automatique');
                 }
-              } catch (err) {
-                console.error('❌ Erreur récupération adresse:', err);
+              } catch {
               }
               
               setTimeout(() => {
@@ -251,10 +144,7 @@ export default function useReownWallet() {
         setModal(appKitModal);
         globalModalInitializing = false;
         
-        console.log('✅ Reown AppKit initialisé (SINGLETON)');
-
-      } catch (err) {
-        console.error('❌ Erreur initialisation Reown:', err);
+      } catch {
         setError('Impossible d\'initialiser WalletConnect');
         globalModalInitializing = false;
       }
@@ -276,16 +166,13 @@ export default function useReownWallet() {
       if (!modal) {
         throw new Error('Modal non initialisé. Rechargez la page.');
       }
-      
+
       hasCheckedConnection.current = false;
-      
       await modal.open();
       setIsConnecting(false);
-      
       return null;
 
     } catch (err) {
-      console.error('❌ Erreur connexion wallet:', err);
       setError(err.message || 'Échec de la connexion');
       setIsConnecting(false);
       return null;
@@ -295,100 +182,71 @@ export default function useReownWallet() {
   /**
    * Demande une signature de message
    */
-  const signMessage = useCallback(async (address) => {
+  const signMessage = useCallback(async (address, options = {}) => {
     setError('');
 
     try {
       if (!modal) throw new Error('Wallet non connecté');
 
-      const timestamp = Date.now();
-      const message = `Prouver propriété de ${address}\nTimestamp: ${timestamp}`;
-      const bitcoinNetwork = process.env.REACT_APP_BITCOIN_NETWORK || 'testnet4';
-      const network = (bitcoinNetwork === 'bitcoin' || bitcoinNetwork === 'mainnet') ? 'mainnet' : 'testnet';
+      const authRequest = options.authRequest;
+      if (!authRequest?.requestId || !authRequest?.challenge) {
+        throw new Error('Challenge serveur manquant. Relancez la connexion.');
+      }
+      const message = typeof options.message === 'string' ? options.message : authRequest.challenge;
+      // Laisser la modale se refermer avant d'ouvrir la demande de signature.
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
-      console.log('🌐 Réseau:', network);
-      console.log('📝 Message:', message);
-      console.log('📍 Adresse:', address);
-
-      // Vérif réseau
-      const addressNetwork = address.startsWith('bc1') || address.startsWith('1') || address.startsWith('3') ? 'mainnet' : 'testnet';
-      if (addressNetwork !== network) {
-        throw new Error(`Mauvais réseau. Attendu: ${network}, Détecté: ${addressNetwork}`);
+      const addressNetwork = address.startsWith('bc1') || address.startsWith('1') || address.startsWith('3') ? 'mainnet' : 'unknown';
+      if (addressNetwork !== 'mainnet') {
+        throw new Error('Mauvaise adresse Bitcoin. Seules les adresses mainnet sont acceptées.');
       }
 
       const provider = await modal.getWalletProvider();
       if (!provider) throw new Error('Provider non disponible');
 
-      // 🔍 DEBUG - À garder temporairement
-      console.log('🔍 Provider info:', {
-        name: provider?.name,
-        isOkxWallet: provider?.isOkxWallet,
-        isPhantom: provider?.isPhantom,
-        hasWindowPhantom: !!window.phantom,
-        hasWindowOKX: !!window.okxwallet
-      });
+      const signature = await signMessageWithProvider(provider, address, message);
 
-      let signature;
-      
-      // 🎯 DÉTECTION VIA STRATÉGIES (UNIQUEMENT)
-      const walletStrategy = Object.entries(WALLET_STRATEGIES).find(([name, strategy]) => {
-        const detected = strategy.detect(provider);
-        console.log(`🔍 Test ${name}:`, detected);
-        return detected;
-      });
+      if (!signature) throw new Error('Signature non reçue');
 
-      if (walletStrategy) {
-        const [walletName, strategy] = walletStrategy;
-        console.log(`✅ ${walletName.toUpperCase()} détecté via stratégie`);
-        
-        try {
-          signature = await strategy.sign(address, message);
-          console.log(`✅ Signature ${walletName} reçue`);
-        } catch (err) {
-          console.error(`❌ Erreur ${walletName}:`, err);
-          throw new Error(`${walletName}: ${err.message || 'Signature refusée'}`);
-        }
+      return {
+        message,
+        signature,
+        address,
+        authRequest
+      };
+    } catch (err) {
+      if (err?.code === 4100) {
+        setError('Le wallet a refusé l’autorisation de signature pour cette adresse. Déconnecte puis reconnecte le wallet et réessaie.');
+        throw err;
+      }
+
+      if (err.message?.includes('réseau')) {
+        setError(err.message);
+      } else if (err.message?.includes('rejected') || err.message?.includes('refusée')) {
+        setError('Signature refusée par l\'utilisateur');
       } else {
-        // 🔄 FALLBACK : Wallets standard (Xverse, Leather, etc.)
-                console.log('🔐 Wallet standard (fallback)');
+        setError(err.message || 'Erreur signature');
+      }
 
-                try {
-                  signature = await provider.request({
-                    method: 'personal_sign',
-                    params: [message, address],
-                    network: network
-                  });
-                  console.log('✅ Signature via personal_sign');
-                } catch (err) {
-                  console.log('⚠️ personal_sign échoué, tentative signMessage...');
-                  signature = await provider.request({
-                    method: 'signMessage',
-                    params: { address, message, network }
-                  });
-                  console.log('✅ Signature via signMessage');
-                }
-              }
+      throw err;
+    }
+  }, [modal]);
 
-              if (!signature) throw new Error('Signature non reçue');
+  const signPsbt = useCallback(async (address, psbtBase64) => {
+    setError('');
+    if (!modal) throw new Error('Wallet not connected');
+    if (!address || !psbtBase64) throw new Error('Address and PSBT are required');
 
-              console.log('✅ Signature finale reçue');
-
-              return { message, signature, timestamp, address };
-
-            } catch (err) {
-              console.error('❌ Erreur:', err);
-              
-              if (err.message?.includes('réseau')) {
-                setError(err.message);
-              } else if (err.message?.includes('rejected') || err.message?.includes('refusée')) {
-                setError('Signature refusée par l\'utilisateur');
-              } else {
-                setError(err.message || 'Erreur signature');
-              }
-              
-              throw err;
-            }
-          }, [modal]);
+    try {
+      const provider = await modal.getWalletProvider();
+      if (!provider) throw new Error('Wallet provider unavailable');
+      return await signPsbtWithProvider(provider, address, psbtBase64);
+    } catch (signingError) {
+      const message = signingError?.message || 'Unable to sign the PSBT';
+      setError(message);
+      throw signingError;
+    }
+  }, [modal]);
 
   /**
    * Déconnecte le wallet
@@ -399,10 +257,9 @@ export default function useReownWallet() {
         await modal.disconnect();
         setConnectedAddress(null);
         setConnectedWallet(null);
+        setWalletProfile(null);
         hasCheckedConnection.current = false;
-        console.log('✅ Wallet déconnecté');
-      } catch (err) {
-        console.error('❌ Erreur déconnexion:', err);
+      } catch {
       }
     }
   }, [modal]);
@@ -421,10 +278,18 @@ export default function useReownWallet() {
         const finalAddress = address || (caipAddress ? caipAddress.split(':').pop() : null);
         setConnectedAddress(finalAddress);
         setConnectedWallet('bitcoin');
+        setWalletProfile({
+          brand: 'bitcoin',
+          name: 'bitcoin',
+          capabilities: {
+            supportsMessageSigning: true,
+            supportsPsbt: true,
+            supportsWalletConnect: true
+          }
+        });
         return finalAddress;
       }
-    } catch (err) {
-      console.error('❌ Erreur refresh adresse:', err);
+    } catch {
     }
     
     return null;
@@ -433,12 +298,14 @@ export default function useReownWallet() {
   return {
     connectWallet,
     signMessage,
+    signPsbt,
     disconnectWallet,
     refreshConnectedAddress,
     isConnecting,
     error,
     connectedAddress,
     connectedWallet,
+    walletProfile,
     modal
   };
 }

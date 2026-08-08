@@ -1,100 +1,131 @@
-// supabase/functions/social-like/index.ts
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// ========================================
+// EDGE FUNCTION : social-follow
+// Manage follow/unfollow and list following addresses
+// ========================================
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
+import {
+  assertAllowedOrigin,
+  corsHeaders as buildCorsHeaders,
+  jsonResponse,
+  verifyAccessToken,
+} from '../_shared/auth.ts';
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+async function verifyJWT(token: string): Promise<{ valid: boolean; address?: string }> {
+  return verifyAccessToken(token, supabase);
+}
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    assertAllowedOrigin(req);
+    if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
+    const body = await req.json();
+    const { jwt, address, targetAddress, action } = body;
 
-    const { messageId, bitcoinAddress, action } = await req.json();
-    // action: 'like' | 'dislike' | 'remove_like' | 'remove_dislike'
-
-    if (!messageId || !bitcoinAddress || !action) {
+    if (!jwt || !address || !action) {
       return new Response(
-        JSON.stringify({ error: 'Paramètres manquants' }),
+        JSON.stringify({ error: 'Missing parameters' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Vérifier que le message existe
-    const { data: message } = await supabase
-      .from('messages')
-      .select('id')
-      .eq('id', messageId)
-      .single();
-
-    if (!message) {
+    const auth = await verifyJWT(jwt);
+    if (!auth.valid || auth.address !== address) {
       return new Response(
-        JSON.stringify({ error: 'Message introuvable' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Unauthorized' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (action === 'like') {
-      // Supprimer dislike existant
-      await supabase
-        .from('message_dislikes')
-        .delete()
-        .eq('message_id', messageId)
-        .eq('bitcoin_address', bitcoinAddress);
+    if (action === 'list_following') {
+      const { data, error } = await supabase
+        .from('follows')
+        .select('following_address')
+        .eq('follower_address', address)
+        .order('created_at', { ascending: false });
 
-      // Ajouter like (ou ignorer si existe)
-      await supabase
-        .from('message_likes')
-        .insert({ message_id: messageId, bitcoin_address: bitcoinAddress })
-        .onConflict('message_id, bitcoin_address')
-        .ignoreDuplicates();
+      if (error) throw error;
 
-    } else if (action === 'dislike') {
-      // Supprimer like existant
-      await supabase
-        .from('message_likes')
-        .delete()
-        .eq('message_id', messageId)
-        .eq('bitcoin_address', bitcoinAddress);
-
-      // Ajouter dislike
-      await supabase
-        .from('message_dislikes')
-        .insert({ message_id: messageId, bitcoin_address: bitcoinAddress })
-        .onConflict('message_id, bitcoin_address')
-        .ignoreDuplicates();
-
-    } else if (action === 'remove_like') {
-      await supabase
-        .from('message_likes')
-        .delete()
-        .eq('message_id', messageId)
-        .eq('bitcoin_address', bitcoinAddress);
-
-    } else if (action === 'remove_dislike') {
-      await supabase
-        .from('message_dislikes')
-        .delete()
-        .eq('message_id', messageId)
-        .eq('bitcoin_address', bitcoinAddress);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          following: (data || []).map((row: any) => row.following_address)
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
+    if (!targetAddress) {
+      return new Response(
+        JSON.stringify({ error: 'Missing target address' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (targetAddress === address) {
+      return new Response(
+        JSON.stringify({ error: 'You cannot follow yourself' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (action === 'follow') {
+      const { error } = await supabase
+        .from('follows')
+        .upsert(
+          {
+            follower_address: address,
+            following_address: targetAddress
+          },
+          {
+            onConflict: 'follower_address,following_address'
+          }
+        );
+
+      if (error) throw error;
+    } else if (action === 'unfollow') {
+      const { error } = await supabase
+        .from('follows')
+        .delete()
+        .eq('follower_address', address)
+        .eq('following_address', targetAddress);
+
+      if (error) throw error;
+    } else {
+      return new Response(
+        JSON.stringify({ error: 'Unknown action' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { data: following } = await supabase
+      .from('follows')
+      .select('following_address')
+      .eq('follower_address', address)
+      .order('created_at', { ascending: false });
+
     return new Response(
-      JSON.stringify({ success: true }),
+      JSON.stringify({
+        success: true,
+        following: (following || []).map((row: any) => row.following_address)
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+  } catch (error: any) {
+    const status = error?.message === 'Origin not allowed' ? 403 : 500;
+    return jsonResponse(req, {
+      error: status === 403 ? error.message : 'Unable to update follows',
+    }, status);
   }
 });

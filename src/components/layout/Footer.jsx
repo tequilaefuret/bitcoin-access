@@ -4,8 +4,8 @@ import React from 'react';
 const Footer = () => {
   return (
     <div className="text-center text-white text-sm">
-      <p>🔒 Plateforme sécurisée - Vos clés privées ne sont jamais partagées</p>
-      <p className="mt-2">💎 Système wBTC avec persistance et synchronisation automatique</p>
+      <p>🔒 Secure platform - your private keys are never shared</p>
+      <p className="mt-2">💎 Shells sync automatically with your verified balance</p>
     </div>
   );
 };

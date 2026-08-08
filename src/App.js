@@ -1,19 +1,47 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useCallback } from 'react';
 import Header from './components/layout/Header';
 import Footer from './components/layout/Footer';
-import ProgressBar from './components/ui/ProgressBar';
 import ConnectStep from './components/steps/ConnectStep';
-import VerifyStep from './components/steps/VerifyStep';
-import DashboardStep from './components/steps/DashboardStep';
-import SocialStep from './components/steps/SocialStep';
-import GameStep from './components/steps/GameStep';
-import HistoryModal from './components/ui/HistoryModal';
-import StatsModal from './components/ui/StatsModal'; 
+import ProfileSetupStep from './components/steps/ProfileSetupStep';
+import PasswordSetupStep from './components/steps/PasswordSetupStep';
 import EnvIndicator from './components/ui/EnvIndicator';
 import { useBitcoinBalance } from './hooks/useBitcoinBalance';
 import useReownWallet from './hooks/useReownWallet';
-import {getUserData } from './supabaseClient';
-import CanvasStep from './components/steps/CanvasStep';
+import useWalletAuthFlow from './hooks/useWalletAuthFlow';
+import {
+  getUserData,
+  loginWithPassword,
+  logoutSession,
+  restoreSession,
+  skipPasswordSetup,
+  listFollowingAddresses,
+  setFollowingAddress,
+} from './supabaseClient';
+import { hasUserProfile } from './lib/userIdentity';
+
+const SocialStep = lazy(() => import('./components/steps/SocialStep'));
+const GameStep = lazy(() => import('./components/steps/GameStep'));
+const ProfileStep = lazy(() => import('./components/steps/ProfileStep'));
+const CanvasStep = lazy(() => import('./components/steps/CanvasStep'));
+const HistoryModal = lazy(() => import('./components/ui/HistoryModal'));
+const StatsModal = lazy(() => import('./components/ui/StatsModal'));
+
+const FOLLOWING_KEY = 'danaus_following_addresses';
+
+const safeParseArray = (value) => {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+};
+
+const ScreenFallback = () => (
+  <div className="flex min-h-48 items-center justify-center" aria-label="Loading">
+    <div className="h-10 w-10 animate-spin rounded-full border-4 border-orange-200 border-t-orange-500" />
+  </div>
+);
 
 const BitcoinExclusiveAccess = () => {
   const [step, setStep] = useState('connect');
@@ -23,428 +51,269 @@ const BitcoinExclusiveAccess = () => {
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
-  const [isTestMode, setIsTestMode] = useState(false); // 🆕 Mode test
+  const [profileAddress, setProfileAddress] = useState(null);
+  const [profileReturnStep, setProfileReturnStep] = useState('social');
+  const [profileSetupAddress, setProfileSetupAddress] = useState(null);
+  const [passwordConfigured, setPasswordConfigured] = useState(false);
+  const [passwordSetupSkipped, setPasswordSetupSkipped] = useState(false);
+  const [passwordSetupMode, setPasswordSetupMode] = useState('set');
+  const [passwordRecoveryRequested, setPasswordRecoveryRequested] = useState(false);
+  const [followingAddresses, setFollowingAddresses] = useState(() => safeParseArray(localStorage.getItem(FOLLOWING_KEY)));
 
   const {
     address,
     btcBalance,
-    wbtcAvailable,
-    wbtcSpentTotal,
+    shellsAvailable,
     loading,
     error,
     setAddress,
     setError,
+    restoreAuthenticatedUser,
     checkBitcoinBalance,
     startGame,
-    saveGameScore,
     publishMessage,
     loadMessages,
     loadComments,
     loadUserMessages,
     manualSync,
-    loadStats,
+    loadSpendingHistory,
     submitCanvasPixels,
     loadCanvasPixels,
     loadUserPixelCount,
-    socialAction
+    toggleUseful,
+    repostMessage,
+    loadOpinionTopics,
+    savePrivateTopicStance
   } = useBitcoinBalance();
 
   const {
     connectedAddress,
     connectedWallet,
+    walletProfile,
     modal,
     disconnectWallet,
+    connectWallet,
+    signMessage,
+    signPsbt,
+    isConnecting
   } = useReownWallet();
+  const activeWalletAddress = address || connectedAddress;
 
-  // ===== HANDLER : DÉCONNEXION DÉTECTÉE =====
-  const handleWalletDisconnected = useCallback(() => {
-    console.log('🔌 Gestion de la déconnexion...');
-    localStorage.removeItem('bitcoin_address');
-    localStorage.removeItem('btc_auth_token');
-    localStorage.removeItem('walletConnected');
-    sessionStorage.setItem('disconnect_timestamp', Date.now().toString());
-    setAddress(null);
-    setStep('connect');
-    setIsTestMode(false);
-    setError('Votre wallet a été déconnecté. Veuillez vous reconnecter.');
-  }, [setAddress, setError]);
+  const routeToNetwork = useCallback(() => {
+    setStep('social');
+  }, []);
 
-  // ===== ÉCOUTER DÉCONNEXION WALLET =====
+  const {
+    handleConnect,
+    resetAuthFlow,
+    verificationStep,
+    isCheckingDB,
+    selectedPersonaId,
+    selectWalletType,
+    authRequest,
+    authHint,
+    manualAddress,
+    setManualAddress,
+    manualSignature,
+    setManualSignature,
+    multisigWitnessScript,
+    setMultisigWitnessScript,
+    descriptorInput,
+    setDescriptorInput,
+    descriptorBranch,
+    setDescriptorBranch,
+    descriptorIndex,
+    setDescriptorIndex,
+    descriptorInfo,
+    descriptorError,
+    importDescriptor,
+    signedPsbt,
+    setSignedPsbt,
+    offlineProofFormat,
+    selectOfflineProofFormat,
+    prepareOfflineProof,
+    prepareManualProof,
+    selectAutomaticDesktop,
+    submitManualProof,
+    signPreparedPsbt,
+    openMobileBrowser,
+    mobileEntry,
+    mobileHandoffUrl,
+    authMode
+  } = useWalletAuthFlow({
+    modal,
+    walletProfile,
+    connectWallet,
+    signMessage,
+    signPsbt,
+    checkBitcoinBalance,
+    setAddress,
+    setError,
+    setProfileSetupAddress,
+    setPasswordConfigured,
+    setPasswordSetupSkipped,
+    setPasswordSetupMode,
+    passwordRecoveryRequested,
+    setStep,
+    hasUserProfile,
+  });
+
+  const isFollowing = useCallback((bitcoinAddress) => {
+    if (!bitcoinAddress) return false;
+    return followingAddresses.includes(bitcoinAddress);
+  }, [followingAddresses]);
+
+  const handleToggleFollow = useCallback(async (bitcoinAddress) => {
+    if (!bitcoinAddress) return;
+
+    const previous = followingAddresses;
+    const shouldFollow = !previous.includes(bitcoinAddress);
+    const optimistic = shouldFollow
+      ? [bitcoinAddress, ...previous]
+      : previous.filter((item) => item !== bitcoinAddress);
+
+    // Follow is free: reflect the click immediately, then reconcile with the
+    // server response. Roll back only if the authenticated write fails.
+    setFollowingAddresses(optimistic);
+    localStorage.setItem(FOLLOWING_KEY, JSON.stringify(optimistic));
+
+    try {
+      const next = address
+        ? await setFollowingAddress(address, bitcoinAddress, shouldFollow)
+        : optimistic;
+      setFollowingAddresses(next);
+      localStorage.setItem(FOLLOWING_KEY, JSON.stringify(next));
+      return next;
+    } catch (followError) {
+      setFollowingAddresses(previous);
+      localStorage.setItem(FOLLOWING_KEY, JSON.stringify(previous));
+      setError(followError.message || 'Unable to update follow');
+      throw followError;
+    }
+  }, [address, followingAddresses, setError]);
+
   useEffect(() => {
-    if (!modal) return;
-
-    const unsubscribe = modal.subscribeState((state) => {
-      if (state.open === false && connectedAddress && step !== 'connect') {
-        const isConnected = modal.getIsConnectedState();
-        if (!isConnected) {
-          handleWalletDisconnected();
-        }
-      }
-    });
-
-    return () => unsubscribe?.();
-  }, [modal, connectedAddress, step, handleWalletDisconnected]);
-
-  // ===== ÉCOUTER ÉVÉNEMENT DISCONNECT =====
-  useEffect(() => {
-    const handleStorageEvent = (e) => {
-      if (e.key === 'disconnect_timestamp') {
-        console.warn('⚠️ Événement déconnexion reçu');
-        handleWalletDisconnected();
-      }
+    if (!address) return;
+    let cancelled = false;
+    listFollowingAddresses(address)
+      .then((next) => {
+        if (cancelled) return;
+        setFollowingAddresses(next);
+        localStorage.setItem(FOLLOWING_KEY, JSON.stringify(next));
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
     };
+  }, [address]);
 
-    window.addEventListener('storage', handleStorageEvent);
-    return () => window.removeEventListener('storage', handleStorageEvent);
-  }, [handleWalletDisconnected]);
+  const routeAuthenticatedUser = useCallback((user, sessionAddress) => {
+    const hasPassword = Boolean(user?.password_configured);
+    const hasSkippedPassword = Boolean(user?.password_setup_skipped);
+    setPasswordConfigured(hasPassword);
+    setPasswordSetupSkipped(hasSkippedPassword);
+
+    if (!hasUserProfile(user)) {
+      setProfileSetupAddress(sessionAddress);
+      setStep('profile-setup');
+      return;
+    }
+
+    setProfileSetupAddress(null);
+    if (!hasPassword && !hasSkippedPassword) {
+      setPasswordSetupMode('set');
+      setStep('password-setup');
+      return;
+    }
+
+    routeToNetwork();
+  }, [routeToNetwork]);
 
   // ===== VÉRIFICATION SESSION AU CHARGEMENT =====
   useEffect(() => {
     const checkExistingSession = async () => {
-      console.log('🔍 Vérification session existante...');
-      
       try {
-        const savedAddress = localStorage.getItem('bitcoin_address');
-        
-        if (!savedAddress) {
-          console.log('ℹ️ Aucune session sauvegardée');
-          setIsCheckingSession(false);
-          return;
-        }
+        const session = await restoreSession();
+        if (!session?.address) return;
 
-        console.log('📋 Session trouvée:', savedAddress);
+        const user = await getUserData(session.address, { throwOnError: true });
+        if (!user?.ownership_verified) throw new Error('Ownership verification missing');
 
-        if (modal) {
-          // 🆕 Attendre plus longtemps pour être sûr (0,5 seconde au lieu de 500ms)
-          await new Promise(resolve => setTimeout(resolve,500));
-          
-          const modalAddress = modal.getAddress();
-          const isConnected = modal.getIsConnectedState();
-
-          console.log('🔍 État wallet après attente:', { modalAddress, isConnected, savedAddress });
-
-          // 🆕 LOGIQUE STRICTE : Bloquer si adresse différente OU si pas connecté du tout
-          if (modalAddress && modalAddress !== savedAddress) {
-            console.warn('⚠️ Adresse différente détectée');
-            localStorage.removeItem('bitcoin_address');
-            localStorage.removeItem('btc_auth_token');
-            setIsCheckingSession(false);
-            return;
-          }
-
-          // 🆕 Si pas d'adresse du tout après 1 seconde = vraie déconnexion
-          if (!modalAddress) {
-            console.warn('⚠️ Wallet non connecté après 1s → Vraie déconnexion');
-            localStorage.removeItem('bitcoin_address');
-            localStorage.removeItem('btc_auth_token');
-            setIsCheckingSession(false);
-            return;
-          }
-
-          // 🆕 Si adresse présente mais pas "isConnected", c'est OK (bug Reown parfois)
-          if (modalAddress === savedAddress && !isConnected) {
-            console.log('⚠️ Adresse détectée mais isConnected=false (état transitoire Reown)');
-          }
-        }
-
-        const user = await getUserData(savedAddress);
-        
-        if (!user) {
-          console.error('❌ Utilisateur non trouvé en DB');
-          localStorage.removeItem('bitcoin_address');
-          localStorage.removeItem('btc_auth_token');
-          setIsCheckingSession(false);
-          return;
-        }
-
-        if (!user.signature_proof?.verified) {
-          console.warn('⚠️ Signature non vérifiée → Mode test');
-          setIsTestMode(true);
-          await checkBitcoinBalance(savedAddress);
-          setStep('game');
-          setIsCheckingSession(false);
-          return;
-        }
-
-        console.log('✅ Session valide, restauration...');
-        setAddress(savedAddress);
-        await checkBitcoinBalance(savedAddress, user.signature_proof);
-        setStep('authorized');
-        console.log('🎯 Navigation → Dashboard');
-        
-      } catch (err) {
-        console.error('❌ Erreur vérification session:', err);
-        localStorage.removeItem('bitcoin_address');
-        localStorage.removeItem('btc_auth_token');
+        restoreAuthenticatedUser(user);
+        routeAuthenticatedUser(user, session.address);
+      } catch {
       } finally {
         setIsCheckingSession(false);
       }
     };
 
-    if (modal !== null) {
-      checkExistingSession();
-    }
-  }, [modal, checkBitcoinBalance, setAddress]);
+    checkExistingSession();
+  }, [restoreAuthenticatedUser, routeAuthenticatedUser]);
 
-  // ===== HANDLER : PREMIER ÉCRAN =====
-  const handleConnect = useCallback(() => {
-    setError('');
-    setStep('verify');
-  }, [setError]);
+  useEffect(() => {
+    if (!isCheckingSession && address && step === 'connect') {
+      routeToNetwork();
+    }
+  }, [address, isCheckingSession, routeToNetwork, step]);
 
   // ===== HANDLER : DÉCONNEXION MANUELLE =====
   const handleManualDisconnect = useCallback(async () => {
-    console.log('👋 Déconnexion manuelle demandée');
-    
     try {
-      await disconnectWallet();
-      localStorage.removeItem('bitcoin_address');
-      localStorage.removeItem('btc_auth_token');
+      resetAuthFlow();
+      await logoutSession();
+      await disconnectWallet().catch(() => null);
       setAddress(null);
+      setProfileAddress(null);
+      setProfileReturnStep('social');
+      setProfileSetupAddress(null);
+      setPasswordConfigured(false);
+      setPasswordSetupSkipped(false);
+      setPasswordSetupMode('set');
+      setPasswordRecoveryRequested(false);
       setStep('connect');
-      setIsTestMode(false);
-      console.log('✅ Déconnexion terminée');
     } catch (err) {
-      console.error('❌ Erreur lors de la déconnexion:', err);
+      setError('Unable to close the session. Please try again.');
     }
-  }, [disconnectWallet, setAddress]);
-
-  // ===== HANDLER : VÉRIFICATION TERMINÉE =====
-  const handleVerify = useCallback(async ({ address, signature, signatureVerified, isTestMode: testMode }) => {
-    console.log('✅ Vérification terminée:', { address, signatureVerified, testMode });
-
-    setError('');
-
-    // 🆕 MODE TEST : Accès direct au réseau social sans signature
-    if (testMode || !signatureVerified) {
-      console.log('🧪 MODE TEST activé - Accès réseau social démo');
-      
-      try {
-        // ✅ Important : NE PAS stocker l'adresse en mode test
-        setAddress(null);
-        
-        // ✅ Charger le solde en mode test (stockage sessionStorage uniquement)
-        await checkBitcoinBalance(address, null, true);
-        
-        // ✅ Rediriger vers 'social' (pas 'game')
-        setStep('social');
-      } catch (err) {
-        console.error('❌ Erreur chargement mode test:', err);
-        setError('Erreur lors du chargement du mode test');
-      }
-      return;
-    }
-
-    // MODE AUTHENTIFIÉ : Vérifier signature obligatoire
-    if (!signatureVerified) {
-      console.error('❌ FAILLE BLOQUÉE : Tentative d\'accès sans signature vérifiée');
-      setError('⚠️ Signature cryptographique obligatoire pour accéder au réseau social.');
-      setStep('verify');
-      return;
-    }
-    
-    // Vérifier cohérence adresse wallet/signature
-    if (connectedAddress && connectedAddress !== address) {
-      console.error('❌ FAILLE BLOQUÉE : Adresse différente détectée');
-      setError('⚠️ L\'adresse connectée ne correspond pas à l\'adresse vérifiée.');
-      setStep('verify');
-      return;
-    }
-    
-    // Authentification réussie
-    try {
-      setAddress(address);
-      localStorage.setItem('bitcoin_address', address);
-      console.log('💾 Session sauvegardée avec signature vérifiée');
-      
-      const user = await getUserData(address);
-      
-      if (user) {
-        console.log('✅ Utilisateur chargé depuis BDD');
-        console.log('💰 BTC:', user.btc_balance);
-        console.log('💰 wBTC:', user.wbtc_balance);
-        
-        // Charger les balances en mode authentifié
-        await checkBitcoinBalance(address, signature);
-        
-        // Rediriger vers dashboard
-        setStep('authorized');
-      } else {
-        console.error('❌ Utilisateur non trouvé après création');
-        setError('Erreur : utilisateur non trouvé après création');
-      }
-    } catch (err) {
-      console.error('❌ Erreur:', err);
-      setError('Erreur lors de la synchronisation');
-    }
-  }, [checkBitcoinBalance, setAddress, setError, connectedAddress]);
+  }, [disconnectWallet, resetAuthFlow, setAddress, setError]);
 
   // ===== HANDLER : DÉMARRER JEU (depuis Dashboard) =====
   const handleGameToPlay = useCallback(async () => {
-    if (isTestMode) {
-      console.log('🧪 Mode test : accès direct au jeu');
-      setStep('game');
-      return;
-    }
-
-    // Mode authentifié : vérifications
-    try {
-      const savedAddress = localStorage.getItem('bitcoin_address');
-      
-      if (!savedAddress) {
-        throw new Error('Pas de session sauvegardée');
-      }
-      
-      const user = await getUserData(savedAddress);
-      
-      if (!user?.signature_proof?.verified) {
-        throw new Error('Signature non vérifiée');
-      }
-      
-      if (modal && !modal.getIsConnectedState()) {
-        throw new Error('Wallet déconnecté');
-      }
-      
-      setStep('game');
-      
-    } catch (err) {
-      console.error('❌ Vérification pré-jeu échouée:', err.message);
+    if (!address) {
       setError('Votre session a expiré. Veuillez vous reconnecter.');
-      setStep('verify');
+      setStep('connect');
       return;
     }
-
-    if (modal && !modal.getIsConnectedState()) {
-      try {
-        console.warn('⚠️ Wallet déconnecté, tentative de reconnexion...');
-        setError('');
-        
-        await modal.open();
-        
-        let attempts = 0;
-        const maxAttempts = 30;
-        
-        const waitForConnection = setInterval(async () => {
-          attempts++;
-          
-          if (modal) {
-            const address = modal.getAddress();
-            const isConnected = modal.getIsConnectedState();
-            
-            if (address && isConnected) {
-              clearInterval(waitForConnection);
-              console.log('✅ Reconnexion réussie');
-              
-              const savedAddress = localStorage.getItem('bitcoin_address');
-              if (address === savedAddress) {
-                setStep('game');
-              } else {
-                setError('⚠️ Adresse reconnectée différente. Veuillez utiliser la bonne adresse.');
-                setStep('verify');
-              }
-            } else if (attempts >= maxAttempts) {
-              clearInterval(waitForConnection);
-              setError('Délai de reconnexion dépassé. Veuillez réessayer.');
-            }
-          }
-        }, 1000);
-        
-      } catch (err) {
-        setError('Erreur lors de l\'ouverture du wallet.');
-      }
-      return;
-    }
-
     setError('');
     setStep('game');
-  }, [modal, setError, isTestMode, setStep]);
+  }, [address, setError]);
 
   // ===== HANDLER : LANCER UNE PARTIE =====
   const handleStartGame = useCallback(async () => {
-    // 🆕 En mode test, pas de débit
-    if (isTestMode) {
-      console.log('🧪 Mode test : lancement partie sans débit');
-      return true; // Autoriser le jeu sans débit
-    }
-
-    // Mode authentifié : vérifications + débit
-    try {
-      const savedAddress = localStorage.getItem('bitcoin_address');
-      
-      if (!savedAddress) {
-        throw new Error('Pas de session sauvegardée');
-      }
-      
-      const user = await getUserData(savedAddress);
-      
-      if (!user?.signature_proof?.verified) {
-        throw new Error('Signature non vérifiée');
-      }
-      
-      if (modal && !modal.getIsConnectedState()) {
-        throw new Error('Wallet déconnecté');
-      }
-      
-      // ✅ APPELER la vraie fonction startGame qui débite les wBTC
-      return await startGame();
-      
-    } catch (err) {
-      console.error('❌ Vérification pré-jeu échouée:', err.message);
+    if (!address) {
       setError('Votre session a expiré. Veuillez vous reconnecter.');
-      setStep('verify');
-      throw err;
+      setStep('connect');
+      return false;
     }
-  }, [startGame, modal, setError, setStep, isTestMode]);
+    return startGame();
+  }, [address, startGame, setError]);
 
   // ===== HANDLER : RETOUR DEPUIS JEU =====
   const handleGameBack = useCallback(() => {
     setError('');
     
-    // 🆕 En mode test, retour à verify
-    if (isTestMode) {
-      setStep('verify');
-    } else {
-      setStep('authorized');
-    }
-  }, [setError, isTestMode, setStep]);
+    setStep('social');
+  }, [setError]);
 
   // ===== HANDLER : PUBLICATION MESSAGE =====
-  const handlePublishMessage = useCallback(async (content, isTestMode = false, parentId = null) => {
+  const handlePublishMessage = useCallback(async (content, parentId = null) => {
     try {
-      // 🆕 En mode test, utiliser le hook directement sans vérifications
-      if (isTestMode) {
-        return await publishMessage(content, isTestMode, parentId);
-      }
-      
-      // Mode authentifié : vérifications de sécurité
-      const savedAddress = localStorage.getItem('bitcoin_address');
-      
-      if (!savedAddress) {
-        throw new Error('Pas de session sauvegardée');
-      }
-      
-      const user = await getUserData(savedAddress);
-      
-      if (!user?.signature_proof?.verified) {
-        throw new Error('Signature non vérifiée');
-      }
-      
-      if (modal && !modal.getIsConnectedState()) {
-        throw new Error('Wallet déconnecté');
-      }
-      
-      const result = await publishMessage(content, isTestMode, parentId);
-      
-      // ✅ Retourner le résultat complet (pas juste true/false)
-      return result;
-      
+      if (!address) throw new Error('Session absente');
+      return await publishMessage(content, parentId);
     } catch (err) {
-      console.error('❌ Vérification pré-publication échouée:', err.message);
-      setError('Votre session a expiré. Veuillez vous reconnecter.');
-      handleManualDisconnect();
+      setError(err.message || 'Publication failed');
       return { success: false, error: err.message };
     }
-  }, [publishMessage, modal, setError, handleManualDisconnect]);
+  }, [address, publishMessage, setError]);
 
   // ===== HANDLER : CANVAS - Navigation =====
   const handleStartCanvas = useCallback(() => {
@@ -454,7 +323,7 @@ const BitcoinExclusiveAccess = () => {
 
   const handleCanvasBack = useCallback(() => {
     setError('');
-    setStep('authorized');
+    setStep('social');
   }, [setError]);
 
   // ===== HANDLER : HISTORIQUE =====
@@ -474,15 +343,75 @@ const BitcoinExclusiveAccess = () => {
 
   // ===== HANDLER : STATISTIQUES =====
   const handleShowStats = useCallback(async () => {
-    if (isTestMode) {
-      setError('Les statistiques ne sont pas disponibles en mode test');
+    const history = await loadSpendingHistory(20);
+    setStats({ history });
+    setShowStats(true);
+  }, [loadSpendingHistory]);
+
+  // ===== HANDLER : OUVRIR UN PROFIL =====
+  const handleOpenProfile = useCallback((bitcoinAddress, returnStep = 'social') => {
+    if (!bitcoinAddress) return;
+    if (step === 'profile-setup') return;
+
+    setError('');
+    setProfileAddress(bitcoinAddress);
+    setProfileReturnStep(returnStep === 'profile' ? profileReturnStep : returnStep);
+    setStep('profile');
+  }, [profileReturnStep, setError, step]);
+
+  // ===== HANDLER : RETOUR DU PROFIL =====
+  const handleProfileBack = useCallback(() => {
+    setError('');
+    setStep(profileReturnStep || 'social');
+  }, [profileReturnStep, setError]);
+
+  // ===== HANDLER : PSEUDO CRÉÉ =====
+  const handleProfileSetupComplete = useCallback(() => {
+    setError('');
+    setProfileSetupAddress(null);
+    if ((!passwordConfigured && !passwordSetupSkipped) || passwordRecoveryRequested) {
+      setPasswordSetupMode(passwordRecoveryRequested && passwordConfigured ? 'reset' : 'set');
+      setStep('password-setup');
       return;
     }
+    routeToNetwork();
+  }, [passwordConfigured, passwordRecoveryRequested, passwordSetupSkipped, routeToNetwork, setError]);
 
-    const userStats = await loadStats();
-    setStats(userStats);
-    setShowStats(true);
-  }, [loadStats, isTestMode, setError]);
+  const handlePasswordLogin = useCallback(async (identifier, password) => {
+    setError('');
+    const session = await loginWithPassword(identifier, password);
+    const user = await getUserData(session.address, { throwOnError: true });
+    if (!user?.ownership_verified) throw new Error('Ownership verification missing');
+
+    restoreAuthenticatedUser(user);
+    setPasswordRecoveryRequested(false);
+    routeAuthenticatedUser(user, session.address);
+  }, [restoreAuthenticatedUser, routeAuthenticatedUser, setError]);
+
+  const handlePasswordSetupComplete = useCallback(() => {
+    setError('');
+    setPasswordConfigured(true);
+    setPasswordSetupSkipped(false);
+    setPasswordRecoveryRequested(false);
+    setPasswordSetupMode('set');
+    routeToNetwork();
+  }, [routeToNetwork, setError]);
+
+  const handlePasswordSetupSkip = useCallback(async () => {
+    await skipPasswordSetup();
+    setPasswordConfigured(false);
+    setPasswordSetupSkipped(true);
+    setPasswordRecoveryRequested(false);
+    setPasswordSetupMode('set');
+    routeToNetwork();
+  }, [routeToNetwork]);
+
+  const handleAddPassword = useCallback(() => {
+    setError('');
+    setPasswordRecoveryRequested(false);
+    setPasswordSetupMode('set');
+    setStep('password-setup');
+  }, [setError]);
 
   // ===== ÉCRAN DE CHARGEMENT =====
   if (isCheckingSession) {
@@ -490,7 +419,7 @@ const BitcoinExclusiveAccess = () => {
       <div className="min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 flex items-center justify-center">
         <div className="bg-white rounded-2xl shadow-2xl p-8 text-center">
           <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-orange-500 mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">Vérification de la session...</p>
+          <p className="text-gray-600 font-medium">Checking your session...</p>
         </div>
       </div>
     );
@@ -498,83 +427,148 @@ const BitcoinExclusiveAccess = () => {
 
   // ===== RENDU PRINCIPAL =====
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 p-4">
+    <div className={`min-h-screen p-4 ${
+      step === 'connect'
+        ? 'bg-[radial-gradient(circle_at_top_left,_#ffedd5_0%,_#fdba74_32%,_#f97316_68%,_#c2410c_100%)]'
+        : 'bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600'
+    }`}>
       <EnvIndicator />
       
       <div className="max-w-4xl mx-auto">
-        <Header 
-          connectedAddress={connectedAddress}
+          <Header 
+          connectedAddress={activeWalletAddress}
           connectedWallet={connectedWallet}
+          minimal={step === 'connect'}
           onDisconnect={handleManualDisconnect}
-          isTestMode={isTestMode}
+          onViewProfile={
+            step === 'profile-setup' || !activeWalletAddress
+              ? null
+              : () => handleOpenProfile(activeWalletAddress, 'social')
+          }
         />
 
-        <div className="bg-white rounded-2xl shadow-2xl p-8 mb-6">
-          <ProgressBar currentStep={step} isTestMode={isTestMode} />
-
+        <div className={step === 'connect' ? 'mb-6' : 'mb-6 rounded-2xl bg-white p-8 shadow-2xl'}>
           {step === 'connect' && (
             <ConnectStep 
               onConnect={handleConnect}
-              loading={loading}
+              loading={loading || isConnecting}
               error={error}
+              verificationStep={verificationStep}
+              isCheckingDB={isCheckingDB}
+              selectedPersonaId={selectedPersonaId}
+              selectWalletType={selectWalletType}
+              authRequest={authRequest}
+              authHint={authHint}
+              manualAddress={manualAddress}
+              setManualAddress={setManualAddress}
+              manualSignature={manualSignature}
+              setManualSignature={setManualSignature}
+              multisigWitnessScript={multisigWitnessScript}
+              setMultisigWitnessScript={setMultisigWitnessScript}
+              descriptorInput={descriptorInput}
+              setDescriptorInput={setDescriptorInput}
+              descriptorBranch={descriptorBranch}
+              setDescriptorBranch={setDescriptorBranch}
+              descriptorIndex={descriptorIndex}
+              setDescriptorIndex={setDescriptorIndex}
+              descriptorInfo={descriptorInfo}
+              descriptorError={descriptorError}
+              importDescriptor={importDescriptor}
+              signedPsbt={signedPsbt}
+              setSignedPsbt={setSignedPsbt}
+              offlineProofFormat={offlineProofFormat}
+              selectOfflineProofFormat={selectOfflineProofFormat}
+              prepareOfflineProof={prepareOfflineProof}
+              prepareManualProof={prepareManualProof}
+              selectAutomaticDesktop={selectAutomaticDesktop}
+              submitManualProof={submitManualProof}
+              signPreparedPsbt={signPreparedPsbt}
+              walletConnected={Boolean(connectedAddress)}
+              canDirectSign={Boolean(walletProfile?.capabilities?.supportsPsbt)}
+              connectDirectSigner={connectWallet}
+              openMobileBrowser={openMobileBrowser}
+              mobileEntry={mobileEntry}
+              mobileHandoffUrl={mobileHandoffUrl}
+              authMode={authMode}
+              onPasswordLogin={handlePasswordLogin}
+              onPasswordRecovery={() => setPasswordRecoveryRequested(true)}
+              onUseWallet={() => setPasswordRecoveryRequested(false)}
             />
           )}
 
-          {step === 'verify' && (
-            <VerifyStep
-              onVerified={handleVerify}
-            />
-          )}
-
-          {step === 'authorized' && (
-            <DashboardStep
-              address={address}
-              btcBalance={btcBalance}
-              wbtcAvailable={wbtcAvailable}
-              wbtcSpentTotal={wbtcSpentTotal}
-              onStartGame={handleGameToPlay}
-              onPublishMessage={() => setStep('social')} 
-              onSync={manualSync}
-              onShowHistory={handleShowHistory}
-              onShowStats={handleShowStats}
-              onStartCanvas={handleStartCanvas}
-              isTestMode={isTestMode}
-              loading={loading}
-              error={error}
-            />
-          )}
-
+          <Suspense fallback={<ScreenFallback />}>
           {step === 'game' && (
             <GameStep
-              wbtcAvailable={wbtcAvailable}
+              shellsAvailable={shellsAvailable}
               onStartGame={handleStartGame}
-              onUpdateScore={saveGameScore}
               onBack={handleGameBack}
               loading={loading}
               error={error}
-              isTestMode={isTestMode}
             />
           )}
 
-          {step === 'social' && (
+          {(step === 'social' || step === 'authorized') && (
             <SocialStep
-              isTestMode={!address}
               address={address}
-              wbtcAvailable={wbtcAvailable}
               onPublishMessage={handlePublishMessage}
               onLoadMessages={loadMessages}
               onLoadComments={loadComments}
-              onSocialAction={socialAction}
+              onToggleUseful={toggleUseful}
+              onRepostMessage={repostMessage}
+              onLoadOpinionTopics={loadOpinionTopics}
+              onSetPrivateStance={savePrivateTopicStance}
               loading={loading}
               error={error}
-              onBack={() => setStep('authorized')}
+              onUserClick={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'social')}
+              onOpenOwnProfile={() => handleOpenProfile(activeWalletAddress, 'social')}
+              onOpenGame={handleGameToPlay}
+              onOpenCanvas={handleStartCanvas}
+              onShowHistory={handleShowHistory}
+              onShowStats={handleShowStats}
+              onSync={manualSync}
+              followingAddresses={followingAddresses}
+              onFollowToggle={handleToggleFollow}
+              isFollowing={isFollowing}
+            />
+          )}
+
+          {step === 'profile' && profileAddress && (
+            <ProfileStep
+              profileAddress={profileAddress}
+              currentAddress={activeWalletAddress}
+              onBack={handleProfileBack}
+              onOpenProfile={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'profile')}
+              onToggleFollow={handleToggleFollow}
+              isFollowing={isFollowing}
+              onShowStats={handleShowStats}
+              passwordConfigured={passwordConfigured}
+              onAddPassword={handleAddPassword}
+            />
+          )}
+
+          {step === 'profile-setup' && profileSetupAddress && (
+            <ProfileSetupStep
+              address={profileSetupAddress}
+              btcBalance={btcBalance}
+              onComplete={handleProfileSetupComplete}
+              loading={loading}
+              error={error}
+            />
+          )}
+
+          {step === 'password-setup' && address && (
+            <PasswordSetupStep
+              address={address}
+              mode={passwordSetupMode}
+              onComplete={handlePasswordSetupComplete}
+              onSkip={handlePasswordSetupSkip}
             />
           )}
 
           {step === 'canvas' && (
             <CanvasStep
               address={address}
-              wbtcAvailable={wbtcAvailable}
+              shellsAvailable={shellsAvailable}
               onSubmitPixels={submitCanvasPixels}
               onLoadCanvas={loadCanvasPixels}
               onLoadUserPixelCount={loadUserPixelCount}
@@ -583,24 +577,29 @@ const BitcoinExclusiveAccess = () => {
               onBack={handleCanvasBack}
             />
           )}
+          </Suspense>
         </div>
 
-        <HistoryModal
-          show={showHistory}
-          onClose={() => setShowHistory(false)}
-          messages={userMessages}
-          onLoadMore={handleLoadMoreHistory}
-          hasMore={hasMoreMessages}
-        />
+        <Suspense fallback={null}>
+          {showHistory && (
+            <HistoryModal
+              show={showHistory}
+              onClose={() => setShowHistory(false)}
+              messages={userMessages}
+              onLoadMore={handleLoadMoreHistory}
+              hasMore={hasMoreMessages}
+            />
+          )}
 
-        {showStats && (
-          <StatsModal
-            stats={stats}
-            onClose={() => setShowStats(false)}
-          />
-        )}
+          {showStats && (
+            <StatsModal
+              stats={stats}
+              onClose={() => setShowStats(false)}
+            />
+          )}
+        </Suspense>
 
-        <Footer />
+        {step !== 'connect' && <Footer />}
       </div>
     </div>
   );

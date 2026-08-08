@@ -1,75 +1,77 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
+import { corsHeaders, jsonResponse, verifyAccessToken } from '../_shared/auth.ts';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req) });
   }
 
   try {
-    const { address } = await req.json();
+    const { address, jwt } = await req.json();
+    if (!address || !jwt) return jsonResponse(req, { exists: false, error: 'Unauthorized' }, 401);
 
-    if (!address) {
-      return new Response(
-        JSON.stringify({ exists: false, error: 'Adresse manquante' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    const auth = await verifyAccessToken(jwt, supabase);
+    if (!auth.valid || auth.address !== address) {
+      return jsonResponse(req, { exists: false, error: 'Unauthorized' }, 401);
     }
-
-    console.log('📊 Récupération données pour:', address.slice(0, 10) + '...');
 
     const { data: user, error } = await supabase
       .from('user_balances')
-      .select('*')
+      .select(`
+        bitcoin_address,
+        btc_balance,
+        shells_balance,
+        shells_spent_total,
+        created_at,
+        last_sync,
+        ownership_verified_at,
+        ownership_address_type,
+        ownership_proof_method
+      `)
       .eq('bitcoin_address', address)
-      .single();
+      .maybeSingle();
+    if (error) throw error;
+    if (!user) return jsonResponse(req, { exists: false });
 
-    if (error && error.code !== 'PGRST116') {
-      throw error;
-    }
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('bitcoin_address, display_name, bio, created_at, updated_at')
+      .eq('bitcoin_address', address)
+      .maybeSingle();
+    if (profileError) throw profileError;
 
-    if (!user) {
-      console.log('ℹ️ Utilisateur non trouvé');
-      return new Response(
-        JSON.stringify({ exists: false }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+    const { data: passwordCredential, error: passwordError } = await supabase
+      .from('auth_password_credentials')
+      .select('bitcoin_address')
+      .eq('bitcoin_address', address)
+      .maybeSingle();
+    if (passwordError) throw passwordError;
 
-    console.log('✅ Utilisateur trouvé');
+    const { data: accountPreferences, error: preferencesError } = await supabase
+      .from('auth_account_preferences')
+      .select('password_prompt_skipped_at')
+      .eq('bitcoin_address', address)
+      .maybeSingle();
+    if (preferencesError) throw preferencesError;
 
-    return new Response(
-      JSON.stringify({
-        exists: true,
-        user: {
-          bitcoin_address: user.bitcoin_address,
-          btc_balance: user.btc_balance,
-          wbtc_balance: user.wbtc_balance,
-          wbtc_spent_total: user.wbtc_spent_total,
-          signature_proof: user.signature_proof,
-          created_at: user.created_at,
-          last_sync: user.last_sync
-        }
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
-  } catch (error: any) {
-    console.error('❌ Erreur:', error);
-    return new Response(
-      JSON.stringify({ exists: false, error: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    return jsonResponse(req, {
+      exists: true,
+      user: {
+        ...user,
+        ownership_verified: Boolean(user.ownership_verified_at),
+        profile: profile || null,
+        has_profile: Boolean(profile),
+        password_configured: Boolean(passwordCredential),
+        password_setup_skipped: Boolean(accountPreferences?.password_prompt_skipped_at),
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to load account';
+    return jsonResponse(req, { exists: false, error: message }, 500);
   }
 });

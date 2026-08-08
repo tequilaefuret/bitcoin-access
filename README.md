@@ -1,70 +1,88 @@
-# Getting Started with Create React App
+# Bitcoin Access
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Bitcoin Access is a Bitcoin-gated social network.
 
-## Available Scripts
+Core principle:
+- a user connects a wallet
+- the app proves ownership by cryptographic signature
+- access to the feed and social actions is then unlocked
+- all app actions are charged in internal `shells`, never in real on-chain BTC
 
-In the project directory, you can run:
+## Documentation
 
-### `npm start`
+The main functional and technical reference is:
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- [AI Context](docs/AI_CONTEXT.md)
+- [Automated DEV → production deployments](docs/DEPLOYMENT_PIPELINE.md)
+- [Opinion Stage 1](docs/OPINION_MODE_STAGE_1.md)
+- [Opinion Stage 2: automatic grouping](docs/OPINION_MODE_STAGE_2.md)
+- [Opinion quality, cycles and validation](docs/OPINION_MODE_QUALITY_CYCLES.md)
+- [Opinion Stage 3: trend detection](docs/OPINION_MODE_STAGE_3_TRENDS.md)
+- [Opinion Stage 3B: topic discovery](docs/OPINION_MODE_STAGE_3B_DISCOVERY.md)
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+That file explains:
+- the user journeys
+- the app state machine
+- the Supabase schema
+- the Edge Functions
+- the balance model
+- the social features
+- the local and production environment rules
 
-### `npm test`
+## Development
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Start the app locally:
 
-### `npm run build`
+```bash
+npm start
+```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Build for production:
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```bash
+npm run build
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Main Stack
 
-### `npm run eject`
+- React
+- Tailwind CSS
+- Supabase
+- Reown AppKit
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## Bitcoin Wallet Authentication
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Every transport signs the same server-issued, short-lived Bitcoin Access challenge. Wallet brands are not part of the authentication model.
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+Authentication security:
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+- every challenge is generated server-side, expires after ten minutes and can be consumed only once
+- raw messages, signatures and PSBT proofs are never persisted as account credentials
+- the browser receives a revocable refresh session in an `HttpOnly` cookie
+- the short-lived access token stays in memory and is never stored in `localStorage`
+- disconnecting a wallet does not end the website session; `Log out` revokes it
+- public profiles and private account data use separate Edge Functions
 
-## Learn More
+Desktop coverage is layered:
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+1. **Automatic connection** uses the Bitcoin connector exposed to AppKit. The installed adapter discovers compatible injected providers, Bitcoin Wallet Standard, Sats Connect, WalletConnect, UniSat-style providers, OKX, Bitget, Binance Web3, Leather, Phantom, and Xverse without application-level signing branches.
+2. **Other desktop wallet** bypasses Reown. The user enters a public Bitcoin address, signs the portable challenge with the wallet's message-signing feature, and pastes the signature for the same server-side verification.
+3. **PSBT proof** is the brand-independent fallback for wallets that can sign PSBTs but cannot sign messages. Bitcoin Access builds a BIP-322 virtual transaction that cannot be broadcast and never moves funds or pays a fee. It supports Legacy P2PKH, Nested SegWit P2SH-P2WPKH, Native SegWit P2WPKH and Native SegWit multisig P2WSH. The same request can be signed through a compatible connected provider, an animated `crypto-psbt` BC-UR QR exchange, or a `.psbt` file.
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+No browser application can automatically support an unknown proprietary wallet API. New wallets become automatic when they implement one of the discovered standards; until then, message-signature or PSBT proof provides the brand-independent path.
 
-### Code Splitting
+Hardware and multisig coverage:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+- **Hardware / single signature:** import a public `pkh(...)`, `wpkh(...)` or `sh(wpkh(...))` output descriptor to derive the selected receive or change address and include its BIP32 key origin in the PSBT. The request can then be signed directly, by animated QR, or by file.
+- **Native SegWit multisig:** import a public `wsh(multi(...))` or `wsh(sortedmulti(...))` descriptor. The app derives the witness script and address, then the server verifies every signature and enforces the policy threshold. Manual address and witness-script entry remains available as a fallback.
+- **Animated QR:** outbound and signed PSBTs use the standard `crypto-psbt` BC-UR type. Fountain-code fragments can be scanned in any order and tolerate missed frames.
+- **Current BIP-322 PSBT metadata:** every generated request includes `PSBT_GLOBAL_GENERIC_SIGNED_MESSAGE` (`0x09`), allowing compatible signers to identify and display the UTF-8 authentication message instead of presenting the proof as an ordinary payment.
+- The witness script and PSBT contain public wallet-policy data. The app never requests a seed phrase, private key, real UTXO, payment, or broadcast permission.
 
-### Analyzing the Bundle Size
+Descriptor import currently accepts mainnet public `xpub`, `ypub`, `zpub`, `Ypub`, `Zpub` and compressed public keys. Private extended keys are rejected. Descriptor checksums are verified when supplied; when absent, the user must compare the derived address with the wallet before signing.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+Deployment and production cookie configuration are documented in:
 
-### Making a Progressive Web App
+- [Authentication security](docs/AUTHENTICATION_SECURITY.md)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+After changing authentication, deploy the migration and all affected Edge Functions as described there. Deploying only `verify-and-register` is not sufficient.
