@@ -65,7 +65,8 @@ printf 'Deploying all Edge Functions and pruning removed functions...\n'
 supabase functions deploy \
   --project-ref "$SUPABASE_PROJECT_REF" \
   --use-api \
-  --prune
+  --prune \
+  --yes
 
 printf 'Deploying the frontend to the %s Netlify site...\n' "$target"
 netlify deploy \
