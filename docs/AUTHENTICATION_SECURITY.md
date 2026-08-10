@@ -300,6 +300,78 @@ simple format and the older unprefixed representation still returned by many
 wallets. Taproot remains available through direct BIP-322 message signing. A
 Taproot PSBT/`tr(...)` descriptor path is not yet enabled.
 
+### Direct Ledger USB beta
+
+The Hardware screen also provides a direct Ledger path for standard mainnet
+Native SegWit accounts. It uses Ledger's current Device Management Kit, WebHID
+transport and Bitcoin signer kit rather than the deprecated LedgerJS packages.
+
+Requirements:
+
+1. Use Chrome, Edge, Brave or another desktop Chromium browser with WebHID.
+2. Serve the site over HTTPS. `http://localhost` and `http://127.0.0.1` are also
+   accepted as secure development contexts.
+3. Connect and unlock the Ledger. The site never asks for the seed phrase.
+4. Select the Ledger account number, receive/change branch and address index.
+5. Approve opening the Bitcoin app when the Ledger asks.
+6. Compare and approve the address shown on the Ledger screen. Do not approve
+   if it differs from the address displayed by Bitcoin Access.
+7. Create the signing request, reconnect the same Ledger and approve the proof.
+8. Select `Verify and sign in` after the signed PSBT is returned.
+
+The implementation reads only the master fingerprint and account xpub, creates
+the public `wpkh(...)` descriptor locally, and verifies that local derivation
+matches the address returned with `checkOnDevice: true`. Before signing, it
+rejects every PSBT that does not have exactly one zero-value input for that
+address, one zero-value `OP_RETURN` output, the exact server challenge in the
+BIP-322 global message field, and the expected BIP32 derivation path. The
+Ledger session is disconnected and the Device Management Kit is closed after
+each attempt, including failures.
+
+This path intentionally excludes Legacy, Nested SegWit, Taproot and multisig
+Ledger accounts for now. Those wallets remain supported through public
+descriptor import plus QR or PSBT file. The direct path stays labelled beta
+until a real Ledger running the target Bitcoin app version has completed the
+full BIP-322 flow; automated browser tests cannot emulate the secure device.
+
+### Direct Trezor USB beta
+
+The Hardware screen provides a separate direct path based on the official
+`@trezor/connect-web` SDK. Trezor Connect owns the device transport and its
+trusted connection window: compatible Chromium browsers can use WebUSB, while
+Firefox requires Trezor Bridge. Safari is not supported by this path.
+
+User journey:
+
+1. Open `Hardware`, connect and unlock the Trezor, and close Trezor Suite if it
+   currently owns the device connection.
+2. Keep the default account `0`, `Receive` chain and index `0` unless the target
+   address uses another standard Native SegWit path.
+3. Select `Connect Trezor and sign in` and allow the official Trezor window.
+4. Compare and approve the `bc1q...` address shown on the Trezor screen.
+5. Read and approve the Bitcoin Access sign-in message. Never approve a
+   transaction: this flow requests message signing only.
+6. The site verifies the signature with the server challenge and opens the
+   existing account or registration journey.
+
+The implementation restricts direct Trezor authentication to standard mainnet
+Native SegWit paths `m/84'/0'/account'/branch/index`. It rejects invalid path
+components, non-P2WPKH addresses, a signature returned for another address and
+non-compact signature payloads. It never calls Trezor transaction composition,
+transaction signing, broadcasting, seed export or private-key APIs. Challenges
+remain server-generated, short-lived and single-use.
+
+Local development on `localhost` needs no Trezor configuration. Before an
+online DEV or production build, define the public GitHub environment variable
+`REACT_APP_TREZOR_MANIFEST_EMAIL` with a valid contact address. Trezor Connect
+also receives `window.location.origin` as the manifest application URL. The
+button remains disabled online if the contact is missing or invalid.
+
+Legacy, Nested SegWit, Taproot, multisig and non-standard Trezor paths remain
+available through the descriptor, message, QR and PSBT-file fallbacks. The
+direct path remains labelled beta until the full journey has been tested on a
+physical supported Trezor; automated tests cannot emulate its secure screen.
+
 Challenge address validation decodes Base58, SegWit v0 Bech32 and Taproot v1
 Bech32m directly. It deliberately avoids `bitcoinjs-lib`'s
 `address.toOutputScript()` shortcut because Taproot script construction requires

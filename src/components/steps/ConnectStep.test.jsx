@@ -37,3 +37,100 @@ test('requires a wallet proof before password recovery', () => {
   expect(screen.getByRole('heading', { name: /use your wallet/i })).toBeInTheDocument();
   expect(screen.getByText(/wallet type/i)).toBeInTheDocument();
 });
+
+test('labels an injected Phantom provider as detected in the browser', () => {
+  const onConnectInjected = jest.fn();
+  renderConnectStep({
+    onConnectInjected,
+    injectedWallets: [{ id: 'wallet-standard-phantom-0', name: 'Phantom' }],
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /^wallet$/i }));
+  expect(screen.getByText(/detected in this browser/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /find another wallet/i })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /connect with phantom/i }));
+
+  expect(onConnectInjected).toHaveBeenCalledWith('wallet-standard-phantom-0');
+});
+
+test('does not show a detected-wallet heading when no extension is detected', () => {
+  renderConnectStep({ injectedWallets: [] });
+
+  fireEvent.click(screen.getByRole('button', { name: /^wallet$/i }));
+
+  expect(screen.queryByText(/detected in this browser/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^find a wallet$/i })).toBeInTheDocument();
+});
+
+test('shows the mobile QR code immediately on desktop without an open-mobile action', () => {
+  renderConnectStep({
+    selectedPersonaId: 'mobile_hot_wallet',
+    mobileDevice: false,
+    mobileHandoffUrl: 'https://example.com/?mobileEntry=1',
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /^wallet$/i }));
+
+  expect(screen.getByText(/scan this qr code with your mobile wallet/i)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /copy link/i })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /find a wallet/i })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /open on mobile/i })).not.toBeInTheDocument();
+});
+
+test('prioritizes wallet selection on mobile and keeps the QR code as fallback', () => {
+  renderConnectStep({
+    selectedPersonaId: 'mobile_hot_wallet',
+    mobileDevice: true,
+    mobileHandoffUrl: 'https://example.com/?mobileEntry=1',
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /^wallet$/i }));
+
+  expect(screen.getByRole('button', { name: /find a wallet/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /show qr code and copyable link/i })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /copy link/i })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /show qr code and copyable link/i }));
+  expect(screen.getByRole('button', { name: /copy link/i })).toBeInTheDocument();
+});
+
+test('uses the detected wallet directly from its in-app browser', () => {
+  const onConnect = jest.fn();
+  const onConnectInjected = jest.fn();
+  renderConnectStep({
+    selectedPersonaId: 'mobile_hot_wallet',
+    mobileDevice: true,
+    walletInAppBrowser: true,
+    injectedWallets: [{ id: 'wallet-standard-phantom-0', name: 'Phantom' }],
+    onConnect,
+    onConnectInjected,
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /^wallet$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /continue with phantom/i }));
+
+  expect(onConnectInjected).toHaveBeenCalledWith('wallet-standard-phantom-0');
+  expect(onConnect).not.toHaveBeenCalled();
+});
+
+test('offers the direct Trezor USB journey for a hardware wallet', () => {
+  const connectTrezorUsb = jest.fn();
+  renderConnectStep({
+    selectedPersonaId: 'cold_single_seed',
+    authMode: 'offline',
+    offlineProofFormat: 'psbt',
+    descriptorInput: '',
+    descriptorBranch: 0,
+    descriptorIndex: 0,
+    trezorAccount: 0,
+    connectTrezorUsb,
+    trezorUsbAvailability: { supported: true, reason: '' },
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+  expect(screen.getByRole('heading', { name: /trezor usb/i })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /connect trezor and sign in/i }));
+
+  expect(connectTrezorUsb).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(/never enter your seed or approve a transaction/i)).toBeInTheDocument();
+});

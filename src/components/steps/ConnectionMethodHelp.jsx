@@ -22,15 +22,35 @@ const GUIDES = {
     ],
     note: 'Never paste a seed phrase or private key. Only the public address and signature are required.',
   },
-  mobile: {
-    id: 'mobile-wallet',
+  mobileDesktop: {
+    id: 'mobile-wallet-desktop',
+    title: 'Mobile wallet from desktop',
+    steps: [
+      'Scan the QR code with the scanner in your mobile wallet.',
+      'Open Bitcoin Access in the wallet’s browser and select Find a wallet.',
+      'Approve the connection and the ownership signature on your phone.',
+    ],
+    note: 'If the wallet cannot scan website QR codes, copy the link and open it in the wallet’s in-app browser.',
+  },
+  mobileBrowser: {
+    id: 'mobile-wallet-browser',
     title: 'Mobile wallet',
     steps: [
-      'Open Bitcoin Access inside the wallet’s built-in browser.',
-      'Use the QR code or copied link if the direct opening button is not supported.',
-      'Connect the wallet and approve the ownership signature on your phone.',
+      'Select Find a wallet and choose a compatible app.',
+      'Approve the connection in the wallet app.',
+      'Approve the ownership signature, then return to this browser manually if needed.',
     ],
-    note: 'Some wallet deep links only open the app. In that case, paste the site link into its in-app browser.',
+    note: 'The QR code and copyable link remain available as a fallback for a wallet with an in-app browser.',
+  },
+  mobileInApp: {
+    id: 'mobile-wallet-in-app',
+    title: 'Wallet browser',
+    steps: [
+      'Continue with the wallet detected in this browser, or select Find a wallet.',
+      'Approve access to the Bitcoin payment address.',
+      'Approve the ownership signature. The connected account appears only after verification.',
+    ],
+    note: 'A wallet connection alone does not authenticate the Bitcoin Access account.',
   },
   hardwarePsbt: {
     id: 'hardware-psbt',
@@ -67,8 +87,17 @@ const GUIDES = {
   },
 };
 
-export function getConnectionGuide({ selectedPersonaId, authMode, offlineProofFormat }) {
-  if (selectedPersonaId === 'mobile_hot_wallet') return GUIDES.mobile;
+export function getConnectionGuide({
+  selectedPersonaId,
+  authMode,
+  offlineProofFormat,
+  mobileDevice = false,
+  walletInAppBrowser = false,
+}) {
+  if (selectedPersonaId === 'mobile_hot_wallet') {
+    if (!mobileDevice) return GUIDES.mobileDesktop;
+    return walletInAppBrowser ? GUIDES.mobileInApp : GUIDES.mobileBrowser;
+  }
   if (selectedPersonaId === 'cold_multisig') return GUIDES.multisig;
   if (selectedPersonaId === 'cold_single_seed') {
     return offlineProofFormat === 'message' ? GUIDES.hardwareMessage : GUIDES.hardwarePsbt;
@@ -83,6 +112,7 @@ const ConnectionMethodHelp = (props) => {
   return (
     <details
       key={guide.id}
+      data-testid="connection-method-help"
       className="group mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"
     >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-slate-700 marker:hidden hover:bg-slate-50">

@@ -69,9 +69,13 @@ sont identiques, mais les valeurs sont propres à DEV ou production.
 | `NETLIFY_SITE_ID` | Site ID Netlify DEV | Site ID Netlify production |
 | `APP_URL` | URL HTTPS du site DEV | URL HTTPS du site production |
 | `REACT_APP_AUTH_API_URL` | Optionnel : URL `/functions/v1` DEV | Optionnel : URL `/functions/v1` production |
+| `REACT_APP_TREZOR_MANIFEST_EMAIL` | E-mail public de contact du site | E-mail public de contact du site |
 
 `APP_URL` doit être une origine sans chemin, par exemple
 `https://bitcoin-access-dev.netlify.app`, sans `/social` après le domaine.
+`REACT_APP_TREZOR_MANIFEST_EMAIL` est transmis au manifeste public exigé par
+Trezor Connect. Ce n'est pas un secret et il ne donne aucun accès au wallet ;
+utilise une adresse que les utilisateurs peuvent réellement contacter.
 
 ### 4. Ajouter les secrets GitHub
 

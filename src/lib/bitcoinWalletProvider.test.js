@@ -6,7 +6,6 @@ import {
 } from './bitcoinWalletProvider';
 
 afterEach(() => {
-  delete window.phantom;
   delete window.okxwallet;
 });
 
@@ -39,12 +38,6 @@ test('normalizes binary message signatures returned by Wallet Standard providers
 });
 
 test('uses the connector selected in Reown even when other wallets are installed', async () => {
-  window.phantom = {
-    bitcoin: {
-      requestAccounts: jest.fn(),
-      signMessage: jest.fn()
-    }
-  };
   window.okxwallet = {
     bitcoin: {
       signMessage: jest.fn()
@@ -66,7 +59,6 @@ test('uses the connector selected in Reown even when other wallets are installed
     message: 'authentication challenge',
     protocol: 'bip322',
   });
-  expect(window.phantom.bitcoin.signMessage).not.toHaveBeenCalled();
   expect(window.okxwallet.bitcoin.signMessage).not.toHaveBeenCalled();
 });
 

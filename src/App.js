@@ -93,11 +93,15 @@ const BitcoinExclusiveAccess = () => {
     modal,
     disconnectWallet,
     connectWallet,
+    connectInjectedWallet,
+    injectedWallets,
     signMessage,
     signPsbt,
     isConnecting
   } = useReownWallet();
-  const activeWalletAddress = address || connectedAddress;
+  const authenticatedAddress = address || null;
+  const showPrivateSession = Boolean(authenticatedAddress)
+    && !['connect', 'profile-setup', 'password-setup'].includes(step);
 
   const routeToNetwork = useCallback(() => {
     setStep('social');
@@ -105,6 +109,7 @@ const BitcoinExclusiveAccess = () => {
 
   const {
     handleConnect,
+    handleInjectedConnect,
     resetAuthFlow,
     verificationStep,
     isCheckingDB,
@@ -136,14 +141,30 @@ const BitcoinExclusiveAccess = () => {
     selectAutomaticDesktop,
     submitManualProof,
     signPreparedPsbt,
-    openMobileBrowser,
+    connectLedgerUsb,
+    signPreparedPsbtWithLedger,
+    ledgerAccount,
+    setLedgerAccount,
+    ledgerStatus,
+    ledgerBusy,
+    ledgerReady,
+    ledgerUsbAvailability,
+    connectTrezorUsb,
+    trezorAccount,
+    setTrezorAccount,
+    trezorStatus,
+    trezorBusy,
+    trezorUsbAvailability,
     mobileEntry,
+    mobileDevice,
+    walletInAppBrowser,
     mobileHandoffUrl,
     authMode
   } = useWalletAuthFlow({
     modal,
     walletProfile,
     connectWallet,
+    connectInjectedWallet,
     signMessage,
     signPsbt,
     checkBitcoinBalance,
@@ -436,14 +457,14 @@ const BitcoinExclusiveAccess = () => {
       
       <div className="max-w-4xl mx-auto">
           <Header 
-          connectedAddress={activeWalletAddress}
+          connectedAddress={showPrivateSession ? authenticatedAddress : null}
           connectedWallet={connectedWallet}
           minimal={step === 'connect'}
           onDisconnect={handleManualDisconnect}
           onViewProfile={
-            step === 'profile-setup' || !activeWalletAddress
+            !showPrivateSession
               ? null
-              : () => handleOpenProfile(activeWalletAddress, 'social')
+              : () => handleOpenProfile(authenticatedAddress, 'social')
           }
         />
 
@@ -451,6 +472,8 @@ const BitcoinExclusiveAccess = () => {
           {step === 'connect' && (
             <ConnectStep 
               onConnect={handleConnect}
+              onConnectInjected={handleInjectedConnect}
+              injectedWallets={injectedWallets}
               loading={loading || isConnecting}
               error={error}
               verificationStep={verificationStep}
@@ -483,11 +506,26 @@ const BitcoinExclusiveAccess = () => {
               selectAutomaticDesktop={selectAutomaticDesktop}
               submitManualProof={submitManualProof}
               signPreparedPsbt={signPreparedPsbt}
+              connectLedgerUsb={connectLedgerUsb}
+              signPreparedPsbtWithLedger={signPreparedPsbtWithLedger}
+              ledgerAccount={ledgerAccount}
+              setLedgerAccount={setLedgerAccount}
+              ledgerStatus={ledgerStatus}
+              ledgerBusy={ledgerBusy}
+              ledgerReady={ledgerReady}
+              ledgerUsbAvailability={ledgerUsbAvailability}
+              connectTrezorUsb={connectTrezorUsb}
+              trezorAccount={trezorAccount}
+              setTrezorAccount={setTrezorAccount}
+              trezorStatus={trezorStatus}
+              trezorBusy={trezorBusy}
+              trezorUsbAvailability={trezorUsbAvailability}
               walletConnected={Boolean(connectedAddress)}
               canDirectSign={Boolean(walletProfile?.capabilities?.supportsPsbt)}
               connectDirectSigner={connectWallet}
-              openMobileBrowser={openMobileBrowser}
               mobileEntry={mobileEntry}
+              mobileDevice={mobileDevice}
+              walletInAppBrowser={walletInAppBrowser || (mobileDevice && injectedWallets.length > 0)}
               mobileHandoffUrl={mobileHandoffUrl}
               authMode={authMode}
               onPasswordLogin={handlePasswordLogin}
@@ -520,7 +558,7 @@ const BitcoinExclusiveAccess = () => {
               loading={loading}
               error={error}
               onUserClick={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'social')}
-              onOpenOwnProfile={() => handleOpenProfile(activeWalletAddress, 'social')}
+              onOpenOwnProfile={() => handleOpenProfile(authenticatedAddress, 'social')}
               onOpenGame={handleGameToPlay}
               onOpenCanvas={handleStartCanvas}
               onShowHistory={handleShowHistory}
@@ -535,7 +573,7 @@ const BitcoinExclusiveAccess = () => {
           {step === 'profile' && profileAddress && (
             <ProfileStep
               profileAddress={profileAddress}
-              currentAddress={activeWalletAddress}
+              currentAddress={authenticatedAddress}
               onBack={handleProfileBack}
               onOpenProfile={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'profile')}
               onToggleFollow={handleToggleFollow}

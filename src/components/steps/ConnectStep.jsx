@@ -17,6 +17,7 @@ import {
 import { getPersonaList, getPersona } from '../../lib/bitcoinAuth';
 import AuthProofPanel from './AuthProofPanel';
 import ConnectionMethodHelp from './ConnectionMethodHelp';
+import { copyToClipboard } from '../../lib/clipboard';
 
 const WALLET_TYPES = getPersonaList();
 
@@ -29,6 +30,8 @@ const walletTypeDetails = {
 
 const ConnectStep = ({
   onConnect,
+  onConnectInjected,
+  injectedWallets = [],
   loading,
   error,
   verificationStep = 'idle',
@@ -61,11 +64,26 @@ const ConnectStep = ({
   selectAutomaticDesktop,
   submitManualProof,
   signPreparedPsbt,
+  connectLedgerUsb,
+  signPreparedPsbtWithLedger,
+  ledgerAccount,
+  setLedgerAccount,
+  ledgerStatus,
+  ledgerBusy,
+  ledgerReady,
+  ledgerUsbAvailability,
+  connectTrezorUsb,
+  trezorAccount,
+  setTrezorAccount,
+  trezorStatus,
+  trezorBusy,
+  trezorUsbAvailability,
   walletConnected,
   canDirectSign,
   connectDirectSigner,
-  openMobileBrowser,
   mobileEntry,
+  mobileDevice = false,
+  walletInAppBrowser = false,
   mobileHandoffUrl,
   authMode,
   onPasswordLogin,
@@ -73,6 +91,7 @@ const ConnectStep = ({
   onUseWallet,
 }) => {
   const [showMobileLink, setShowMobileLink] = useState(false);
+  const [mobileLinkCopied, setMobileLinkCopied] = useState(false);
   const [accessMode, setAccessMode] = useState(mobileEntry ? 'wallet' : 'password');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
@@ -104,13 +123,17 @@ const ConnectStep = ({
           : '';
 
   const handleMobileConnect = async () => {
-    if (mobileEntry) {
-      await onConnect?.();
+    if (walletInAppBrowser && injectedWallets.length === 1) {
+      await onConnectInjected?.(injectedWallets[0].id);
       return;
     }
+    await onConnect?.();
+  };
 
-    const result = await openMobileBrowser?.();
-    if (result?.url && !result.success) setShowMobileLink(true);
+  const handleCopyMobileLink = async () => {
+    if (!await copyToClipboard(mobileHandoffUrl)) return;
+    setMobileLinkCopied(true);
+    setTimeout(() => setMobileLinkCopied(false), 1800);
   };
 
   const handlePasswordSubmit = async (event) => {
@@ -312,59 +335,104 @@ const ConnectStep = ({
             </div>
           )}
 
+          {verificationStep === 'signing' && mobileDevice && (
+            <p className="mt-3 rounded-xl bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-700">
+              Approve the signature in your wallet. If another app opens, return here manually after approval.
+            </p>
+          )}
+
           {authHint && !usesPortableProof && (
             <p className="mt-4 text-sm text-slate-500">{authHint}</p>
           )}
 
           {isBrowser && authMode === 'direct' && (
-            <button
-              type="button"
-              onClick={onConnect}
-              disabled={loading || Boolean(statusLabel)}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-bold text-white shadow-lg shadow-orange-500/20 transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Wallet className="h-5 w-5" />
-              Find a wallet
-              <ArrowRight className="h-5 w-5" />
-            </button>
-          )}
-
-          {isMobile && (
-            <div className="mt-6">
+            <div className="mt-6 grid gap-3">
+              {injectedWallets.length > 0 && (
+                <>
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
+                    Detected in this browser
+                  </p>
+                  {injectedWallets.map((wallet) => (
+                    <button
+                      key={wallet.id}
+                      type="button"
+                      onClick={() => onConnectInjected?.(wallet.id)}
+                      disabled={loading || Boolean(statusLabel)}
+                      className="flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      <Wallet className="h-4 w-4" />
+                      Connect with {wallet.name}
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    <span className="h-px flex-1 bg-slate-200" />
+                    Other wallets
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+                </>
+              )}
               <button
                 type="button"
-                onClick={handleMobileConnect}
+                onClick={onConnect}
                 disabled={loading || Boolean(statusLabel)}
                 className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-bold text-white shadow-lg shadow-orange-500/20 transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <Smartphone className="h-5 w-5" />
-                {mobileEntry ? 'Connect wallet' : 'Open on mobile'}
+                <Wallet className="h-5 w-5" />
+                {injectedWallets.length > 0 ? 'Find another wallet' : 'Find a wallet'}
                 <ArrowRight className="h-5 w-5" />
               </button>
+            </div>
+          )}
 
-              {!mobileEntry && (
+          {isMobile && (
+            <div className="mt-6 grid gap-3">
+              {mobileDevice ? (
+                <button
+                  type="button"
+                  onClick={handleMobileConnect}
+                  disabled={loading || Boolean(statusLabel)}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-bold text-white shadow-lg shadow-orange-500/20 transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Wallet className="h-5 w-5" />
+                  {walletInAppBrowser && injectedWallets.length === 1
+                    ? `Continue with ${injectedWallets[0].name}`
+                    : 'Find a wallet'}
+                  <ArrowRight className="h-5 w-5" />
+                </button>
+              ) : (
+                <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-900">
+                  Scan this QR code with your mobile wallet, or open the link below in your mobile browser.
+                </div>
+              )}
+
+              {mobileDevice && (
                 <button
                   type="button"
                   onClick={() => setShowMobileLink((value) => !value)}
-                  className="mt-3 w-full py-2 text-sm font-semibold text-slate-500 hover:text-slate-800"
+                  className="w-full py-2 text-sm font-semibold text-slate-500 hover:text-slate-800"
                 >
-                  {showMobileLink ? 'Hide QR code' : 'Use a QR code instead'}
+                  {showMobileLink ? 'Hide QR code and link' : 'Show QR code and copyable link'}
                 </button>
               )}
 
-              {!mobileEntry && showMobileLink && mobileHandoffUrl && (
-                <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center">
+              {(!mobileDevice || showMobileLink) && mobileHandoffUrl && (
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-center">
                   <div className="mx-auto w-fit rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
                     <QRCodeSVG value={mobileHandoffUrl} size={176} bgColor="#ffffff" fgColor="#0f172a" includeMargin />
                   </div>
                   <button
                     type="button"
-                    onClick={() => navigator.clipboard?.writeText(mobileHandoffUrl)}
-                    className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-slate-950"
+                    onClick={handleCopyMobileLink}
+                    className={`mt-4 inline-flex items-center gap-2 text-sm font-semibold ${mobileLinkCopied ? 'text-emerald-700' : 'text-slate-600 hover:text-slate-950'}`}
                   >
-                    <Copy className="h-4 w-4" />
-                    Copy link
+                    {mobileLinkCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {mobileLinkCopied ? 'Link copied' : 'Copy link'}
                   </button>
+                  {mobileDevice && (
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      Use this if your wallet cannot be opened from the wallet list. Paste the link into its in-app browser.
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -402,6 +470,20 @@ const ConnectStep = ({
               onConnectDirectSigner={connectDirectSigner}
               onSignPsbtDirect={signPreparedPsbt}
               isDirectSigning={verificationStep === 'signing'}
+              onConnectLedger={connectLedgerUsb}
+              onSignPsbtLedger={signPreparedPsbtWithLedger}
+              ledgerAccount={ledgerAccount}
+              onLedgerAccountChange={setLedgerAccount}
+              ledgerStatus={ledgerStatus}
+              ledgerBusy={ledgerBusy}
+              ledgerReady={ledgerReady}
+              ledgerUsbAvailability={ledgerUsbAvailability}
+              onConnectTrezor={connectTrezorUsb}
+              trezorAccount={trezorAccount}
+              onTrezorAccountChange={setTrezorAccount}
+              trezorStatus={trezorStatus}
+              trezorBusy={trezorBusy}
+              trezorUsbAvailability={trezorUsbAvailability}
             />
           )}
 
@@ -409,6 +491,8 @@ const ConnectStep = ({
             selectedPersonaId={selectedPersonaId}
             authMode={authMode}
             offlineProofFormat={offlineProofFormat}
+            mobileDevice={mobileDevice}
+            walletInAppBrowser={walletInAppBrowser || mobileEntry}
           />
 
           {error && (

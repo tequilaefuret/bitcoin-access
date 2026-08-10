@@ -28,6 +28,7 @@ for variable_name in \
   DEPLOYMENT_ENVIRONMENT \
   REACT_APP_SUPABASE_ANON_KEY \
   REACT_APP_WALLETCONNECT_PROJECT_ID \
+  REACT_APP_TREZOR_MANIFEST_EMAIL \
   APP_URL
 do
   require_variable "$variable_name"

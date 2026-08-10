@@ -9,10 +9,29 @@ import {
   signPsbtWithProvider,
 } from '../lib/bitcoinWalletProvider';
 import { normalizeBitcoinAddress } from '../lib/bitcoinAddress';
+import {
+  getInjectedBitcoinProviders,
+  selectBitcoinAccount,
+  subscribeToBitcoinProviderChanges,
+} from '../lib/injectedBitcoinProviders';
 
 // ✅ SINGLETON GLOBAL : Une seule instance du modal pour toute l'application
 let globalModalInstance = null;
 let globalModalInitializing = false;
+
+const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, reject) => {
+  const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  promise.then(
+    (value) => {
+      clearTimeout(timeout);
+      resolve(value);
+    },
+    (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    },
+  );
+});
 
 /**
  * Hook personnalisé pour gérer la connexion Bitcoin via Reown AppKit
@@ -26,8 +45,39 @@ export default function useReownWallet() {
   const [connectedAddress, setConnectedAddress] = useState(null);
   const [connectedWallet, setConnectedWallet] = useState(null);
   const [walletProfile, setWalletProfile] = useState(null);
-  
+  const [injectedWallets, setInjectedWallets] = useState([]);
+
   const hasCheckedConnection = useRef(false);
+  const injectedProviderRef = useRef(null);
+
+  useEffect(() => {
+    const refresh = () => {
+      const nextWallets = getInjectedBitcoinProviders().map(({ id, name }) => ({ id, name }));
+      setInjectedWallets((currentWallets) => {
+        const currentIds = currentWallets.map(({ id }) => id).join('|');
+        const nextIds = nextWallets.map(({ id }) => id).join('|');
+        return currentIds === nextIds ? currentWallets : nextWallets;
+      });
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+
+    refresh();
+    const timeouts = [500, 1500, 3000].map((delay) => setTimeout(refresh, delay));
+    const unsubscribeWalletStandard = subscribeToBitcoinProviderChanges(refresh);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('pageshow', refresh);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+
+    return () => {
+      timeouts.forEach(clearTimeout);
+      unsubscribeWalletStandard();
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('pageshow', refresh);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, []);
 
   /**
    * Initialise le modal Reown AppKit (SINGLETON)
@@ -53,10 +103,10 @@ export default function useReownWallet() {
 
       // ✅ Première initialisation
       globalModalInitializing = true;
-      
+
       try {
         const projectId = process.env.REACT_APP_WALLETCONNECT_PROJECT_ID;
-        
+
         if (!projectId) {
           setError('Configuration manquante (Project ID)');
           globalModalInitializing = false;
@@ -97,7 +147,7 @@ export default function useReownWallet() {
         appKitModal.subscribeState((state) => {
           if (!state.open && state.selectedNetworkId && !hasCheckedConnection.current) {
             hasCheckedConnection.current = true;
-            
+
             setTimeout(async () => {
               try {
                 const address = appKitModal.getAddress();
@@ -107,7 +157,7 @@ export default function useReownWallet() {
                 
                 try {
                   provider = await appKitModal.getWalletProvider();
-                  
+
                 } catch {
                 }
 
@@ -115,6 +165,7 @@ export default function useReownWallet() {
                 // Ne pas rappeler getAddresses ici: certains wallets refusent deux requêtes concurrentes.
                 const finalAddress = normalizeBitcoinAddress(address || caipAddress);
                 if (finalAddress) {
+                  injectedProviderRef.current = null;
                   const brand = detectWalletBrand(provider);
                   const capabilities = detectWalletCapabilities(provider);
 
@@ -131,7 +182,7 @@ export default function useReownWallet() {
                 }
               } catch {
               }
-              
+
               setTimeout(() => {
                 hasCheckedConnection.current = false;
               }, 3000);
@@ -143,7 +194,7 @@ export default function useReownWallet() {
         globalModalInstance = appKitModal;
         setModal(appKitModal);
         globalModalInitializing = false;
-        
+
       } catch {
         setError('Impossible d\'initialiser WalletConnect');
         globalModalInitializing = false;
@@ -168,6 +219,7 @@ export default function useReownWallet() {
       }
 
       hasCheckedConnection.current = false;
+      injectedProviderRef.current = null;
       await modal.open();
       setIsConnecting(false);
       return null;
@@ -186,25 +238,31 @@ export default function useReownWallet() {
     setError('');
 
     try {
-      if (!modal) throw new Error('Wallet non connecté');
+      if (!modal && !injectedProviderRef.current) throw new Error('Wallet non connecté');
 
       const authRequest = options.authRequest;
       if (!authRequest?.requestId || !authRequest?.challenge) {
         throw new Error('Challenge serveur manquant. Relancez la connexion.');
       }
       const message = typeof options.message === 'string' ? options.message : authRequest.challenge;
-      // Laisser la modale se refermer avant d'ouvrir la demande de signature.
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
       const addressNetwork = address.startsWith('bc1') || address.startsWith('1') || address.startsWith('3') ? 'mainnet' : 'unknown';
       if (addressNetwork !== 'mainnet') {
         throw new Error('Mauvaise adresse Bitcoin. Seules les adresses mainnet sont acceptées.');
       }
 
-      const provider = await modal.getWalletProvider();
+      const provider = injectedProviderRef.current || await modal.getWalletProvider();
       if (!provider) throw new Error('Provider non disponible');
 
-      const signature = await signMessageWithProvider(provider, address, message);
+      if (!injectedProviderRef.current && typeof modal.isOpen === 'function' && modal.isOpen()) {
+        await modal.close();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const signature = await withTimeout(
+        signMessageWithProvider(provider, address, message),
+        120_000,
+        'No signature response was received. Reopen the wallet and try again.',
+      );
 
       if (!signature) throw new Error('Signature non reçue');
 
@@ -232,13 +290,39 @@ export default function useReownWallet() {
     }
   }, [modal]);
 
+  const connectInjectedWallet = useCallback(async (walletId) => {
+    setError('');
+    setIsConnecting(true);
+
+    try {
+      const wallet = getInjectedBitcoinProviders().find((candidate) => candidate.id === walletId);
+      if (!wallet) throw new Error('Installed Bitcoin wallet not found.');
+
+      const account = selectBitcoinAccount(await wallet.provider.requestAccounts());
+      const finalAddress = normalizeBitcoinAddress(account?.address);
+      if (!finalAddress) throw new Error('The wallet did not provide a Bitcoin payment address.');
+
+      injectedProviderRef.current = wallet.provider;
+      setConnectedAddress(finalAddress);
+      setConnectedWallet(wallet.name);
+      setWalletProfile({
+        brand: detectWalletBrand(wallet.provider),
+        name: wallet.name,
+        capabilities: detectWalletCapabilities(wallet.provider),
+      });
+      return finalAddress;
+    } finally {
+      setIsConnecting(false);
+    }
+  }, []);
+
   const signPsbt = useCallback(async (address, psbtBase64) => {
     setError('');
-    if (!modal) throw new Error('Wallet not connected');
+    if (!modal && !injectedProviderRef.current) throw new Error('Wallet not connected');
     if (!address || !psbtBase64) throw new Error('Address and PSBT are required');
 
     try {
-      const provider = await modal.getWalletProvider();
+      const provider = injectedProviderRef.current || await modal.getWalletProvider();
       if (!provider) throw new Error('Wallet provider unavailable');
       return await signPsbtWithProvider(provider, address, psbtBase64);
     } catch (signingError) {
@@ -252,6 +336,10 @@ export default function useReownWallet() {
    * Déconnecte le wallet
    */
   const disconnectWallet = useCallback(async () => {
+    injectedProviderRef.current = null;
+    setConnectedAddress(null);
+    setConnectedWallet(null);
+    setWalletProfile(null);
     if (modal) {
       try {
         await modal.disconnect();
@@ -269,11 +357,11 @@ export default function useReownWallet() {
    */
   const refreshConnectedAddress = useCallback(() => {
     if (!modal) return null;
-    
+
     try {
       const address = modal.getAddress();
       const caipAddress = modal.getCaipAddress();
-      
+
       if (address || caipAddress) {
         const finalAddress = address || (caipAddress ? caipAddress.split(':').pop() : null);
         setConnectedAddress(finalAddress);
@@ -291,12 +379,14 @@ export default function useReownWallet() {
       }
     } catch {
     }
-    
+
     return null;
   }, [modal]);
 
   return {
     connectWallet,
+    connectInjectedWallet,
+    injectedWallets,
     signMessage,
     signPsbt,
     disconnectWallet,
