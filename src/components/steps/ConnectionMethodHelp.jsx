@@ -134,11 +134,11 @@ const GUIDES = {
     title: 'Jade QR',
     steps: [
       'Start and unlock an air-gapped Jade session, then open Options, Wallet, Export Xpub.',
-      'Keep Native SegWit and Singlesig selected. Scan Jade’s animated crypto-account QR with Danaus; the public address is derived automatically.',
+      'Keep Native SegWit and Singlesig selected. Scan Jade’s animated crypto-account QR with Danaus; keep the whole white border visible and use camera zoom if offered. The public address is derived automatically.',
       'Create the signing request, open Scan QR on Jade and keep it pointed at Danaus’s animated QR until progress completes.',
       'Verify the login message and path on Jade, approve it, then scan Jade’s signature QR with Danaus and select Verify and sign in.',
     ],
-    note: 'The imported xpub is public and is accepted only for Bitcoin mainnet Native SegWit singlesig. Danaus never scans a SeedQR or private key. This proof is a signed message—not a PSBT—and cannot move bitcoin.',
+    note: 'If live scanning remains at 0%, use Photograph one QR frame, wait for Jade’s animation to change, and repeat. The imported xpub is public and accepted only for Bitcoin mainnet Native SegWit singlesig. Danaus never scans a SeedQR or private key.',
   },
   multisig: {
     id: 'multisig-psbt',

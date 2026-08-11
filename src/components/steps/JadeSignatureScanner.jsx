@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Camera, Loader, ScanLine, X } from 'lucide-react';
+import { startQrCamera } from '../../lib/qrCamera';
 
 const JadeSignatureScanner = ({ onDecoded, onClose }) => {
   const videoRef = useRef(null);
@@ -30,10 +31,9 @@ const JadeSignatureScanner = ({ onDecoded, onClose }) => {
     let cancelled = false;
     const start = async () => {
       try {
-        const { BrowserQRCodeReader } = await import('@zxing/browser');
-        const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 100 });
-        const controls = await reader.decodeFromVideoDevice(undefined, videoRef.current, (result) => {
-          if (result?.getText) acceptValue(result.getText());
+        const controls = await startQrCamera({
+          video: videoRef.current,
+          onText: acceptValue,
         });
         if (cancelled) controls.stop();
         else controlsRef.current = controls;
@@ -91,4 +91,3 @@ const JadeSignatureScanner = ({ onDecoded, onClose }) => {
 };
 
 export default JadeSignatureScanner;
-
