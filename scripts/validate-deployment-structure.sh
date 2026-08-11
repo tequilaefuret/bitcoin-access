@@ -37,12 +37,28 @@ for removed_function in social-like verify-bitcoin-signature; do
     || fail "obsolete Edge Function restored: $removed_function"
 done
 
-if rg -n -i 'isTestMode|danaus_demo|test_balance|Preview without wallet' src \
-  -g '!**/*.test.*'; then
+search_frontend() {
+  pattern=$1
+  case_sensitive=${2:-true}
+
+  if command -v rg >/dev/null 2>&1; then
+    if [ "$case_sensitive" = 'true' ]; then
+      rg -n "$pattern" src -g '!**/*.test.*'
+    else
+      rg -n -i "$pattern" src -g '!**/*.test.*'
+    fi
+  elif [ "$case_sensitive" = 'true' ]; then
+    grep -RInE --exclude='*.test.*' "$pattern" src
+  else
+    grep -RInEi --exclude='*.test.*' "$pattern" src
+  fi
+}
+
+if search_frontend 'isTestMode|danaus_demo|test_balance|Preview without wallet' false; then
   fail 'demo-mode code found in the production frontend'
 fi
 
-if rg -n 'console\.(log|debug|info|warn|error)' src -g '!**/*.test.*'; then
+if search_frontend 'console\.(log|debug|info|warn|error)'; then
   fail 'browser console logging found'
 fi
 

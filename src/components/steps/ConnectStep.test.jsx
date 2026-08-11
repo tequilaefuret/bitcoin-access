@@ -131,7 +131,7 @@ test('offers the direct Trezor journey for a hardware wallet', () => {
   expect(screen.getByRole('heading', { name: /direct connection/i })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: /^trezor$/i })).toBeInTheDocument();
   expect(screen.getByText(/advanced address selection/i).closest('details')).not.toHaveAttribute('open');
-  fireEvent.click(screen.getByRole('button', { name: /connect trezor and sign in/i }));
+  fireEvent.click(screen.getByRole('button', { name: /connect trezor/i }));
 
   expect(connectTrezorUsb).toHaveBeenCalledTimes(1);
   expect(screen.getByText(/never enter your seed or approve a real transaction/i)).toBeInTheDocument();
@@ -155,7 +155,7 @@ test('keeps the direct Ledger journey to one automatic action', () => {
   expect(screen.getByText(/advanced account selection/i).closest('details')).not.toHaveAttribute('open');
   expect(screen.queryByText(/import wallet policy/i)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /sign directly/i })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /connect ledger and sign in/i }));
+  fireEvent.click(screen.getByRole('button', { name: /connect ledger/i }));
 
   expect(connectLedgerUsb).toHaveBeenCalledTimes(1);
 });
