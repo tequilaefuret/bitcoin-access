@@ -372,6 +372,31 @@ available through the descriptor, message, QR and PSBT-file fallbacks. The
 direct path remains labelled beta until the full journey has been tested on a
 physical supported Trezor; automated tests cannot emulate its secure screen.
 
+### Jade companion and QR journey
+
+The Hardware screen identifies Blockstream Jade alongside Ledger and Trezor,
+but deliberately does not present Jade as a direct browser USB integration.
+Jade's normal PIN unlock requires the companion to relay an encrypted exchange
+with its blind PIN oracle, and this project does not depend on a maintained
+official browser SDK that owns that protocol end to end.
+
+The Jade card therefore exposes two existing, bounded proof transports:
+
+1. `Use companion app` opens the message-signature journey. Copy the exact
+   short-lived challenge into the Blockstream app account backed by Jade,
+   approve it on Jade, and paste only the returned signature.
+2. `Jade Plus QR / PSBT` opens the public-descriptor and BIP-322 PSBT journey.
+   Compare the derived address on Jade, scan the animated `crypto-psbt` QR (or
+   transfer the `.psbt` file), approve the zero-value proof, and scan or import
+   the signed PSBT.
+
+The second path is intended for Jade Plus QR mode; other Jade models can use a
+compatible companion/coordinator and PSBT file transfer. The interface never
+asks for a PIN, recovery phrase, SeedQR, private descriptor or private key. A
+direct Jade USB button should only be added later around a maintained,
+reviewed integration and after testing the complete unlock, address-display,
+message-signing, cancellation and timeout journey on physical devices.
+
 Challenge address validation decodes Base58, SegWit v0 Bech32 and Taproot v1
 Bech32m directly. It deliberately avoids `bitcoinjs-lib`'s
 `address.toOutputScript()` shortcut because Taproot script construction requires

@@ -31,6 +31,13 @@ const LedgerMark = ({ className = 'h-5 w-5' }) => (
   </svg>
 );
 
+const JadeMark = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round">
+    <path d="m12 2.75 7.5 5.4-2.85 9.1L12 21.25l-4.65-4-2.85-9.1 7.5-5.4Z" />
+    <path d="m4.5 8.15 7.5 3.7 7.5-3.7M12 2.75v9.1m-4.65 5.4L12 11.85l4.65 5.4" />
+  </svg>
+);
+
 const QrLoading = () => (
   <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-8 text-sm font-semibold text-slate-600">
     <Loader className="h-4 w-4 animate-spin" />
@@ -204,7 +211,7 @@ const AuthProofPanel = ({
             <section className="grid min-w-0 gap-3 rounded-2xl border border-orange-200 bg-orange-50/70 p-4">
               <div>
                 <h3 className="text-sm font-bold text-slate-950">Direct connection</h3>
-                <p className="mt-1 text-xs leading-5 text-slate-600">Connect your hardware wallet and approve the login message on its screen.</p>
+                <p className="mt-1 text-xs leading-5 text-slate-600">Connect directly when official browser support is available, or use Jade's secure companion or QR handoff.</p>
               </div>
 
               <div className="grid min-w-0 gap-3 rounded-xl border border-slate-200 bg-white p-4">
@@ -243,7 +250,7 @@ const AuthProofPanel = ({
 
                 <button type="button" onClick={onConnectTrezor} disabled={!trezorUsbAvailability.supported || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                   {trezorBusy ? <Loader className="h-4 w-4 animate-spin" /> : <TrezorMark className="h-4 w-4" />}
-                  {trezorBusy ? 'Waiting for Trezor...' : 'Connect Trezor and sign in'}
+                  {trezorBusy ? 'Waiting for Trezor...' : 'Connect Trezor'}
                 </button>
                 {trezorStatus && <p className="text-xs font-medium text-blue-700">{trezorStatus}</p>}
                 {!trezorUsbAvailability.supported && <p className="text-xs leading-5 text-slate-500">{trezorUsbAvailability.reason}</p>}
@@ -270,10 +277,34 @@ const AuthProofPanel = ({
                 </details>
                 <button type="button" onClick={onConnectLedger} disabled={!ledgerUsbAvailability.supported || ledgerBusy || trezorBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                   {ledgerBusy ? <Loader className="h-4 w-4 animate-spin" /> : <LedgerMark className="h-4 w-4" />}
-                  {ledgerBusy ? 'Continue on Ledger...' : 'Connect Ledger and sign in'}
+                  {ledgerBusy ? 'Continue on Ledger...' : 'Connect Ledger'}
                 </button>
                 {ledgerStatus && <p className="text-xs font-medium text-blue-700">{ledgerStatus}</p>}
                 {!ledgerUsbAvailability.supported && <p className="text-xs leading-5 text-slate-500">{ledgerUsbAvailability.reason}</p>}
+              </div>
+
+              <div className="grid min-w-0 gap-3 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="shrink-0 rounded-xl bg-emerald-700 p-2 text-white"><JadeMark /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-sm font-bold text-slate-950">Jade</h4>
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Companion / QR</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">Sign with the Blockstream companion app, or keep a Jade Plus air-gapped with an animated PSBT QR.</p>
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <button type="button" onClick={() => selectHardwareMethod('message')} disabled={trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                    <JadeMark className="h-4 w-4" />
+                    Use companion app
+                  </button>
+                  <button type="button" onClick={() => selectHardwareMethod('psbt')} disabled={trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+                    <QrCode className="h-4 w-4" />
+                    Jade Plus QR / PSBT
+                  </button>
+                </div>
+                <p className="text-xs leading-5 text-slate-500">Jade is not given a direct USB button until a maintained browser integration can securely handle its PIN-oracle protocol.</p>
               </div>
 
               <p className="text-xs leading-5 text-slate-500">Never enter your seed or approve a real transaction.</p>

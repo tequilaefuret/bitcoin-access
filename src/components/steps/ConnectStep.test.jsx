@@ -159,3 +159,25 @@ test('keeps the direct Ledger journey to one automatic action', () => {
 
   expect(connectLedgerUsb).toHaveBeenCalledTimes(1);
 });
+
+test('offers Jade through the secure companion and QR proof journeys', () => {
+  const selectOfflineProofFormat = jest.fn();
+  renderConnectStep({
+    selectedPersonaId: 'cold_single_seed',
+    authMode: 'offline',
+    offlineProofFormat: 'psbt',
+    descriptorInput: '',
+    descriptorBranch: 0,
+    descriptorIndex: 0,
+    selectOfflineProofFormat,
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+
+  expect(screen.getByRole('heading', { name: /^jade$/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /use companion app/i })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /jade plus qr \/ psbt/i }));
+
+  expect(selectOfflineProofFormat).toHaveBeenCalledWith('psbt');
+  expect(screen.getByRole('heading', { name: /import wallet policy/i })).toBeInTheDocument();
+});
