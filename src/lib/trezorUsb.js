@@ -4,6 +4,7 @@ import {
   validateTrezorAddress,
   validateTrezorMessageSignature,
 } from './trezorUsbValidation';
+import { getMobilePlatform } from './trezorMobile';
 
 const REQUEST_TIMEOUT_MS = 180000;
 const LOCAL_MANIFEST_EMAIL = 'developer@bitcoin-access.local';
@@ -29,6 +30,7 @@ const getManifest = () => {
 
   return {
     email,
+    appName: 'Danaus',
     appUrl: window.location.origin,
   };
 };
@@ -81,6 +83,13 @@ export function getTrezorUsbAvailability() {
   }
   if (!window.isSecureContext) {
     return { supported: false, reason: 'Direct Trezor connection requires HTTPS or localhost.' };
+  }
+  const mobilePlatform = getMobilePlatform(navigator);
+  if (mobilePlatform.ios) {
+    return { supported: false, reason: 'Continue with the Trezor Suite mobile app.' };
+  }
+  if (mobilePlatform.android && !navigator.usb) {
+    return { supported: false, reason: 'Use Trezor Suite, or Chrome with a compatible data cable.' };
   }
   if (/^((?!chrome|android).)*safari/i.test(navigator.userAgent || '')) {
     return { supported: false, reason: 'Use Chrome, Edge, Brave, or Firefox with Trezor Bridge.' };

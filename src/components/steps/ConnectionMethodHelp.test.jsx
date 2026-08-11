@@ -33,6 +33,15 @@ test('selects specific instructions for hardware message signing and multisig', 
   }).id).toBe('multisig-psbt');
 });
 
+test('selects wallet-specific hardware instructions', () => {
+  expect(getConnectionGuide({ guideId: 'hardware-trezor-direct' }).title).toBe('Trezor');
+  expect(getConnectionGuide({ guideId: 'hardware-trezor-suite' }).steps.join(' ')).toMatch(/Trezor Suite mobile app/);
+  expect(getConnectionGuide({ guideId: 'hardware-ledger-direct' }).steps.join(' ')).toMatch(/open the Bitcoin app/);
+  expect(getConnectionGuide({ guideId: 'hardware-ledger-wallet' }).steps.join(' ')).toMatch(/Ledger Wallet/);
+  expect(getConnectionGuide({ guideId: 'hardware-jade-usb' }).steps.join(' ')).toMatch(/serial port/);
+  expect(getConnectionGuide({ guideId: 'hardware-jade-qr' }).steps.join(' ')).toMatch(/Scan QR/);
+});
+
 test('selects a mobile guide based on the browser context', () => {
   expect(getConnectionGuide({
     selectedPersonaId: 'mobile_hot_wallet',

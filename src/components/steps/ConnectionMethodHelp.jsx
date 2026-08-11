@@ -74,6 +74,72 @@ const GUIDES = {
     ],
     note: 'This option depends on the companion software exposing a Bitcoin message-signing feature.',
   },
+  hardwareTrezorDirect: {
+    id: 'hardware-trezor-direct',
+    title: 'Trezor',
+    steps: [
+      'Connect and unlock your Trezor, then select Connect Trezor.',
+      'Allow the official Trezor window to access the device and confirm the displayed Bitcoin address.',
+      'Review and approve the login message on the Trezor screen.',
+      'Return to Danaus if needed. Ownership verification and sign-in complete automatically.',
+    ],
+    note: 'You are signing a login message, not sending bitcoin. Never enter your wallet backup on this site.',
+  },
+  hardwareTrezorSuite: {
+    id: 'hardware-trezor-suite',
+    title: 'Trezor',
+    steps: [
+      'Connect and unlock your Trezor in the official Trezor Suite mobile app.',
+      'Return here and select Connect Trezor to continue in Trezor Suite.',
+      'Confirm the Bitcoin address, then review and approve the login message.',
+      'Return to Danaus if needed. Ownership verification and sign-in complete automatically.',
+    ],
+    note: 'On iPhone, hardware signing requires a Bluetooth-compatible Trezor. Never enter your wallet backup on this site.',
+  },
+  hardwareLedgerDirect: {
+    id: 'hardware-ledger-direct',
+    title: 'Ledger',
+    steps: [
+      'Connect and unlock your Ledger, open the Bitcoin app, then select Connect Ledger.',
+      'Choose the device in the browser permission window.',
+      'Verify the Bitcoin address and approve the login message on the Ledger screen.',
+      'Keep the page open while Danaus verifies the signature and signs you in automatically.',
+    ],
+    note: 'No bitcoin is sent and no network fee is charged. Never enter your recovery phrase on this site.',
+  },
+  hardwareLedgerWallet: {
+    id: 'hardware-ledger-wallet',
+    title: 'Ledger',
+    steps: [
+      'Select Connect Ledger, then choose Ledger Wallet in the secure wallet selector.',
+      'Approve the connection request in Ledger Wallet.',
+      'Review and approve the Danaus login message with your Ledger.',
+      'Return to this browser if needed. Sign-in completes after the signature is verified.',
+    ],
+    note: 'The mobile journey uses Ledger Wallet because direct browser access to the device is unavailable on mobile.',
+  },
+  hardwareJadeUsb: {
+    id: 'hardware-jade-usb',
+    title: 'Jade by USB',
+    steps: [
+      'Connect and unlock Jade, then select Connect Jade by USB and choose its serial port in the browser window.',
+      'If Jade is locked, enter the PIN only on Jade. Danaus only relays the encrypted PIN-server message.',
+      'Verify the Native SegWit address and the login message on the Jade screen, then approve both.',
+      'Keep the page open while the signature is verified and sign-in completes automatically.',
+    ],
+    note: 'No transaction is created. Danaus never asks for the PIN, seed or wallet backup. Close other wallet apps first so the USB serial port is available.',
+  },
+  hardwareJadeQr: {
+    id: 'hardware-jade-qr',
+    title: 'Jade QR',
+    steps: [
+      'Enter the Native SegWit address matching the selected account, chain and index, then create the Jade QR request.',
+      'Unlock a camera-equipped Jade, open Scan QR and scan the static signmessage code.',
+      'Verify the login message and derivation path on Jade, approve it, then display Jade’s signature QR.',
+      'Scan that response with Danaus and select Verify and sign in.',
+    ],
+    note: 'This air-gapped path uses Jade’s native message-signing QR—not a PSBT—and cannot move bitcoin. The proof fails if the entered address does not match the selected Jade path.',
+  },
   multisig: {
     id: 'multisig-psbt',
     title: 'Multisig wallet',
@@ -88,12 +154,17 @@ const GUIDES = {
 };
 
 export function getConnectionGuide({
+  guideId,
   selectedPersonaId,
   authMode,
   offlineProofFormat,
   mobileDevice = false,
   walletInAppBrowser = false,
 }) {
+  if (guideId) {
+    const explicitGuide = Object.values(GUIDES).find((guide) => guide.id === guideId);
+    if (explicitGuide) return explicitGuide;
+  }
   if (selectedPersonaId === 'mobile_hot_wallet') {
     if (!mobileDevice) return GUIDES.mobileDesktop;
     return walletInAppBrowser ? GUIDES.mobileInApp : GUIDES.mobileBrowser;
@@ -106,14 +177,14 @@ export function getConnectionGuide({
   return GUIDES.browserAutomatic;
 }
 
-const ConnectionMethodHelp = (props) => {
+const ConnectionMethodHelp = ({ compact = false, ...props }) => {
   const guide = getConnectionGuide(props);
 
   return (
     <details
       key={guide.id}
       data-testid="connection-method-help"
-      className="group mt-5 overflow-hidden rounded-2xl border border-slate-200 bg-white"
+      className={`group overflow-hidden border border-slate-200 bg-white ${compact ? 'mt-1 rounded-xl' : 'mt-5 rounded-2xl'}`}
     >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5 text-sm font-semibold text-slate-700 marker:hidden hover:bg-slate-50">
         <span className="inline-flex min-w-0 items-center gap-2">

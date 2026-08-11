@@ -10,12 +10,21 @@ import {
 } from '../lib/bitcoinAuth';
 import { normalizeBitcoinAddress } from '../lib/bitcoinAddress';
 import { getInjectedBitcoinProviders } from '../lib/injectedBitcoinProviders';
+import {
+  buildTrezorCallbackUrl,
+  buildTrezorSuiteRequestUrl,
+  createTrezorHandoffState,
+  getMobilePlatform,
+  getTrezorMobileAvailability,
+  isTrezorHandoffFresh,
+  parseTrezorSuiteCallback,
+  TREZOR_MOBILE_STORAGE_KEY,
+} from '../lib/trezorMobile';
 
 const DEFAULT_ERROR = 'Unable to connect the wallet';
 
 const isMobileDevice = () => {
-  if (typeof navigator === 'undefined') return false;
-  return /Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent || '');
+  return getMobilePlatform().mobile;
 };
 
 const isWalletInAppBrowser = () => {
@@ -25,6 +34,8 @@ const isWalletInAppBrowser = () => {
 
 export default function useWalletAuthFlow({
   modal,
+  connectedWallet,
+  disconnectWallet,
   walletProfile,
   connectWallet,
   connectInjectedWallet,
@@ -78,7 +89,53 @@ export default function useWalletAuthFlow({
   const [trezorAccount, setTrezorAccount] = useState(0);
   const [trezorStatus, setTrezorStatus] = useState('');
   const [trezorBusy, setTrezorBusy] = useState(false);
+  const [jadeUsbModule, setJadeUsbModule] = useState(null);
+  const [jadeAccount, setJadeAccount] = useState(0);
+  const [jadeStatus, setJadeStatus] = useState('');
+  const [jadeBusy, setJadeBusy] = useState(false);
+  const [jadeQrPayload, setJadeQrPayload] = useState('');
+  const [jadeQrPath, setJadeQrPath] = useState('');
   const connectAttemptRef = useRef({ id: 0, interval: null });
+  const trezorCallbackHandledRef = useRef(false);
+
+  const directLedgerAvailability = ledgerUsbModule?.getLedgerUsbAvailability?.() || {
+    supported: false,
+    reason: 'Loading direct Ledger support...',
+  };
+  const directTrezorAvailability = trezorUsbModule?.getTrezorUsbAvailability?.() || {
+    supported: false,
+    reason: 'Loading direct Trezor support...',
+  };
+  const jadeUsbAvailability = jadeUsbModule?.getJadeUsbAvailability?.() || {
+    supported: false,
+    reason: 'Loading direct Jade support...',
+  };
+  const mobileTrezorAvailability = mobileDevice
+    ? getTrezorMobileAvailability()
+    : null;
+  const ledgerConnectionAvailability = mobileDevice
+    ? {
+      supported: Boolean(modal),
+      mode: 'wallet-app',
+      actionLabel: 'Connect Ledger',
+      reason: modal ? 'Continue securely through the wallet selector.' : 'Loading the secure wallet selector...',
+    }
+    : {
+      ...directLedgerAvailability,
+      mode: 'direct',
+      actionLabel: 'Connect Ledger',
+    };
+  const trezorConnectionAvailability = mobileTrezorAvailability?.mode === 'direct-cable'
+    ? {
+      ...directTrezorAvailability,
+      mode: 'direct-cable',
+      actionLabel: 'Connect Trezor',
+    }
+    : mobileTrezorAvailability || {
+      ...directTrezorAvailability,
+      mode: 'direct',
+      actionLabel: 'Connect Trezor',
+    };
 
   useEffect(() => {
     let active = true;
@@ -87,6 +144,17 @@ export default function useWalletAuthFlow({
       if (active) setLedgerUsbModule(module);
     }).catch(() => {
       if (active) setLedgerStatus('Direct Ledger tools could not be loaded. Use a message, QR or PSBT file.');
+    });
+    return () => { active = false; };
+  }, [selectedPersonaId]);
+
+  useEffect(() => {
+    let active = true;
+    if (selectedPersonaId !== 'cold_single_seed') return undefined;
+    import('../lib/jadeUsb').then((module) => {
+      if (active) setJadeUsbModule(module);
+    }).catch(() => {
+      if (active) setJadeStatus('Direct Jade tools could not be loaded. Use the Jade QR option instead.');
     });
     return () => { active = false; };
   }, [selectedPersonaId]);
@@ -170,6 +238,8 @@ export default function useWalletAuthFlow({
     setManualSignature('');
     setSignedPsbt('');
     setAuthHint('');
+    setJadeQrPayload('');
+    setJadeQrPath('');
   }, []);
 
   const setDescriptorInput = useCallback((value) => {
@@ -185,6 +255,10 @@ export default function useWalletAuthFlow({
   useEffect(() => {
     setTrezorStatus('');
   }, [descriptorBranch, descriptorIndex, trezorAccount]);
+
+  useEffect(() => {
+    setJadeStatus('');
+  }, [descriptorBranch, descriptorIndex, jadeAccount]);
 
   const importDescriptor = useCallback(async (value = descriptorInput) => {
     try {
@@ -372,6 +446,174 @@ export default function useWalletAuthFlow({
     signMessage,
   ]);
 
+  const openTrezorSuiteRequest = useCallback(({ method, params, requestId, state }) => {
+    if (typeof window === 'undefined') throw new Error('Trezor Suite handoff requires a browser.');
+    const callbackUrl = buildTrezorCallbackUrl({
+      origin: window.location.origin,
+      pathname: window.location.pathname,
+      requestId,
+      state,
+    });
+    const handoffUrl = buildTrezorSuiteRequestUrl({ method, params, callbackUrl });
+    window.location.assign(handoffUrl);
+  }, []);
+
+  const connectTrezorMobile = useCallback(async () => {
+    if (typeof window === 'undefined') return null;
+
+    try {
+      setError('');
+      clearProofState();
+      setTrezorBusy(true);
+      setVerificationStep('connecting');
+      setSelectedPersonaId('cold_single_seed');
+      const { buildTrezorPath } = await import('../lib/trezorUsbValidation');
+      const path = buildTrezorPath({
+        account: Number(trezorAccount),
+        branch: Number(descriptorBranch),
+        index: Number(descriptorIndex),
+      });
+      const state = createTrezorHandoffState();
+      localStorage.setItem(TREZOR_MOBILE_STORAGE_KEY, JSON.stringify({
+        createdAt: Date.now(),
+        path,
+        stage: 'address',
+        state,
+      }));
+      setTrezorStatus('Opening Trezor Suite to confirm your Bitcoin address.');
+      openTrezorSuiteRequest({
+        method: 'getAddress',
+        params: { coin: 'btc', path, showOnTrezor: true },
+        requestId: 1,
+        state,
+      });
+      return null;
+    } catch (mobileError) {
+      localStorage.removeItem(TREZOR_MOBILE_STORAGE_KEY);
+      setTrezorBusy(false);
+      setVerificationStep('idle');
+      setTrezorStatus('');
+      setError(mobileError.message || 'Unable to open Trezor Suite.');
+      return null;
+    }
+  }, [
+    clearProofState,
+    descriptorBranch,
+    descriptorIndex,
+    openTrezorSuiteRequest,
+    setError,
+    trezorAccount,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || trezorCallbackHandledRef.current) return undefined;
+
+    let callback;
+    try {
+      callback = parseTrezorSuiteCallback(window.location.href);
+    } catch (callbackError) {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('trezor_state');
+      cleanUrl.searchParams.delete('id');
+      cleanUrl.searchParams.delete('response');
+      window.history.replaceState({}, document.title, cleanUrl.toString());
+      localStorage.removeItem(TREZOR_MOBILE_STORAGE_KEY);
+      setError(callbackError.message || 'Invalid Trezor Suite response.');
+      return undefined;
+    }
+    if (!callback) return undefined;
+
+    trezorCallbackHandledRef.current = true;
+    const cleanUrl = new URL(window.location.href);
+    cleanUrl.searchParams.delete('trezor_state');
+    cleanUrl.searchParams.delete('id');
+    cleanUrl.searchParams.delete('response');
+    window.history.replaceState({}, document.title, cleanUrl.toString());
+
+    const resume = async () => {
+      try {
+        const pending = JSON.parse(localStorage.getItem(TREZOR_MOBILE_STORAGE_KEY) || 'null');
+        if (!isTrezorHandoffFresh(pending) || pending.state !== callback.state) {
+          throw new Error('This Trezor Suite request is missing or expired. Start again.');
+        }
+
+        setSelectedPersonaId('cold_single_seed');
+        setAuthMode('direct');
+        setTrezorBusy(true);
+        setVerificationStep('connecting');
+        const {
+          validateTrezorAddress,
+          validateTrezorMessageSignature,
+        } = await import('../lib/trezorUsbValidation');
+
+        if (callback.requestId === 1 && pending.stage === 'address') {
+          const address = validateTrezorAddress(callback.response.payload?.address);
+          setManualAddress(address);
+          setTrezorStatus('Address received. Preparing the secure login message.');
+          const request = await prepareAuthRequest(address, {
+            personaId: 'cold_single_seed',
+            methodId: 'direct-signature',
+            walletName: 'Trezor Suite',
+          });
+          localStorage.setItem(TREZOR_MOBILE_STORAGE_KEY, JSON.stringify({
+            ...pending,
+            address,
+            authRequest: request,
+            stage: 'signature',
+          }));
+          setVerificationStep('signing');
+          setTrezorStatus('Opening Trezor Suite to approve the login message.');
+          openTrezorSuiteRequest({
+            method: 'signMessage',
+            params: {
+              coin: 'btc',
+              hex: false,
+              message: request.challenge,
+              path: pending.path,
+            },
+            requestId: 2,
+            state: pending.state,
+          });
+          return;
+        }
+
+        if (callback.requestId !== 2 || pending.stage !== 'signature' || !pending.authRequest) {
+          throw new Error('The Trezor Suite response does not match the expected authentication step.');
+        }
+        const expiresAt = Date.parse(pending.authRequest.expiresAt || pending.authRequest.expires_at || '');
+        if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+          throw new Error('The authentication request expired. Start the Trezor connection again.');
+        }
+        const signature = validateTrezorMessageSignature({
+          expectedAddress: pending.address,
+          responseAddress: callback.response.payload?.address,
+          signature: callback.response.payload?.signature,
+        });
+        setTrezorStatus('Signature received. Verifying ownership.');
+        await finalizeWalletConnection(pending.address, {
+          personaId: 'cold_single_seed',
+          methodId: 'direct-signature',
+          proofMode: 'manual',
+          authRequest: pending.authRequest,
+          signature,
+        });
+        localStorage.removeItem(TREZOR_MOBILE_STORAGE_KEY);
+        setTrezorStatus('Trezor ownership verified.');
+      } catch (resumeError) {
+        localStorage.removeItem(TREZOR_MOBILE_STORAGE_KEY);
+        setVerificationStep('idle');
+        setIsCheckingDB(false);
+        setTrezorStatus('');
+        setError(resumeError.message || 'Unable to resume the Trezor Suite connection.');
+      } finally {
+        setTrezorBusy(false);
+      }
+    };
+
+    resume();
+    return undefined;
+  }, [finalizeWalletConnection, openTrezorSuiteRequest, prepareAuthRequest, setError]);
+
   const connectLedgerUsb = useCallback(async () => {
     if (!ledgerUsbModule) {
       setError('The direct Ledger connection is still loading. Try again in a moment.');
@@ -511,13 +753,262 @@ export default function useWalletAuthFlow({
     trezorUsbModule,
   ]);
 
-  const handleConnect = useCallback(async () => {
+  const connectTrezor = useCallback(() => (
+    trezorConnectionAvailability.mode === 'suite-app'
+      ? connectTrezorMobile()
+      : connectTrezorUsb()
+  ), [connectTrezorMobile, connectTrezorUsb, trezorConnectionAvailability.mode]);
+
+  const connectJadeUsb = useCallback(async () => {
+    if (!jadeUsbModule) {
+      setError('The direct Jade connection is still loading. Try again in a moment.');
+      return null;
+    }
+
+    try {
+      setError('');
+      clearProofState();
+      setJadeBusy(true);
+      setVerificationStep('connecting');
+      setJadeStatus('Preparing the secure Jade USB connection.');
+      let authRequestForVerification = null;
+
+      const proof = await jadeUsbModule.connectAndSignJadeAuthentication({
+        account: Number(jadeAccount),
+        branch: Number(descriptorBranch),
+        index: Number(descriptorIndex),
+        onStatus: setJadeStatus,
+        createSigningRequest: async ({ address }) => {
+          setManualAddress(address);
+          const request = await createAuthRequest(address, {
+            personaId: 'cold_single_seed',
+            methodId: 'direct-signature',
+            walletName: 'Blockstream Jade USB',
+          });
+          authRequestForVerification = request;
+          setVerificationStep('signing');
+          return { message: request.challenge };
+        },
+      });
+
+      if (!authRequestForVerification) throw new Error('The Jade authentication request was not created.');
+      setJadeStatus('Signature received. Verifying Jade ownership.');
+      const result = await finalizeWalletConnection(proof.address, {
+        personaId: 'cold_single_seed',
+        methodId: 'direct-signature',
+        proofMode: 'manual',
+        authRequest: authRequestForVerification,
+        signature: proof.signature,
+      });
+      setJadeStatus('Jade ownership verified.');
+      return result;
+    } catch (jadeError) {
+      clearProofState();
+      setVerificationStep('idle');
+      setIsCheckingDB(false);
+      setJadeStatus('');
+      setError(jadeError.message || 'Unable to authenticate with Jade over USB.');
+      return null;
+    } finally {
+      setJadeBusy(false);
+    }
+  }, [
+    clearProofState,
+    createAuthRequest,
+    descriptorBranch,
+    descriptorIndex,
+    finalizeWalletConnection,
+    jadeAccount,
+    jadeUsbModule,
+    setError,
+  ]);
+
+  const prepareJadeQrProof = useCallback(async () => {
+    try {
+      setError('');
+      clearProofState();
+      setJadeBusy(true);
+      setSelectedPersonaId('cold_single_seed');
+      setOfflineProofFormat('message');
+      const {
+        buildJadePath,
+        buildJadeQrPayload,
+        validateJadeAddress,
+      } = await import('../lib/jadeValidation');
+      const address = validateJadeAddress(manualAddress.trim());
+      const path = buildJadePath({
+        account: Number(jadeAccount),
+        branch: Number(descriptorBranch),
+        index: Number(descriptorIndex),
+      });
+      const request = await prepareAuthRequest(address, {
+        personaId: 'cold_single_seed',
+        methodId: 'direct-signature',
+        walletName: 'Blockstream Jade QR',
+      });
+      setJadeQrPath(path);
+      setJadeQrPayload(buildJadeQrPayload({ path, message: request.challenge }));
+      setJadeStatus('Authentication QR ready. Scan it with Jade.');
+      setAuthHint('Scan this exact request with Jade. The response is a signature only; it cannot move bitcoin.');
+      return request;
+    } catch (jadeError) {
+      clearProofState();
+      setJadeStatus('');
+      setError(jadeError.message || 'Unable to prepare the Jade QR request.');
+      return null;
+    } finally {
+      setJadeBusy(false);
+    }
+  }, [
+    clearProofState,
+    descriptorBranch,
+    descriptorIndex,
+    jadeAccount,
+    manualAddress,
+    prepareAuthRequest,
+    setError,
+  ]);
+
+  const acceptJadeQrSignature = useCallback(async (value) => {
+    try {
+      const { normalizeJadeMessageSignature } = await import('../lib/jadeValidation');
+      const signature = normalizeJadeMessageSignature(value);
+      setManualSignature(signature);
+      setJadeStatus('Jade signature received. Select Verify and sign in.');
+      setError('');
+      return signature;
+    } catch (signatureError) {
+      setError(signatureError.message || 'The scanned Jade signature is invalid.');
+      throw signatureError;
+    }
+  }, [setError]);
+
+  const submitJadeQrProof = useCallback(async () => {
+    try {
+      setError('');
+      if (!authRequest || !jadeQrPayload) throw new Error('Generate a fresh Jade QR request first.');
+      const { normalizeJadeMessageSignature, validateJadeAddress } = await import('../lib/jadeValidation');
+      const address = validateJadeAddress(manualAddress.trim());
+      const signature = normalizeJadeMessageSignature(manualSignature);
+      await finalizeWalletConnection(address, {
+        personaId: 'cold_single_seed',
+        methodId: 'direct-signature',
+        proofMode: 'manual',
+        authRequest,
+        signature,
+      });
+      return true;
+    } catch (jadeError) {
+      setVerificationStep('idle');
+      setIsCheckingDB(false);
+      setError(jadeError.message || 'Unable to verify the Jade QR signature.');
+      return false;
+    }
+  }, [authRequest, finalizeWalletConnection, jadeQrPayload, manualAddress, manualSignature, setError]);
+
+  const connectThroughWalletModal = useCallback(async ({
+    personaId,
+    methodId = 'direct-signature',
+  }) => {
     setError('');
     clearConnectPolling();
 
     const attemptId = connectAttemptRef.current.id + 1;
     connectAttemptRef.current.id = attemptId;
 
+    try {
+      if (!modal) throw new Error('Wallet modal not initialized. Please reload the page.');
+      const currentAddress = modal.getAddress();
+      const isConnected = modal.getIsConnectedState();
+
+      if (currentAddress && isConnected) {
+        return await finalizeWalletConnection(currentAddress, { personaId, methodId });
+      }
+
+      setVerificationStep('connecting');
+      await connectWallet();
+
+      let hasConnected = false;
+      let closedChecks = 0;
+      connectAttemptRef.current.interval = setInterval(async () => {
+        if (attemptId !== connectAttemptRef.current.id) {
+          clearConnectPolling();
+          return;
+        }
+        try {
+          const address = modal.getAddress();
+          const connected = modal.getIsConnectedState();
+          if (address && connected && !hasConnected) {
+            hasConnected = true;
+            clearConnectPolling();
+            try {
+              await finalizeWalletConnection(address, { personaId, methodId });
+            } catch (connectionError) {
+              setError(connectionError.message || DEFAULT_ERROR);
+              setVerificationStep('idle');
+              setIsCheckingDB(false);
+            }
+            return;
+          }
+
+          const modalClosed = typeof modal.isOpen === 'function' && !modal.isOpen();
+          const pageVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+          closedChecks = modalClosed && pageVisible ? closedChecks + 1 : 0;
+          const closedChecksRequired = mobileDevice ? 4 : 1;
+          if (closedChecks >= closedChecksRequired) {
+            clearConnectPolling();
+            if (!hasConnected) {
+              setVerificationStep('idle');
+              setIsCheckingDB(false);
+              setAuthHint('No wallet selected. You can reopen the wallet list when ready.');
+            }
+          }
+        } catch {
+          // AppKit state can be temporarily unavailable while switching applications.
+        }
+      }, 500);
+      return null;
+    } catch (connectionError) {
+      setVerificationStep('idle');
+      setIsCheckingDB(false);
+      setError(connectionError.message || DEFAULT_ERROR);
+      return null;
+    }
+  }, [
+    clearConnectPolling,
+    connectWallet,
+    finalizeWalletConnection,
+    mobileDevice,
+    modal,
+    setError,
+  ]);
+
+  const connectLedger = useCallback(async () => {
+    if (ledgerConnectionAvailability.mode !== 'wallet-app') return connectLedgerUsb();
+
+    try {
+      setLedgerBusy(true);
+      setLedgerStatus('Select Ledger Wallet in the secure wallet selector.');
+      if (modal?.getIsConnectedState?.() && connectedWallet && !/ledger/i.test(connectedWallet)) {
+        await disconnectWallet?.();
+      }
+      return await connectThroughWalletModal({
+        personaId: 'cold_single_seed',
+        methodId: 'direct-signature',
+      });
+    } finally {
+      setLedgerBusy(false);
+    }
+  }, [
+    connectedWallet,
+    connectLedgerUsb,
+    connectThroughWalletModal,
+    disconnectWallet,
+    ledgerConnectionAvailability.mode,
+    modal,
+  ]);
+
+  const handleConnect = useCallback(async () => {
     try {
       const persona = getPersona(selectedPersonaId);
 
@@ -536,80 +1027,18 @@ export default function useWalletAuthFlow({
         setVerificationStep('idle');
         return;
       }
-
-      if (!modal) {
-        throw new Error('Wallet modal not initialized. Please reload the page.');
-      }
-
-      const currentAddress = modal.getAddress();
-      const isConnected = modal.getIsConnectedState();
-
-      if (currentAddress && isConnected) {
-        await finalizeWalletConnection(currentAddress, { personaId: persona.id });
-        return;
-      }
-
-      setVerificationStep('connecting');
-      await connectWallet();
-
-      let hasConnected = false;
-      let closedChecks = 0;
-
-      connectAttemptRef.current.interval = setInterval(async () => {
-        if (attemptId !== connectAttemptRef.current.id) {
-          clearConnectPolling();
-          return;
-        }
-
-        if (!modal) return;
-
-        try {
-          const address = modal.getAddress();
-          const connected = modal.getIsConnectedState();
-
-          if (address && connected && !hasConnected) {
-            hasConnected = true;
-            clearConnectPolling();
-
-            try {
-              await finalizeWalletConnection(address, { personaId: persona.id });
-            } catch (err) {
-              setError(err.message || DEFAULT_ERROR);
-              setVerificationStep('idle');
-              setIsCheckingDB(false);
-            }
-
-            return;
-          }
-
-          const modalClosed = typeof modal.isOpen === 'function' && !modal.isOpen();
-          const pageVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
-          closedChecks = modalClosed && pageVisible ? closedChecks + 1 : 0;
-
-          const closedChecksRequired = mobileDevice ? 4 : 1;
-          if (closedChecks >= closedChecksRequired) {
-            clearConnectPolling();
-            if (!hasConnected) {
-              setVerificationStep('idle');
-              setIsCheckingDB(false);
-              setAuthHint('No wallet selected. You can reopen the wallet list when ready.');
-            }
-          }
-        } catch (err) {
-        }
-      }, 500);
+      return await connectThroughWalletModal({
+        personaId: persona.id,
+        methodId: persona.primaryMethod,
+      });
     } catch (err) {
       setVerificationStep('idle');
       setIsCheckingDB(false);
       setError(err.message || DEFAULT_ERROR);
     }
   }, [
-    clearConnectPolling,
-    connectWallet,
-    finalizeWalletConnection,
+    connectThroughWalletModal,
     manualAddress,
-    mobileDevice,
-    modal,
     selectedPersonaId,
     setError,
     prepareAuthRequest
@@ -802,6 +1231,8 @@ export default function useWalletAuthFlow({
     setDescriptorInfo(null);
     setDescriptorError('');
     setLedgerStatus('');
+    setTrezorStatus('');
+    setJadeStatus('');
   }, [clearProofState]);
 
   const selectOfflineProofFormat = useCallback((format) => {
@@ -871,6 +1302,7 @@ export default function useWalletAuthFlow({
     setDescriptorIndex(0);
     setLedgerStatus('');
     setTrezorStatus('');
+    setJadeStatus('');
   }, [clearConnectPolling, clearProofState]);
 
   return {
@@ -911,24 +1343,29 @@ export default function useWalletAuthFlow({
     selectAutomaticDesktop,
     submitManualProof,
     signPreparedPsbt,
-    connectLedgerUsb,
+    connectLedgerUsb: connectLedger,
     ledgerAccount,
     setLedgerAccount,
     ledgerStatus,
     ledgerBusy,
-    ledgerUsbAvailability: ledgerUsbModule?.getLedgerUsbAvailability?.() || {
-      supported: false,
-      reason: 'Loading direct Ledger support...',
-    },
-    connectTrezorUsb,
+    ledgerUsbAvailability: ledgerConnectionAvailability,
+    connectTrezorUsb: connectTrezor,
     trezorAccount,
     setTrezorAccount,
     trezorStatus,
     trezorBusy,
-    trezorUsbAvailability: trezorUsbModule?.getTrezorUsbAvailability?.() || {
-      supported: false,
-      reason: 'Loading direct Trezor support...',
-    },
+    trezorUsbAvailability: trezorConnectionAvailability,
+    connectJadeUsb,
+    prepareJadeQrProof,
+    acceptJadeQrSignature,
+    submitJadeQrProof,
+    jadeAccount,
+    setJadeAccount,
+    jadeStatus,
+    jadeBusy,
+    jadeUsbAvailability,
+    jadeQrPayload,
+    jadeQrPath,
     mobileEntry,
     mobileDevice,
     walletInAppBrowser,

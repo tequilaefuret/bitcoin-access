@@ -76,6 +76,17 @@ const ConnectStep = ({
   trezorStatus,
   trezorBusy,
   trezorUsbAvailability,
+  connectJadeUsb,
+  prepareJadeQrProof,
+  acceptJadeQrSignature,
+  submitJadeQrProof,
+  jadeAccount,
+  setJadeAccount,
+  jadeStatus,
+  jadeBusy,
+  jadeUsbAvailability,
+  jadeQrPayload,
+  jadeQrPath,
   walletConnected,
   canDirectSign,
   connectDirectSigner,
@@ -96,6 +107,7 @@ const ConnectStep = ({
   const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [isPasswordLoginLoading, setIsPasswordLoginLoading] = useState(false);
+  const [hardwareMethod, setHardwareMethod] = useState('direct');
   const selectedWalletType = useMemo(
     () => getPersona(selectedPersonaId),
     [selectedPersonaId]
@@ -108,7 +120,7 @@ const ConnectStep = ({
   const isBrowser = selectedWalletType.id === 'desktop_hot_wallet';
   const isMobile = selectedWalletType.id === 'mobile_hot_wallet';
   const isManualBrowser = isBrowser && authMode === 'manual';
-  const usesPortableProof = isManualBrowser || authMode === 'offline';
+  const usesPortableProof = isManualBrowser || authMode === 'offline' || Boolean(jadeQrPayload);
 
   const statusLabel = isCheckingDB || verificationStep === 'verifying'
     ? 'Verifying signature'
@@ -482,16 +494,31 @@ const ConnectStep = ({
               trezorStatus={trezorStatus}
               trezorBusy={trezorBusy}
               trezorUsbAvailability={trezorUsbAvailability}
+              onConnectJade={connectJadeUsb}
+              onPrepareJadeQr={prepareJadeQrProof}
+              onAcceptJadeQrSignature={acceptJadeQrSignature}
+              onSubmitJadeQrProof={submitJadeQrProof}
+              jadeAccount={jadeAccount}
+              onJadeAccountChange={setJadeAccount}
+              jadeStatus={jadeStatus}
+              jadeBusy={jadeBusy}
+              jadeUsbAvailability={jadeUsbAvailability}
+              jadeQrPayload={jadeQrPayload}
+              jadeQrPath={jadeQrPath}
+              hardwareMethod={hardwareMethod}
+              onHardwareMethodChange={setHardwareMethod}
             />
           )}
 
-          <ConnectionMethodHelp
-            selectedPersonaId={selectedPersonaId}
-            authMode={authMode}
-            offlineProofFormat={offlineProofFormat}
-            mobileDevice={mobileDevice}
-            walletInAppBrowser={walletInAppBrowser || mobileEntry}
-          />
+          {!(selectedPersonaId === 'cold_single_seed' && ['direct', 'jade-qr'].includes(hardwareMethod)) && (
+            <ConnectionMethodHelp
+              selectedPersonaId={selectedPersonaId}
+              authMode={authMode}
+              offlineProofFormat={offlineProofFormat}
+              mobileDevice={mobileDevice}
+              walletInAppBrowser={walletInAppBrowser || mobileEntry}
+            />
+          )}
 
           {error && (
             <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">

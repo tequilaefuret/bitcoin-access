@@ -130,7 +130,12 @@ test('offers the direct Trezor journey for a hardware wallet', () => {
   fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
   expect(screen.getByRole('heading', { name: /direct connection/i })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: /^trezor$/i })).toBeInTheDocument();
+  expect(screen.getByTestId('trezor-brand-mark')).toHaveClass('bg-[#60E198]', 'text-[#062D16]');
   expect(screen.getByText(/advanced address selection/i).closest('details')).not.toHaveAttribute('open');
+  expect(screen.getByText(/how to connect with trezor/i)).toBeInTheDocument();
+  expect(screen.getByText(/how to connect with ledger/i)).toBeInTheDocument();
+  expect(screen.getByText(/how to connect with jade/i)).toBeInTheDocument();
+  expect(screen.queryByText(/how to connect with hardware wallet with psbt/i)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /connect trezor/i }));
 
   expect(connectTrezorUsb).toHaveBeenCalledTimes(1);
@@ -160,8 +165,48 @@ test('keeps the direct Ledger journey to one automatic action', () => {
   expect(connectLedgerUsb).toHaveBeenCalledTimes(1);
 });
 
-test('offers Jade through the secure companion and QR proof journeys', () => {
+test('opens the official wallet applications for mobile hardware journeys', () => {
+  const connectLedger = jest.fn();
+  const connectTrezor = jest.fn();
+  renderConnectStep({
+    selectedPersonaId: 'cold_single_seed',
+    authMode: 'offline',
+    mobileDevice: true,
+    offlineProofFormat: 'psbt',
+    descriptorInput: '',
+    descriptorBranch: 0,
+    descriptorIndex: 0,
+    ledgerAccount: 0,
+    trezorAccount: 0,
+    connectLedgerUsb: connectLedger,
+    connectTrezorUsb: connectTrezor,
+    ledgerUsbAvailability: {
+      supported: true,
+      mode: 'wallet-app',
+      actionLabel: 'Connect Ledger',
+      reason: 'Continue securely through the wallet selector.',
+    },
+    trezorUsbAvailability: {
+      supported: true,
+      mode: 'suite-app',
+      actionLabel: 'Connect Trezor',
+      reason: 'Continue securely in the Trezor Suite mobile app.',
+    },
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /^connect trezor$/i }));
+  fireEvent.click(screen.getByRole('button', { name: /^connect ledger$/i }));
+
+  expect(connectTrezor).toHaveBeenCalledTimes(1);
+  expect(connectLedger).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(/continue in trezor suite to confirm your address/i)).toBeInTheDocument();
+  expect(screen.getByText(/continue with ledger wallet through the secure wallet selector/i)).toBeInTheDocument();
+});
+
+test('offers Jade through direct USB and native QR proof journeys', () => {
   const selectOfflineProofFormat = jest.fn();
+  const connectJadeUsb = jest.fn();
+  const prepareJadeQrProof = jest.fn();
   renderConnectStep({
     selectedPersonaId: 'cold_single_seed',
     authMode: 'offline',
@@ -169,15 +214,48 @@ test('offers Jade through the secure companion and QR proof journeys', () => {
     descriptorInput: '',
     descriptorBranch: 0,
     descriptorIndex: 0,
+    manualAddress: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
     selectOfflineProofFormat,
+    connectJadeUsb,
+    prepareJadeQrProof,
+    jadeUsbAvailability: { supported: true, reason: '' },
   });
 
   fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
 
   expect(screen.getByRole('heading', { name: /^jade$/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /use companion app/i })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /jade plus qr \/ psbt/i }));
+  fireEvent.click(screen.getByRole('button', { name: /connect jade by usb/i }));
+  expect(connectJadeUsb).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: /use jade qr/i }));
 
-  expect(selectOfflineProofFormat).toHaveBeenCalledWith('psbt');
-  expect(screen.getByRole('heading', { name: /import wallet policy/i })).toBeInTheDocument();
+  expect(selectOfflineProofFormat).not.toHaveBeenCalled();
+  expect(screen.getByRole('heading', { name: /jade air-gapped qr/i })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /import wallet policy/i })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /create jade qr request/i }));
+  expect(prepareJadeQrProof).toHaveBeenCalledTimes(1);
+});
+
+test('shows the prepared Jade signmessage QR and submits its signature', () => {
+  const submitJadeQrProof = jest.fn();
+  renderConnectStep({
+    selectedPersonaId: 'cold_single_seed',
+    authMode: 'direct',
+    authRequest: {
+      requestId: 'jade-request',
+      challengePreview: 'Bitcoin Access authentication',
+      proofFormat: null,
+    },
+    authHint: 'Scan this exact request with Jade.',
+    manualAddress: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+    manualSignature: 'Jade signature',
+    jadeQrPayload: 'signmessage m/84h/0h/0h/0/0 ascii:Bitcoin Access authentication',
+    jadeQrPath: 'm/84h/0h/0h/0/0',
+    submitJadeQrProof,
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+  expect(screen.getByText(/jade qr request ready/i)).toBeInTheDocument();
+  expect(screen.getByText('m/84h/0h/0h/0/0')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /verify and sign in/i }));
+  expect(submitJadeQrProof).toHaveBeenCalledTimes(1);
 });

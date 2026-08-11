@@ -153,6 +153,17 @@ const BitcoinExclusiveAccess = () => {
     trezorStatus,
     trezorBusy,
     trezorUsbAvailability,
+    connectJadeUsb,
+    prepareJadeQrProof,
+    acceptJadeQrSignature,
+    submitJadeQrProof,
+    jadeAccount,
+    setJadeAccount,
+    jadeStatus,
+    jadeBusy,
+    jadeUsbAvailability,
+    jadeQrPayload,
+    jadeQrPath,
     mobileEntry,
     mobileDevice,
     walletInAppBrowser,
@@ -160,6 +171,8 @@ const BitcoinExclusiveAccess = () => {
     authMode
   } = useWalletAuthFlow({
     modal,
+    connectedWallet,
+    disconnectWallet,
     walletProfile,
     connectWallet,
     connectInjectedWallet,
@@ -516,6 +529,17 @@ const BitcoinExclusiveAccess = () => {
               trezorStatus={trezorStatus}
               trezorBusy={trezorBusy}
               trezorUsbAvailability={trezorUsbAvailability}
+              connectJadeUsb={connectJadeUsb}
+              prepareJadeQrProof={prepareJadeQrProof}
+              acceptJadeQrSignature={acceptJadeQrSignature}
+              submitJadeQrProof={submitJadeQrProof}
+              jadeAccount={jadeAccount}
+              setJadeAccount={setJadeAccount}
+              jadeStatus={jadeStatus}
+              jadeBusy={jadeBusy}
+              jadeUsbAvailability={jadeUsbAvailability}
+              jadeQrPayload={jadeQrPayload}
+              jadeQrPath={jadeQrPath}
               walletConnected={Boolean(connectedAddress)}
               canDirectSign={Boolean(walletProfile?.capabilities?.supportsPsbt)}
               connectDirectSigner={connectWallet}

@@ -372,30 +372,48 @@ available through the descriptor, message, QR and PSBT-file fallbacks. The
 direct path remains labelled beta until the full journey has been tested on a
 physical supported Trezor; automated tests cannot emulate its secure screen.
 
-### Jade companion and QR journey
+### Direct Jade USB and air-gapped QR beta
 
-The Hardware screen identifies Blockstream Jade alongside Ledger and Trezor,
-but deliberately does not present Jade as a direct browser USB integration.
-Jade's normal PIN unlock requires the companion to relay an encrypted exchange
-with its blind PIN oracle, and this project does not depend on a maintained
-official browser SDK that owns that protocol end to end.
+The Hardware screen provides two Jade-specific paths based on public protocols
+implemented by the Jade firmware. Neither path opens or pairs with the
+Blockstream mobile application.
 
-The Jade card therefore exposes two existing, bounded proof transports:
+The direct USB path uses Web Serial at 115200 baud and Jade's CBOR RPC methods:
 
-1. `Use companion app` opens the message-signature journey. Copy the exact
-   short-lived challenge into the Blockstream app account backed by Jade,
-   approve it on Jade, and paste only the returned signature.
-2. `Jade Plus QR / PSBT` opens the public-descriptor and BIP-322 PSBT journey.
-   Compare the derived address on Jade, scan the animated `crypto-psbt` QR (or
-   transfer the `.psbt` file), approve the zero-value proof, and scan or import
-   the signed PSBT.
+1. `get_version_info` confirms that the selected serial device speaks the Jade
+   protocol.
+2. If the device is locked, `auth_user` asks the user for the PIN only on Jade.
+   The browser relays the already encrypted blind-oracle payload directly to an
+   official Jade PIN-server HTTPS origin. Cookies, referrers and credentials are
+   omitted. Arbitrary or private-network URLs and custom PIN servers are not
+   relayed by this site.
+3. `get_receive_address` derives and displays a standard mainnet Native SegWit
+   address at `m/84'/0'/account'/branch/index`. The user must confirm it on
+   Jade before the server challenge is created.
+4. `sign_message` displays and signs only the short-lived authentication
+   challenge. The serial port and all reader/writer locks are released after
+   success, cancellation or failure.
 
-The second path is intended for Jade Plus QR mode; other Jade models can use a
-compatible companion/coordinator and PSBT file transfer. The interface never
-asks for a PIN, recovery phrase, SeedQR, private descriptor or private key. A
-direct Jade USB button should only be added later around a maintained,
-reviewed integration and after testing the complete unlock, address-display,
-message-signing, cancellation and timeout journey on physical devices.
+The implementation bounds account, branch and index values, CBOR nesting and
+message sizes, serial buffers, HTTP response sizes, relay iterations and all
+interaction timeouts. Replies must carry the expected request identifier.
+Only a canonical 65-byte recoverable message signature is accepted and it is
+normalized to the Native SegWit BIP-137 header before server verification.
+
+The air-gapped path emits the firmware's native Specter-compatible payload:
+`signmessage <BIP84 path> ascii:<server challenge>`. A camera-equipped Jade
+is unlocked independently, scans that static QR, displays the path and message,
+then returns a plain Base64
+signature QR. The site scans and validates that response; it does not create a
+PSBT. Verification fails unless the entered `bc1q...` address belongs to the
+selected path.
+
+Web Serial requires HTTPS or localhost and a compatible Chromium browser.
+Safari and Firefox cannot use direct USB, but a camera-equipped Jade can still
+use the QR path. The interface never requests the PIN, recovery phrase, SeedQR,
+private descriptor or private key. Both paths remain beta until tested through
+unlock, address confirmation, signing, cancellation and timeout on physical
+Jade devices and firmware versions used by the project.
 
 Challenge address validation decodes Base58, SegWit v0 Bech32 and Taproot v1
 Bech32m directly. It deliberately avoids `bitcoinjs-lib`'s

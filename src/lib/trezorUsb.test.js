@@ -78,6 +78,7 @@ test('keeps one secure Trezor session between address verification and signing',
   expect(TrezorConnect.init).toHaveBeenCalledWith(expect.objectContaining({
     coreMode: 'iframe',
     lazyLoad: false,
+    manifest: expect.objectContaining({ appName: 'Danaus' }),
   }));
   expect(TrezorConnect.getAddress).toHaveBeenCalledWith(expect.objectContaining({
     keepSession: true,
