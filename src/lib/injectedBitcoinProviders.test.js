@@ -1,9 +1,42 @@
-import { getInjectedBitcoinProviders, selectBitcoinAccount } from './injectedBitcoinProviders';
+import {
+  getInjectedBitcoinProviders,
+  requestWalletStandardRegistration,
+  selectBitcoinAccount,
+} from './injectedBitcoinProviders';
 import { getWallets } from '@wallet-standard/app';
 
 test('does not use the deprecated Phantom global provider', () => {
   const provider = { requestAccounts: jest.fn(), signMessage: jest.fn() };
   expect(getInjectedBitcoinProviders({ phantom: { bitcoin: provider } })).toEqual([]);
+});
+
+test('asks Wallet Standard extensions to register again after a late load', () => {
+  const wallet = {
+    version: '1.0.0',
+    name: 'Late Phantom',
+    icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>',
+    chains: ['bitcoin:mainnet'],
+    accounts: [],
+    features: {
+      'bitcoin:connect': { version: '1.0.0', connect: jest.fn() },
+      'bitcoin:signMessage': { version: '1.0.0', signMessage: jest.fn() },
+    },
+  };
+  let unregister = () => {};
+  const registerLateWallet = (event) => {
+    unregister = event.detail.register(wallet);
+  };
+  window.addEventListener('wallet-standard:app-ready', registerLateWallet);
+
+  try {
+    requestWalletStandardRegistration();
+    expect(getInjectedBitcoinProviders(window)).toEqual([
+      expect.objectContaining({ name: 'Late Phantom' }),
+    ]);
+  } finally {
+    window.removeEventListener('wallet-standard:app-ready', registerLateWallet);
+    unregister();
+  }
 });
 
 test('adapts wallets that advertise Bitcoin authentication through Wallet Standard', async () => {
@@ -38,11 +71,52 @@ test('adapts wallets that advertise Bitcoin authentication through Wallet Standa
       address: account.address,
       message: 'challenge',
     })).resolves.toEqual({ signature: Uint8Array.from([1, 2, 3]) });
-    expect(connect).toHaveBeenCalledWith({ purposes: ['payment', 'ordinals'] });
+    expect(connect).toHaveBeenCalledWith({ purposes: ['payment'] });
     expect(signMessage).toHaveBeenCalledWith({
       account: expect.objectContaining({ address: account.address }),
       message: new TextEncoder().encode('challenge'),
     });
+  } finally {
+    unregister();
+  }
+});
+
+test('waits for a Wallet Standard account event when connect returns too early', async () => {
+  const account = {
+    address: 'bc1q-delayed',
+    chains: ['bitcoin:mainnet'],
+    features: ['bitcoin:signMessage'],
+  };
+  let publishAccounts;
+  const on = jest.fn((event, listener) => {
+    publishAccounts = listener;
+    return jest.fn();
+  });
+  const unregister = getWallets().register({
+    version: '1.0.0',
+    name: 'Delayed Bitcoin Wallet',
+    icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>',
+    chains: ['bitcoin:mainnet'],
+    accounts: [],
+    features: {
+      'bitcoin:events': { version: '1.0.0', on },
+      'bitcoin:connect': {
+        version: '1.0.0',
+        connect: jest.fn().mockImplementation(async () => {
+          setTimeout(() => publishAccounts({ accounts: [account] }), 0);
+          return { accounts: [] };
+        }),
+      },
+      'bitcoin:signMessage': { version: '1.0.0', signMessage: jest.fn() },
+    },
+  });
+
+  try {
+    const wallet = getInjectedBitcoinProviders(window).find(({ name }) => name === 'Delayed Bitcoin Wallet');
+    await expect(wallet.provider.requestAccounts()).resolves.toEqual([
+      expect.objectContaining({ address: account.address, purpose: 'payment' }),
+    ]);
+    expect(on).toHaveBeenCalledWith('change', expect.any(Function));
   } finally {
     unregister();
   }

@@ -15,19 +15,25 @@ import {
 import {
   assertLedgerInteger,
   buildLedgerDescriptor,
+  encodeLedgerMessageSignature,
   ledgerAccountPath,
   validateLedgerSigningRequest,
 } from './ledgerUsbValidation';
 
-export { buildLedgerDescriptor, ledgerAccountPath, validateLedgerSigningRequest } from './ledgerUsbValidation';
+export {
+  buildLedgerDescriptor,
+  encodeLedgerMessageSignature,
+  ledgerAccountPath,
+  validateLedgerSigningRequest,
+} from './ledgerUsbValidation';
 
-const ACTION_TIMEOUT_MS = 120_000;
+const ACTION_TIMEOUT_MS = 300_000;
 const bytesToHex = (bytes) => Buffer.from(bytes).toString('hex');
 
 const errorMessage = (error, fallback) => {
   const message = error?.message || error?.originalError?.message;
   if (/no selected device|no accessible device|cancel/i.test(message || '')) {
-    return 'No Ledger selected. Connect it by USB and accept the browser prompt.';
+    return 'No Ledger selected. Connect it and accept the browser device prompt.';
   }
   if (/locked/i.test(message || '')) return 'Unlock your Ledger and try again.';
   return message || fallback;
@@ -38,6 +44,7 @@ const interactionLabel = (state) => {
   if (/unlock/i.test(interaction)) return 'Unlock your Ledger.';
   if (/openapp|confirmopenapp/i.test(interaction)) return 'Approve opening the Bitcoin app on your Ledger.';
   if (/verifyaddress/i.test(interaction)) return 'Verify and approve the address shown on your Ledger.';
+  if (/signmessage/i.test(interaction)) return 'Review and approve the login message on your Ledger.';
   if (/signtransaction/i.test(interaction)) return 'Review and approve the proof on your Ledger.';
   return 'Continue on your Ledger.';
 };
@@ -82,10 +89,10 @@ const discoverLedger = (dmk, onStatus) => new Promise((resolve, reject) => {
   let settled = false;
   const timeout = setTimeout(() => {
     subscription?.unsubscribe();
-    reject(new Error('No Ledger was detected. Check the USB cable and browser permission.'));
+    reject(new Error('No Ledger was detected. Check the cable and browser permission.'));
   }, 30_000);
 
-  onStatus?.('Select your Ledger in the browser USB window.');
+  onStatus?.('Select your Ledger in the browser device window.');
   subscription = dmk.startDiscovering({ transport: webHidIdentifier }).subscribe({
     next: (device) => {
       if (settled) return;
@@ -98,7 +105,7 @@ const discoverLedger = (dmk, onStatus) => new Promise((resolve, reject) => {
       settled = true;
       clearTimeout(timeout);
       subscription?.unsubscribe();
-      reject(new Error(errorMessage(error, 'Unable to detect Ledger over USB.')));
+      reject(new Error(errorMessage(error, 'Unable to detect Ledger through the direct connection.')));
     },
   });
 });
@@ -130,10 +137,10 @@ const withLedger = async (operation, onStatus) => {
 
 export function getLedgerUsbAvailability() {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') {
-    return { supported: false, reason: 'Ledger USB requires a browser.' };
+    return { supported: false, reason: 'Direct Ledger connection requires a browser.' };
   }
   if (!window.isSecureContext) {
-    return { supported: false, reason: 'Ledger USB requires HTTPS or localhost.' };
+    return { supported: false, reason: 'Direct Ledger connection requires HTTPS or localhost.' };
   }
   if (!navigator.hid) {
     return { supported: false, reason: 'Use a desktop Chromium browser with WebHID, such as Chrome, Edge, Brave or Opera.' };
@@ -146,43 +153,41 @@ export function assertLedgerUsbSupport() {
   if (!availability.supported) throw new Error(availability.reason);
 }
 
-export async function connectLedgerAccount({ account = 0, branch = 0, index = 0, deriveDescriptor, onStatus }) {
+const readLedgerAccount = async ({ signer, account, branch, index, deriveDescriptor, onStatus }) => {
   assertLedgerInteger(index, 'Address index');
   if (![0, 1].includes(branch)) throw new Error('The Ledger address chain must be receive or change.');
   const accountPath = ledgerAccountPath(account);
 
-  return withLedger(async (signer) => {
-    onStatus?.('Reading public account information from Ledger.');
-    const fingerprintResult = await waitForAction(signer.getMasterFingerprint(), onStatus);
-    const xpubResult = await waitForAction(
-      signer.getExtendedPublicKey(accountPath, { checkOnDevice: false }),
-      onStatus,
-    );
-    const descriptor = buildLedgerDescriptor({
-      fingerprint: bytesToHex(fingerprintResult.masterFingerprint),
-      extendedPublicKey: xpubResult.extendedPublicKey,
-      account,
-    });
-    const descriptorInfo = deriveDescriptor(descriptor, { branch, index });
-    const wallet = new DefaultWallet(accountPath, DefaultDescriptorTemplate.NATIVE_SEGWIT);
-    onStatus?.('Verify the address on your Ledger screen.');
-    const verified = await waitForAction(
-      signer.getWalletAddress(wallet, index, { change: branch === 1, checkOnDevice: true }),
-      onStatus,
-    );
-    if (verified.address !== descriptorInfo.address) {
-      throw new Error('Security check failed: the Ledger address differs from the locally derived address.');
-    }
-    return { descriptor, descriptorInfo, account, branch, index };
-  }, onStatus);
-}
+  onStatus?.('Reading public account information from Ledger.');
+  const fingerprintResult = await waitForAction(signer.getMasterFingerprint(), onStatus);
+  const xpubResult = await waitForAction(
+    signer.getExtendedPublicKey(accountPath, { checkOnDevice: false }),
+    onStatus,
+  );
+  const descriptor = buildLedgerDescriptor({
+    fingerprint: bytesToHex(fingerprintResult.masterFingerprint),
+    extendedPublicKey: xpubResult.extendedPublicKey,
+    account,
+  });
+  const descriptorInfo = deriveDescriptor(descriptor, { branch, index });
+  const wallet = new DefaultWallet(accountPath, DefaultDescriptorTemplate.NATIVE_SEGWIT);
+  onStatus?.('Verify the address on your Ledger screen.');
+  const verified = await waitForAction(
+    signer.getWalletAddress(wallet, index, { change: branch === 1, checkOnDevice: true }),
+    onStatus,
+  );
+  if (verified.address !== descriptorInfo.address) {
+    throw new Error('Security check failed: the Ledger address differs from the locally derived address.');
+  }
+  return { descriptor, descriptorInfo, account, branch, index };
+};
 
-export async function signLedgerAuthenticationPsbt(options) {
+const signLedgerPsbt = async (signer, options, { verifyAddress = true } = {}) => {
   const validated = validateLedgerSigningRequest(options);
   const accountPath = ledgerAccountPath(options.account);
   const wallet = new DefaultWallet(accountPath, DefaultDescriptorTemplate.NATIVE_SEGWIT);
 
-  return withLedger(async (signer) => {
+  if (verifyAddress) {
     options.onStatus?.('Verify the authentication address on your Ledger screen.');
     const verified = await waitForAction(
       signer.getWalletAddress(wallet, options.index, {
@@ -194,29 +199,79 @@ export async function signLedgerAuthenticationPsbt(options) {
     if (verified.address !== options.address) {
       throw new Error('Security check failed: Ledger returned a different address.');
     }
+  }
 
-    options.onStatus?.('Review and approve the proof on your Ledger.');
-    const signatures = await waitForAction(
-      signer.signPsbt(wallet, options.unsignedPsbt),
-      options.onStatus,
-    );
-    const partialSignatures = signatures.filter((signature) => (
-      signature && 'pubkey' in signature && 'signature' in signature
-    ));
-    if (partialSignatures.length !== 1) throw new Error('Ledger returned an unexpected number of signatures.');
-    const [signature] = partialSignatures;
-    if (
-      signature.inputIndex !== 0
-      || !Buffer.from(signature.pubkey).equals(validated.expectedPubkey)
-    ) {
-      throw new Error('Ledger signed with a key that does not match the verified address.');
-    }
-    validated.psbt.updateInput(0, {
-      partialSig: [{
-        pubkey: Buffer.from(signature.pubkey),
-        signature: Buffer.from(signature.signature),
-      }],
+  options.onStatus?.('Review and approve the 0 BTC authentication proof on your Ledger.');
+  const signatures = await waitForAction(
+    signer.signPsbt(wallet, options.unsignedPsbt),
+    options.onStatus,
+  );
+  const partialSignatures = signatures.filter((signature) => (
+    signature && 'pubkey' in signature && 'signature' in signature
+  ));
+  if (partialSignatures.length !== 1) throw new Error('Ledger returned an unexpected number of signatures.');
+  const [signature] = partialSignatures;
+  if (
+    signature.inputIndex !== 0
+    || !Buffer.from(signature.pubkey).equals(validated.expectedPubkey)
+  ) {
+    throw new Error('Ledger signed with a key that does not match the verified address.');
+  }
+  validated.psbt.updateInput(0, {
+    partialSig: [{
+      pubkey: Buffer.from(signature.pubkey),
+      signature: Buffer.from(signature.signature),
+    }],
+  });
+  return validated.psbt.toBase64();
+};
+
+export async function connectLedgerAccount({ account = 0, branch = 0, index = 0, deriveDescriptor, onStatus }) {
+  return withLedger((signer) => readLedgerAccount({
+    signer,
+    account,
+    branch,
+    index,
+    deriveDescriptor,
+    onStatus,
+  }), onStatus);
+}
+
+export async function signLedgerAuthenticationPsbt(options) {
+  return withLedger((signer) => signLedgerPsbt(signer, options), options.onStatus);
+}
+
+export async function connectAndSignLedgerAuthentication({
+  account = 0,
+  branch = 0,
+  index = 0,
+  deriveDescriptor,
+  createSigningRequest,
+  onStatus,
+}) {
+  if (typeof createSigningRequest !== 'function') {
+    throw new Error('The Ledger authentication request builder is unavailable.');
+  }
+
+  return withLedger(async (signer) => {
+    const accountResult = await readLedgerAccount({
+      signer,
+      account,
+      branch,
+      index,
+      deriveDescriptor,
+      onStatus,
     });
-    return validated.psbt.toBase64();
-  }, options.onStatus);
+    onStatus?.('Creating the secure authentication message.');
+    const request = await createSigningRequest(accountResult);
+    if (typeof request?.message !== 'string' || !request.message.trim()) {
+      throw new Error('The Ledger authentication challenge is missing.');
+    }
+    const derivationPath = `${ledgerAccountPath(account)}/${branch}/${index}`;
+    onStatus?.('Review and approve the login message on your Ledger.');
+    const signature = encodeLedgerMessageSignature(
+      await waitForAction(signer.signMessage(derivationPath, request.message), onStatus),
+    );
+    return { ...accountResult, signature };
+  }, onStatus);
 }

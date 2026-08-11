@@ -11,6 +11,7 @@ import {
 import { normalizeBitcoinAddress } from '../lib/bitcoinAddress';
 import {
   getInjectedBitcoinProviders,
+  requestWalletStandardRegistration,
   selectBitcoinAccount,
   subscribeToBitcoinProviderChanges,
 } from '../lib/injectedBitcoinProviders';
@@ -18,6 +19,8 @@ import {
 // ✅ SINGLETON GLOBAL : Une seule instance du modal pour toute l'application
 let globalModalInstance = null;
 let globalModalInitializing = false;
+const MAX_SIGNATURE_WAIT_MS = 300_000;
+const CHALLENGE_EXPIRY_MARGIN_MS = 10_000;
 
 const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, reject) => {
   const timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
@@ -32,6 +35,12 @@ const withTimeout = (promise, timeoutMs, message) => new Promise((resolve, rejec
     },
   );
 });
+
+const signatureWaitTime = (authRequest) => {
+  const expiresAt = Date.parse(authRequest?.expiresAt || authRequest?.expires_at || '');
+  if (!Number.isFinite(expiresAt)) return MAX_SIGNATURE_WAIT_MS;
+  return Math.min(MAX_SIGNATURE_WAIT_MS, expiresAt - Date.now() - CHALLENGE_EXPIRY_MARGIN_MS);
+};
 
 /**
  * Hook personnalisé pour gérer la connexion Bitcoin via Reown AppKit
@@ -60,21 +69,28 @@ export default function useReownWallet() {
       });
     };
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') refresh();
+      if (document.visibilityState === 'visible') {
+        requestWalletStandardRegistration();
+        refresh();
+      }
+    };
+    const requestAndRefresh = () => {
+      requestWalletStandardRegistration();
+      refresh();
     };
 
     refresh();
-    const timeouts = [500, 1500, 3000].map((delay) => setTimeout(refresh, delay));
+    const timeouts = [500, 1500, 3000].map((delay) => setTimeout(requestAndRefresh, delay));
     const unsubscribeWalletStandard = subscribeToBitcoinProviderChanges(refresh);
-    window.addEventListener('focus', refresh);
-    window.addEventListener('pageshow', refresh);
+    window.addEventListener('focus', requestAndRefresh);
+    window.addEventListener('pageshow', requestAndRefresh);
     document.addEventListener('visibilitychange', refreshWhenVisible);
 
     return () => {
       timeouts.forEach(clearTimeout);
       unsubscribeWalletStandard();
-      window.removeEventListener('focus', refresh);
-      window.removeEventListener('pageshow', refresh);
+      window.removeEventListener('focus', requestAndRefresh);
+      window.removeEventListener('pageshow', requestAndRefresh);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, []);
@@ -244,6 +260,10 @@ export default function useReownWallet() {
       if (!authRequest?.requestId || !authRequest?.challenge) {
         throw new Error('Challenge serveur manquant. Relancez la connexion.');
       }
+      const signingTimeout = signatureWaitTime(authRequest);
+      if (signingTimeout <= 0) {
+        throw new Error('The authentication request expired. Start the connection again.');
+      }
       const message = typeof options.message === 'string' ? options.message : authRequest.challenge;
       const addressNetwork = address.startsWith('bc1') || address.startsWith('1') || address.startsWith('3') ? 'mainnet' : 'unknown';
       if (addressNetwork !== 'mainnet') {
@@ -260,7 +280,7 @@ export default function useReownWallet() {
 
       const signature = await withTimeout(
         signMessageWithProvider(provider, address, message),
-        120_000,
+        signingTimeout,
         'No signature response was received. Reopen the wallet and try again.',
       );
 
@@ -300,7 +320,11 @@ export default function useReownWallet() {
 
       const account = selectBitcoinAccount(await wallet.provider.requestAccounts());
       const finalAddress = normalizeBitcoinAddress(account?.address);
-      if (!finalAddress) throw new Error('The wallet did not provide a Bitcoin payment address.');
+      if (!finalAddress) {
+        const accountError = new Error('The wallet did not provide a Bitcoin payment address.');
+        accountError.code = 'BITCOIN_ACCOUNT_UNAVAILABLE';
+        throw accountError;
+      }
 
       injectedProviderRef.current = wallet.provider;
       setConnectedAddress(finalAddress);

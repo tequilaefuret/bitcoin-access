@@ -74,7 +74,6 @@ export default function useWalletAuthFlow({
   const [ledgerAccount, setLedgerAccount] = useState(0);
   const [ledgerStatus, setLedgerStatus] = useState('');
   const [ledgerBusy, setLedgerBusy] = useState(false);
-  const [ledgerReady, setLedgerReady] = useState(false);
   const [trezorUsbModule, setTrezorUsbModule] = useState(null);
   const [trezorAccount, setTrezorAccount] = useState(0);
   const [trezorStatus, setTrezorStatus] = useState('');
@@ -87,7 +86,7 @@ export default function useWalletAuthFlow({
     import('../lib/ledgerUsb').then((module) => {
       if (active) setLedgerUsbModule(module);
     }).catch(() => {
-      if (active) setLedgerStatus('Ledger USB tools could not be loaded. Use descriptor, QR or PSBT file.');
+      if (active) setLedgerStatus('Direct Ledger tools could not be loaded. Use a message, QR or PSBT file.');
     });
     return () => { active = false; };
   }, [selectedPersonaId]);
@@ -104,7 +103,7 @@ export default function useWalletAuthFlow({
         });
       }
     }).catch(() => {
-      if (active) setTrezorStatus('Trezor USB tools could not be loaded. Use descriptor, QR or PSBT file.');
+      if (active) setTrezorStatus('Direct Trezor tools could not be loaded. Use a message, QR or PSBT file.');
     });
     return () => { active = false; };
   }, [selectedPersonaId]);
@@ -112,9 +111,7 @@ export default function useWalletAuthFlow({
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const browserTargetUrl = new URL(window.location.href);
-    browserTargetUrl.searchParams.set('entry', 'mobile');
-    browserTargetUrl.searchParams.set('persona', 'mobile_hot_wallet');
+    const browserTargetUrl = new URL(window.location.pathname, window.location.origin);
     setMobileHandoffUrl(browserTargetUrl.toString());
   }, []);
 
@@ -179,11 +176,9 @@ export default function useWalletAuthFlow({
     setDescriptorInputState(value);
     setDescriptorInfo(null);
     setDescriptorError('');
-    setLedgerReady(false);
   }, []);
 
   useEffect(() => {
-    setLedgerReady(false);
     setLedgerStatus('');
   }, [descriptorBranch, descriptorIndex, ledgerAccount]);
 
@@ -213,43 +208,6 @@ export default function useWalletAuthFlow({
       throw descriptorFailure;
     }
   }, [descriptorBranch, descriptorIndex, descriptorInput]);
-
-  const connectLedgerUsb = useCallback(async () => {
-    if (!ledgerUsbModule) {
-      setError('Ledger USB is still loading. Try again in a moment.');
-      return null;
-    }
-
-    try {
-      setError('');
-      setLedgerBusy(true);
-      setLedgerReady(false);
-      setLedgerStatus('Preparing Ledger USB connection.');
-      const { deriveOutputDescriptor } = await import('../lib/outputDescriptor');
-      const result = await ledgerUsbModule.connectLedgerAccount({
-        account: Number(ledgerAccount),
-        branch: Number(descriptorBranch),
-        index: Number(descriptorIndex),
-        deriveDescriptor: deriveOutputDescriptor,
-        onStatus: setLedgerStatus,
-      });
-      setDescriptorInputState(result.descriptor);
-      setDescriptorInfo(result.descriptorInfo);
-      setDescriptorError('');
-      setManualAddress(result.descriptorInfo.address);
-      setMultisigWitnessScript('');
-      setOfflineProofFormat('psbt');
-      setLedgerReady(true);
-      setLedgerStatus('Address verified on Ledger. You can create the signing request.');
-      return result;
-    } catch (ledgerError) {
-      setLedgerStatus('');
-      setError(ledgerError.message || 'Unable to connect to Ledger over USB.');
-      return null;
-    } finally {
-      setLedgerBusy(false);
-    }
-  }, [descriptorBranch, descriptorIndex, ledgerAccount, ledgerUsbModule, setError]);
 
   useEffect(() => () => clearConnectPolling(), [clearConnectPolling]);
 
@@ -284,7 +242,7 @@ export default function useWalletAuthFlow({
     setStep,
   ]);
 
-  const prepareAuthRequest = useCallback(async (walletAddress, options = {}) => {
+  const createAuthRequest = useCallback(async (walletAddress, options = {}) => {
     const normalizedAddress = normalizeBitcoinAddress(walletAddress);
     if (!normalizedAddress) throw new Error('The wallet did not provide a Bitcoin address.');
     const persona = getPersona(options.personaId || selectedPersonaId);
@@ -305,12 +263,18 @@ export default function useWalletAuthFlow({
         : `${window.location.origin}/?auth=${encodeAuthPayloadToken(sharePayload)}`,
     };
 
+    return request;
+  }, [selectedPersonaId, walletProfile]);
+
+  const prepareAuthRequest = useCallback(async (walletAddress, options = {}) => {
+    const request = await createAuthRequest(walletAddress, options);
+
     setAuthRequest(request);
-    setAuthMode(getAuthModeForMethod(methodId));
+    setAuthMode(getAuthModeForMethod(request.methodId || options.methodId));
     setAuthHint('');
 
     return request;
-  }, [selectedPersonaId, walletProfile]);
+  }, [createAuthRequest]);
 
   const finalizeWalletConnection = useCallback(async (walletAddress, options = {}) => {
     const normalizedAddress = normalizeBitcoinAddress(walletAddress);
@@ -408,9 +372,83 @@ export default function useWalletAuthFlow({
     signMessage,
   ]);
 
+  const connectLedgerUsb = useCallback(async () => {
+    if (!ledgerUsbModule) {
+      setError('The direct Ledger connection is still loading. Try again in a moment.');
+      return null;
+    }
+
+    try {
+      setError('');
+      clearProofState();
+      setLedgerBusy(true);
+      setVerificationStep('connecting');
+      setLedgerStatus('Preparing the direct Ledger connection.');
+      const { deriveOutputDescriptor } = await import('../lib/outputDescriptor');
+      let authRequestForVerification = null;
+
+      const result = await ledgerUsbModule.connectAndSignLedgerAuthentication({
+        account: Number(ledgerAccount),
+        branch: Number(descriptorBranch),
+        index: Number(descriptorIndex),
+        deriveDescriptor: deriveOutputDescriptor,
+        onStatus: setLedgerStatus,
+        createSigningRequest: async ({ descriptor, descriptorInfo: verifiedDescriptor }) => {
+          setDescriptorInputState(descriptor);
+          setDescriptorInfo(verifiedDescriptor);
+          setDescriptorError('');
+          setManualAddress(verifiedDescriptor.address);
+          setMultisigWitnessScript('');
+
+          const request = await createAuthRequest(verifiedDescriptor.address, {
+            personaId: 'cold_single_seed',
+            methodId: 'direct-signature',
+            walletName: 'Ledger',
+          });
+          authRequestForVerification = request;
+          setVerificationStep('signing');
+          return {
+            message: request.challenge,
+          };
+        },
+      });
+
+      if (!authRequestForVerification) {
+        throw new Error('The Ledger authentication request was not created.');
+      }
+      setLedgerStatus('Signature received. Verifying ownership.');
+      const verified = await finalizeWalletConnection(result.descriptorInfo.address, {
+        personaId: 'cold_single_seed',
+        methodId: 'direct-signature',
+        proofMode: 'manual',
+        authRequest: authRequestForVerification,
+        signature: result.signature,
+      });
+      setLedgerStatus('Ledger ownership verified.');
+      return verified;
+    } catch (ledgerError) {
+      setVerificationStep('idle');
+      setIsCheckingDB(false);
+      setLedgerStatus('');
+      setError(ledgerError.message || 'Unable to authenticate through the direct Ledger connection.');
+      return null;
+    } finally {
+      setLedgerBusy(false);
+    }
+  }, [
+    clearProofState,
+    createAuthRequest,
+    descriptorBranch,
+    descriptorIndex,
+    finalizeWalletConnection,
+    ledgerAccount,
+    ledgerUsbModule,
+    setError,
+  ]);
+
   const connectTrezorUsb = useCallback(async () => {
     if (!trezorUsbModule) {
-      setError('Trezor USB is still loading. Try again in a moment.');
+      setError('The direct Trezor connection is still loading. Try again in a moment.');
       return null;
     }
 
@@ -438,6 +476,7 @@ export default function useWalletAuthFlow({
       const proof = await trezorUsbModule.signTrezorAuthenticationMessage({
         path: verifiedAddress.path,
         address: verifiedAddress.address,
+        device: verifiedAddress.device,
         message: request.challenge,
         onStatus: setTrezorStatus,
       });
@@ -593,6 +632,10 @@ export default function useWalletAuthFlow({
         personaId: selectedPersonaId,
       });
     } catch (err) {
+      if (err?.code === 'BITCOIN_ACCOUNT_UNAVAILABLE') {
+        setAuthHint('This wallet requires a secure wallet session. Continue in the wallet selector.');
+        return handleConnect();
+      }
       setVerificationStep('idle');
       setIsCheckingDB(false);
       setError(err.message || DEFAULT_ERROR);
@@ -602,6 +645,7 @@ export default function useWalletAuthFlow({
     clearConnectPolling,
     connectInjectedWallet,
     finalizeWalletConnection,
+    handleConnect,
     selectedPersonaId,
     setError,
   ]);
@@ -716,49 +760,6 @@ export default function useWalletAuthFlow({
     }
   }, [authRequest, selectedPersonaId, setError, signPsbt, signedPsbt]);
 
-  const signPreparedPsbtWithLedger = useCallback(async () => {
-    if (!ledgerUsbModule || !authRequest?.unsignedPsbt || !descriptorInfo) {
-      setError('Verify the Ledger address and create the PSBT request first.');
-      return null;
-    }
-
-    try {
-      setError('');
-      setLedgerBusy(true);
-      setVerificationStep('signing');
-      setLedgerStatus('Preparing Ledger signature.');
-      const signed = await ledgerUsbModule.signLedgerAuthenticationPsbt({
-        address: authRequest.address,
-        message: authRequest.challenge,
-        unsignedPsbt: authRequest.unsignedPsbt,
-        descriptorInfo,
-        account: Number(ledgerAccount),
-        branch: Number(descriptorBranch),
-        index: Number(descriptorIndex),
-        onStatus: setLedgerStatus,
-      });
-      setSignedPsbt(signed);
-      setAuthHint('Ledger signature received. Verify the proof to finish signing in.');
-      setLedgerStatus('Ledger signature received.');
-      return signed;
-    } catch (ledgerError) {
-      setLedgerStatus('');
-      setError(ledgerError.message || 'Ledger could not sign this authentication proof.');
-      return null;
-    } finally {
-      setLedgerBusy(false);
-      setVerificationStep('idle');
-    }
-  }, [
-    authRequest,
-    descriptorBranch,
-    descriptorIndex,
-    descriptorInfo,
-    ledgerAccount,
-    ledgerUsbModule,
-    setError,
-  ]);
-
   const prepareManualProof = useCallback(async () => {
     const address = manualAddress.trim();
 
@@ -800,7 +801,6 @@ export default function useWalletAuthFlow({
     setDescriptorInputState('');
     setDescriptorInfo(null);
     setDescriptorError('');
-    setLedgerReady(false);
     setLedgerStatus('');
   }, [clearProofState]);
 
@@ -870,7 +870,6 @@ export default function useWalletAuthFlow({
     setDescriptorBranch(0);
     setDescriptorIndex(0);
     setLedgerStatus('');
-    setLedgerReady(false);
     setTrezorStatus('');
   }, [clearConnectPolling, clearProofState]);
 
@@ -913,15 +912,13 @@ export default function useWalletAuthFlow({
     submitManualProof,
     signPreparedPsbt,
     connectLedgerUsb,
-    signPreparedPsbtWithLedger,
     ledgerAccount,
     setLedgerAccount,
     ledgerStatus,
     ledgerBusy,
-    ledgerReady,
     ledgerUsbAvailability: ledgerUsbModule?.getLedgerUsbAvailability?.() || {
       supported: false,
-      reason: 'Loading Ledger USB support...',
+      reason: 'Loading direct Ledger support...',
     },
     connectTrezorUsb,
     trezorAccount,
@@ -930,7 +927,7 @@ export default function useWalletAuthFlow({
     trezorBusy,
     trezorUsbAvailability: trezorUsbModule?.getTrezorUsbAvailability?.() || {
       supported: false,
-      reason: 'Loading Trezor USB support...',
+      reason: 'Loading direct Trezor support...',
     },
     mobileEntry,
     mobileDevice,

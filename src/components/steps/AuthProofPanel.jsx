@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 import {
   CheckCircle2,
   Copy,
@@ -10,13 +10,26 @@ import {
   QrCode,
   ScanLine,
   Upload,
-  Usb,
 } from 'lucide-react';
 import { psbtBase64ToBlob, psbtFileToBase64 } from '../../lib/psbtFiles';
 import { copyToClipboard } from '../../lib/clipboard';
 
 const AnimatedPsbtQr = lazy(() => import('./AnimatedPsbtQr'));
 const BcUrPsbtScanner = lazy(() => import('./BcUrPsbtScanner'));
+
+const TrezorMark = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="none" stroke="currentColor" strokeWidth="1.8">
+    <path d="M8 9V6.8a4 4 0 0 1 8 0V9" />
+    <path d="M6.5 9h11v10.5h-11z" />
+    <path d="M10 13h4M12 13v3" />
+  </svg>
+);
+
+const LedgerMark = ({ className = 'h-5 w-5' }) => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">
+    <path d="M3 3h7v2H5v5H3V3Zm11 0h7v7h-2V5h-5V3ZM3 14h2v5h5v2H3v-7Zm16 0h2v7h-7v-2h5v-5ZM8 8h8v8H8V8Z" />
+  </svg>
+);
 
 const QrLoading = () => (
   <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-8 text-sm font-semibold text-slate-600">
@@ -70,28 +83,36 @@ const AuthProofPanel = ({
   onSignPsbtDirect,
   isDirectSigning = false,
   onConnectLedger,
-  onSignPsbtLedger,
   ledgerAccount = 0,
   onLedgerAccountChange,
   ledgerStatus = '',
   ledgerBusy = false,
-  ledgerReady = false,
-  ledgerUsbAvailability = { supported: false, reason: 'Ledger USB is unavailable.' },
+  ledgerUsbAvailability = { supported: false, reason: 'Direct Ledger connection is unavailable.' },
   onConnectTrezor,
   trezorAccount = 0,
   onTrezorAccountChange,
   trezorStatus = '',
   trezorBusy = false,
-  trezorUsbAvailability = { supported: false, reason: 'Trezor USB is unavailable.' },
+  trezorUsbAvailability = { supported: false, reason: 'Direct Trezor connection is unavailable.' },
 }) => {
   const [fileError, setFileError] = useState('');
   const [showAnimatedQr, setShowAnimatedQr] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [copiedAction, setCopiedAction] = useState('');
+  const [hardwareMethod, setHardwareMethod] = useState('direct');
   const isMultisig = selectedPersonaId === 'cold_multisig';
   const isHardware = selectedPersonaId === 'cold_single_seed';
   const usesPsbt = authRequest?.proofFormat === 'bip322-psbt'
     || (authRequest == null && !isManualDesktop && (isMultisig || offlineProofFormat === 'psbt'));
+
+  useEffect(() => {
+    if (isHardware && !authRequest) setHardwareMethod('direct');
+  }, [isHardware, selectedPersonaId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectHardwareMethod = (method) => {
+    setHardwareMethod(method);
+    if (method !== 'direct') onOfflineProofFormatChange(method);
+  };
 
   const importPsbt = async (file) => {
     if (!file) return;
@@ -146,158 +167,120 @@ const AuthProofPanel = ({
       {!authRequest ? (
         <div className="grid gap-4">
           {isHardware && (
-            <section className="grid min-w-0 gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="flex min-w-0 items-start gap-3">
-                <span className="shrink-0 rounded-xl bg-slate-100 p-2 text-slate-700">
-                  <Usb className="h-5 w-5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-bold text-slate-950">Trezor USB</h3>
-                    <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-700">Beta</span>
-                  </div>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    Verify your Native SegWit address and sign in through the official Trezor window.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid min-w-0 gap-2 sm:grid-cols-3">
-                <label className="grid min-w-0 gap-1 text-xs font-semibold text-slate-600">
-                  Trezor account
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={trezorAccount}
-                    onChange={(event) => onTrezorAccountChange?.(Number(event.target.value))}
-                    disabled={trezorBusy}
-                    className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400"
-                  />
-                </label>
-                <label className="grid min-w-0 gap-1 text-xs font-semibold text-slate-600">
-                  Address chain
-                  <select
-                    value={descriptorBranch}
-                    onChange={(event) => onDescriptorBranchChange(Number(event.target.value))}
-                    disabled={trezorBusy}
-                    className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400"
-                  >
-                    <option value={0}>Receive</option>
-                    <option value={1}>Change</option>
-                  </select>
-                </label>
-                <label className="grid min-w-0 gap-1 text-xs font-semibold text-slate-600">
-                  Address index
-                  <input
-                    type="number"
-                    min="0"
-                    max="2147483647"
-                    step="1"
-                    value={descriptorIndex}
-                    onChange={(event) => onDescriptorIndexChange(Number(event.target.value))}
-                    disabled={trezorBusy}
-                    className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400"
-                  />
-                </label>
-              </div>
-
-              <button
-                type="button"
-                onClick={onConnectTrezor}
-                disabled={!trezorUsbAvailability.supported || trezorBusy || ledgerBusy}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {trezorBusy ? <Loader className="h-4 w-4 animate-spin" /> : <Usb className="h-4 w-4" />}
-                {trezorBusy ? 'Waiting for Trezor...' : 'Connect Trezor and sign in'}
-              </button>
-              {trezorStatus && <p className="text-xs font-medium text-blue-700">{trezorStatus}</p>}
-              {!trezorUsbAvailability.supported && (
-                <p className="text-xs leading-5 text-slate-500">{trezorUsbAvailability.reason}</p>
-              )}
-              <p className="text-xs leading-5 text-slate-500">
-                Confirm the address and message on your device. Never enter your seed or approve a transaction.
-              </p>
-            </section>
-          )}
-
-          {isHardware && (
             <div className="rounded-xl bg-slate-200/70 p-1">
-              <div className="grid grid-cols-2 gap-1">
+              <div className="grid grid-cols-3 gap-1">
                 <button
                   type="button"
-                  onClick={() => onOfflineProofFormatChange('psbt')}
+                  onClick={() => selectHardwareMethod('direct')}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
-                    offlineProofFormat === 'psbt' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'
+                    hardwareMethod === 'direct' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'
                   }`}
                 >
-                  PSBT
+                  Direct connection
                 </button>
                 <button
                   type="button"
-                  onClick={() => onOfflineProofFormatChange('message')}
+                  onClick={() => selectHardwareMethod('message')}
                   className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
-                    offlineProofFormat === 'message' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'
+                    hardwareMethod === 'message' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'
                   }`}
                 >
                   Message signature
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectHardwareMethod('psbt')}
+                  className={`rounded-lg px-3 py-2 text-xs font-bold transition ${
+                    hardwareMethod === 'psbt' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  PSBT
                 </button>
               </div>
             </div>
           )}
 
-          {isHardware && usesPsbt && (
-            <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="flex items-start gap-3">
-                <span className="rounded-xl bg-slate-100 p-2 text-slate-700">
-                  <Usb className="h-5 w-5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-bold text-slate-950">Ledger USB</h3>
-                    <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-700">Beta</span>
-                  </div>
-                  <p className="mt-1 text-xs leading-5 text-slate-500">
-                    Connect a Ledger on desktop and verify the Native SegWit address on its screen.
-                  </p>
-                </div>
+          {isHardware && hardwareMethod === 'direct' && (
+            <section className="grid min-w-0 gap-3 rounded-2xl border border-orange-200 bg-orange-50/70 p-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-950">Direct connection</h3>
+                <p className="mt-1 text-xs leading-5 text-slate-600">Connect your hardware wallet and approve the login message on its screen.</p>
               </div>
 
-              <label className="grid gap-1 text-xs font-semibold text-slate-600">
-                Ledger account
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={ledgerAccount}
-                  onChange={(event) => onLedgerAccountChange?.(Number(event.target.value))}
-                  disabled={ledgerBusy}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400"
-                />
-              </label>
+              <div className="grid min-w-0 gap-3 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="shrink-0 rounded-xl bg-slate-950 p-2 text-white"><TrezorMark /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-sm font-bold text-slate-950">Trezor</h4>
+                      <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-700">Beta</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">Verify your address, then sign the login message.</p>
+                  </div>
+                </div>
 
-              <button
-                type="button"
-                onClick={onConnectLedger}
-                disabled={!ledgerUsbAvailability.supported || ledgerBusy || trezorBusy}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {ledgerBusy ? <Loader className="h-4 w-4 animate-spin" /> : <Usb className="h-4 w-4" />}
-                {ledgerBusy ? 'Waiting for Ledger...' : ledgerReady ? 'Verify Ledger again' : 'Connect Ledger and verify address'}
-              </button>
-              {ledgerStatus && <p className="text-xs font-medium text-blue-700">{ledgerStatus}</p>}
-              {!ledgerUsbAvailability.supported && (
-                <p className="text-xs leading-5 text-slate-500">{ledgerUsbAvailability.reason}</p>
-              )}
-              <p className="text-xs leading-5 text-slate-500">
-                The site reads public account data only. It never receives your seed or private keys.
-              </p>
+                <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-600">Advanced address selection</summary>
+                  <div className="mt-3 grid min-w-0 gap-2 sm:grid-cols-3">
+                    <label className="grid min-w-0 gap-1 text-xs font-semibold text-slate-600">
+                      Account
+                      <input type="number" min="0" max="100" step="1" value={trezorAccount} onChange={(event) => onTrezorAccountChange?.(Number(event.target.value))} disabled={trezorBusy} className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400" />
+                    </label>
+                    <label className="grid min-w-0 gap-1 text-xs font-semibold text-slate-600">
+                      Chain
+                      <select value={descriptorBranch} onChange={(event) => onDescriptorBranchChange(Number(event.target.value))} disabled={trezorBusy} className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400">
+                        <option value={0}>Receive</option>
+                        <option value={1}>Change</option>
+                      </select>
+                    </label>
+                    <label className="grid min-w-0 gap-1 text-xs font-semibold text-slate-600">
+                      Index
+                      <input type="number" min="0" max="2147483647" step="1" value={descriptorIndex} onChange={(event) => onDescriptorIndexChange(Number(event.target.value))} disabled={trezorBusy} className="min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400" />
+                    </label>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">Leave the defaults unless you intentionally use another BIP84 address.</p>
+                </details>
+
+                <button type="button" onClick={onConnectTrezor} disabled={!trezorUsbAvailability.supported || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                  {trezorBusy ? <Loader className="h-4 w-4 animate-spin" /> : <TrezorMark className="h-4 w-4" />}
+                  {trezorBusy ? 'Waiting for Trezor...' : 'Connect Trezor and sign in'}
+                </button>
+                {trezorStatus && <p className="text-xs font-medium text-blue-700">{trezorStatus}</p>}
+                {!trezorUsbAvailability.supported && <p className="text-xs leading-5 text-slate-500">{trezorUsbAvailability.reason}</p>}
+              </div>
+
+              <div className="grid min-w-0 gap-3 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="shrink-0 rounded-xl bg-slate-950 p-2 text-white"><LedgerMark /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-sm font-bold text-slate-950">Ledger</h4>
+                      <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-700">Beta</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">Verify your address, then approve the login message. Sign-in completes automatically.</p>
+                  </div>
+                </div>
+                <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <summary className="cursor-pointer text-xs font-semibold text-slate-600">Advanced account selection</summary>
+                  <label className="mt-3 grid gap-1 text-xs font-semibold text-slate-600">
+                    Account
+                    <input type="number" min="0" max="100" step="1" value={ledgerAccount} onChange={(event) => onLedgerAccountChange?.(Number(event.target.value))} disabled={ledgerBusy} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-orange-400" />
+                  </label>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">Keep account 0 unless you intentionally created another Native SegWit Bitcoin account.</p>
+                </details>
+                <button type="button" onClick={onConnectLedger} disabled={!ledgerUsbAvailability.supported || ledgerBusy || trezorBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                  {ledgerBusy ? <Loader className="h-4 w-4 animate-spin" /> : <LedgerMark className="h-4 w-4" />}
+                  {ledgerBusy ? 'Continue on Ledger...' : 'Connect Ledger and sign in'}
+                </button>
+                {ledgerStatus && <p className="text-xs font-medium text-blue-700">{ledgerStatus}</p>}
+                {!ledgerUsbAvailability.supported && <p className="text-xs leading-5 text-slate-500">{ledgerUsbAvailability.reason}</p>}
+              </div>
+
+              <p className="text-xs leading-5 text-slate-500">Never enter your seed or approve a real transaction.</p>
             </section>
           )}
 
-          {usesPsbt && (
+          {usesPsbt && (!isHardware || hardwareMethod === 'psbt') && (
             <section className="grid gap-3 rounded-2xl border border-orange-200 bg-orange-50/70 p-4">
               <div className="flex items-start gap-3">
                 <span className="rounded-xl bg-white p-2 text-orange-600 shadow-sm ring-1 ring-orange-100">
@@ -383,48 +366,52 @@ const AuthProofPanel = ({
             </section>
           )}
 
-          <details className="rounded-xl border border-slate-200 bg-white px-4 py-3" open={!usesPsbt || (!descriptorInput && !descriptorInfo)}>
-            <summary className="cursor-pointer text-sm font-semibold text-slate-700">
-              {usesPsbt ? 'Enter details manually instead' : 'Wallet details'}
-            </summary>
-            <div className="mt-4 grid gap-4">
-              <label className="grid gap-2">
-                <span className="text-sm font-semibold text-slate-700">Bitcoin address</span>
-                <input
-                  value={manualAddress}
-                  onChange={(event) => onManualAddressChange(event.target.value)}
-                  readOnly={Boolean(descriptorInfo)}
-                  placeholder={isMultisig ? 'bc1q... (Native SegWit multisig)' : '1..., 3... or bc1...'}
-                  className="min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 read-only:bg-slate-100 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
-                />
-              </label>
+          {(!isHardware || hardwareMethod !== 'direct') && (
+            <>
+              <details className="rounded-xl border border-slate-200 bg-white px-4 py-3" open={!usesPsbt || (!descriptorInput && !descriptorInfo)}>
+                <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+                  {usesPsbt ? 'Enter details manually instead' : 'Wallet details'}
+                </summary>
+                <div className="mt-4 grid gap-4">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-semibold text-slate-700">Bitcoin address</span>
+                    <input
+                      value={manualAddress}
+                      onChange={(event) => onManualAddressChange(event.target.value)}
+                      readOnly={Boolean(descriptorInfo)}
+                      placeholder={isMultisig ? 'bc1q... (Native SegWit multisig)' : '1..., 3... or bc1...'}
+                      className="min-w-0 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 read-only:bg-slate-100 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                    />
+                  </label>
 
-              {isMultisig && !descriptorInfo && (
-                <label className="grid gap-2">
-                  <span className="text-sm font-semibold text-slate-700">Multisig witness script</span>
-                  <textarea
-                    value={multisigWitnessScript}
-                    onChange={(event) => onMultisigWitnessScriptChange(event.target.value)}
-                    placeholder="Hexadecimal witness script exported by your coordinator"
-                    rows={3}
-                    className="min-w-0 resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 font-mono text-xs text-slate-950 outline-none transition placeholder:font-sans placeholder:text-slate-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
-                  />
-                </label>
-              )}
-            </div>
-          </details>
+                  {isMultisig && !descriptorInfo && (
+                    <label className="grid gap-2">
+                      <span className="text-sm font-semibold text-slate-700">Multisig witness script</span>
+                      <textarea
+                        value={multisigWitnessScript}
+                        onChange={(event) => onMultisigWitnessScriptChange(event.target.value)}
+                        placeholder="Hexadecimal witness script exported by your coordinator"
+                        rows={3}
+                        className="min-w-0 resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 font-mono text-xs text-slate-950 outline-none transition placeholder:font-sans placeholder:text-slate-400 focus:border-orange-400 focus:ring-4 focus:ring-orange-100"
+                      />
+                    </label>
+                  )}
+                </div>
+              </details>
 
-          <button
-            type="button"
-            onClick={onGenerateProof}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3.5 text-sm font-bold text-white transition hover:bg-slate-800"
-          >
-            <FileSignature className="h-4 w-4" />
-            {usesPsbt ? 'Create signing request' : 'Generate challenge'}
-          </button>
-          <p className="text-xs text-slate-500">
-            {usesPsbt ? 'This virtual proof spends no bitcoin and cannot be broadcast.' : 'Never enter a seed phrase or private key.'}
-          </p>
+              <button
+                type="button"
+                onClick={onGenerateProof}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3.5 text-sm font-bold text-white transition hover:bg-slate-800"
+              >
+                <FileSignature className="h-4 w-4" />
+                {usesPsbt ? 'Create signing request' : 'Generate challenge'}
+              </button>
+              <p className="text-xs text-slate-500">
+                {usesPsbt ? 'This virtual proof spends no bitcoin and cannot be broadcast.' : 'Never enter a seed phrase or private key.'}
+              </p>
+            </>
+          )}
           {fileError && <p className="text-sm text-red-600">{fileError}</p>}
         </div>
       ) : usesPsbt ? (
@@ -434,28 +421,6 @@ const AuthProofPanel = ({
             Signing request ready
           </div>
           {authHint && <p className="text-sm text-slate-600">{authHint}</p>}
-
-          {isHardware && ledgerReady && (
-            <section className="rounded-2xl border border-orange-200 bg-orange-50/70 p-4">
-              <div className="flex items-start gap-3">
-                <span className="rounded-xl bg-white p-2 text-orange-600 shadow-sm"><Usb className="h-5 w-5" /></span>
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-bold text-slate-950">Sign with Ledger USB</h3>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">Reconnect the same Ledger, verify the address, then approve the proof.</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={onSignPsbtLedger}
-                disabled={ledgerBusy || Boolean(signedPsbt)}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {ledgerBusy ? <Loader className="h-4 w-4 animate-spin" /> : <FileSignature className="h-4 w-4" />}
-                {ledgerBusy ? 'Waiting for Ledger...' : signedPsbt ? 'Ledger signature received' : 'Sign with Ledger'}
-              </button>
-              {ledgerStatus && <p className="mt-3 text-xs font-medium text-blue-700">{ledgerStatus}</p>}
-            </section>
-          )}
 
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
             <div className="flex items-start gap-3">

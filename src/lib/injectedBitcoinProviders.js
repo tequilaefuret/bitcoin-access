@@ -40,6 +40,46 @@ const normalizeWalletStandardAccounts = (accounts) => (accounts || []).map((acco
   purpose: account.purpose || (index === 0 ? 'payment' : 'ordinals'),
 }));
 
+const trackWalletStandardAccounts = (wallet) => {
+  let latestAccounts = normalizeWalletStandardAccounts(wallet.accounts);
+  let resolveNextChange;
+  const events = wallet.features['bitcoin:events'];
+  const off = typeof events?.on === 'function'
+    ? events.on('change', ({ accounts } = {}) => {
+      latestAccounts = normalizeWalletStandardAccounts(accounts ?? wallet.accounts);
+      if (latestAccounts.length && resolveNextChange) {
+        resolveNextChange(latestAccounts);
+        resolveNextChange = undefined;
+      }
+    })
+    : () => {};
+
+  return {
+    current: () => latestAccounts.length
+      ? latestAccounts
+      : normalizeWalletStandardAccounts(wallet.accounts),
+    wait: (timeoutMs = 2500) => new Promise((resolve) => {
+      const currentAccounts = latestAccounts.length
+        ? latestAccounts
+        : normalizeWalletStandardAccounts(wallet.accounts);
+      if (currentAccounts.length) {
+        resolve(currentAccounts);
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        resolveNextChange = undefined;
+        resolve(normalizeWalletStandardAccounts(wallet.accounts));
+      }, timeoutMs);
+      resolveNextChange = (accounts) => {
+        clearTimeout(timeout);
+        resolve(accounts);
+      };
+    }),
+    stop: () => off?.(),
+  };
+};
+
 const createWalletStandardProvider = (wallet) => {
   let authorizedAccounts = [];
 
@@ -52,11 +92,18 @@ const createWalletStandardProvider = (wallet) => {
     name: wallet.name,
     walletStandard: true,
     requestAccounts: async () => {
-      const response = await wallet.features['bitcoin:connect'].connect({
-        purposes: ['payment', 'ordinals'],
-      });
-      authorizedAccounts = normalizeWalletStandardAccounts(response?.accounts);
-      return authorizedAccounts;
+      const accountTracker = trackWalletStandardAccounts(wallet);
+      try {
+        const response = await wallet.features['bitcoin:connect'].connect({
+          purposes: ['payment'],
+        });
+        authorizedAccounts = normalizeWalletStandardAccounts(response?.accounts);
+        if (!authorizedAccounts.length) authorizedAccounts = accountTracker.current();
+        if (!authorizedAccounts.length) authorizedAccounts = await accountTracker.wait();
+        return authorizedAccounts;
+      } finally {
+        accountTracker.stop();
+      }
     },
     signMessage: async ({ address, message }) => {
       const account = findAccount(address);
@@ -215,6 +262,16 @@ export function subscribeToBitcoinProviderChanges(listener) {
     offRegister();
     offUnregister();
   };
+}
+
+export function requestWalletStandardRegistration() {
+  if (typeof window === 'undefined') return;
+  const wallets = getWallets();
+
+  // Extensions can load after the app's first wallet-standard:app-ready event.
+  window.dispatchEvent(new CustomEvent('wallet-standard:app-ready', {
+    detail: Object.freeze({ register: wallets.register }),
+  }));
 }
 
 export function selectBitcoinAccount(accounts) {

@@ -65,12 +65,10 @@ const ConnectStep = ({
   submitManualProof,
   signPreparedPsbt,
   connectLedgerUsb,
-  signPreparedPsbtWithLedger,
   ledgerAccount,
   setLedgerAccount,
   ledgerStatus,
   ledgerBusy,
-  ledgerReady,
   ledgerUsbAvailability,
   connectTrezorUsb,
   trezorAccount,
@@ -92,7 +90,7 @@ const ConnectStep = ({
 }) => {
   const [showMobileLink, setShowMobileLink] = useState(false);
   const [mobileLinkCopied, setMobileLinkCopied] = useState(false);
-  const [accessMode, setAccessMode] = useState(mobileEntry ? 'wallet' : 'password');
+  const [accessMode, setAccessMode] = useState(mobileEntry || mobileDevice ? 'wallet' : 'password');
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -104,8 +102,8 @@ const ConnectStep = ({
   );
 
   useEffect(() => {
-    if (mobileEntry) setAccessMode('wallet');
-  }, [mobileEntry]);
+    if (mobileEntry || mobileDevice) setAccessMode('wallet');
+  }, [mobileDevice, mobileEntry]);
 
   const isBrowser = selectedWalletType.id === 'desktop_hot_wallet';
   const isMobile = selectedWalletType.id === 'mobile_hot_wallet';
@@ -349,9 +347,11 @@ const ConnectStep = ({
             <div className="mt-6 grid gap-3">
               {injectedWallets.length > 0 && (
                 <>
-                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
+                  <div className="flex items-center gap-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    <span className="h-px flex-1 bg-slate-200" />
                     Detected in this browser
-                  </p>
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
                   {injectedWallets.map((wallet) => (
                     <button
                       key={wallet.id}
@@ -471,12 +471,10 @@ const ConnectStep = ({
               onSignPsbtDirect={signPreparedPsbt}
               isDirectSigning={verificationStep === 'signing'}
               onConnectLedger={connectLedgerUsb}
-              onSignPsbtLedger={signPreparedPsbtWithLedger}
               ledgerAccount={ledgerAccount}
               onLedgerAccountChange={setLedgerAccount}
               ledgerStatus={ledgerStatus}
               ledgerBusy={ledgerBusy}
-              ledgerReady={ledgerReady}
               ledgerUsbAvailability={ledgerUsbAvailability}
               onConnectTrezor={connectTrezorUsb}
               trezorAccount={trezorAccount}

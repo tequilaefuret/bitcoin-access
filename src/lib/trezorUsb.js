@@ -24,7 +24,7 @@ const getManifest = () => {
   const configuredEmail = configuredManifestEmail();
   const email = configuredEmail || (isLocalHost() ? LOCAL_MANIFEST_EMAIL : '');
   if (!email || !isValidManifestEmail(email)) {
-    throw new Error('Trezor USB requires a valid REACT_APP_TREZOR_MANIFEST_EMAIL configuration.');
+    throw new Error('Direct Trezor connection requires a valid REACT_APP_TREZOR_MANIFEST_EMAIL configuration.');
   }
 
   return {
@@ -59,8 +59,8 @@ const withTimeout = (operation, fallback) => new Promise((resolve, reject) => {
 const initializeTrezorConnect = async () => {
   if (!initializationPromise) {
     initializationPromise = TrezorConnect.init({
-      coreMode: 'popup',
-      lazyLoad: true,
+      coreMode: 'iframe',
+      lazyLoad: false,
       manifest: getManifest(),
     }).catch((error) => {
       initializationPromise = null;
@@ -77,17 +77,17 @@ export async function prepareTrezorConnect() {
 
 export function getTrezorUsbAvailability() {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') {
-    return { supported: false, reason: 'Trezor USB requires a browser.' };
+    return { supported: false, reason: 'Direct Trezor connection requires a browser.' };
   }
   if (!window.isSecureContext) {
-    return { supported: false, reason: 'Trezor USB requires HTTPS or localhost.' };
+    return { supported: false, reason: 'Direct Trezor connection requires HTTPS or localhost.' };
   }
   if (/^((?!chrome|android).)*safari/i.test(navigator.userAgent || '')) {
     return { supported: false, reason: 'Use Chrome, Edge, Brave, or Firefox with Trezor Bridge.' };
   }
   const email = configuredManifestEmail();
   if (!isLocalHost() && (!email || !isValidManifestEmail(email))) {
-    return { supported: false, reason: 'Trezor USB is not configured for this site yet.' };
+    return { supported: false, reason: 'Direct Trezor connection is not configured for this site yet.' };
   }
   return { supported: true, reason: '' };
 }
@@ -107,6 +107,7 @@ export async function getVerifiedTrezorAddress({ account = 0, branch = 0, index 
     TrezorConnect.getAddress({
       path,
       coin: 'btc',
+      keepSession: true,
       scriptType: 'SPENDWITNESS',
       showOnTrezor: true,
     }),
@@ -116,10 +117,10 @@ export async function getVerifiedTrezorAddress({ account = 0, branch = 0, index 
 
   const address = validateTrezorAddress(response.payload?.address);
   onStatus?.('Address confirmed on Trezor. Preparing the sign-in challenge.');
-  return { address, path };
+  return { address, path, device: response.device };
 }
 
-export async function signTrezorAuthenticationMessage({ path, address, message, onStatus }) {
+export async function signTrezorAuthenticationMessage({ path, address, message, device, onStatus }) {
   assertTrezorUsbSupport();
   if (!path || typeof path !== 'string') throw new Error('The verified Trezor path is missing.');
   const expectedAddress = validateTrezorAddress(address);
@@ -131,6 +132,8 @@ export async function signTrezorAuthenticationMessage({ path, address, message, 
     TrezorConnect.signMessage({
       path,
       coin: 'btc',
+      device,
+      keepSession: false,
       message,
       hex: false,
     }),

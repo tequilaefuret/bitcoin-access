@@ -142,12 +142,10 @@ const BitcoinExclusiveAccess = () => {
     submitManualProof,
     signPreparedPsbt,
     connectLedgerUsb,
-    signPreparedPsbtWithLedger,
     ledgerAccount,
     setLedgerAccount,
     ledgerStatus,
     ledgerBusy,
-    ledgerReady,
     ledgerUsbAvailability,
     connectTrezorUsb,
     trezorAccount,
@@ -507,12 +505,10 @@ const BitcoinExclusiveAccess = () => {
               submitManualProof={submitManualProof}
               signPreparedPsbt={signPreparedPsbt}
               connectLedgerUsb={connectLedgerUsb}
-              signPreparedPsbtWithLedger={signPreparedPsbtWithLedger}
               ledgerAccount={ledgerAccount}
               setLedgerAccount={setLedgerAccount}
               ledgerStatus={ledgerStatus}
               ledgerBusy={ledgerBusy}
-              ledgerReady={ledgerReady}
               ledgerUsbAvailability={ledgerUsbAvailability}
               connectTrezorUsb={connectTrezorUsb}
               trezorAccount={trezorAccount}

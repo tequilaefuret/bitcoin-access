@@ -21,6 +21,32 @@ export function buildLedgerDescriptor({ fingerprint, extendedPublicKey, account 
   return `wpkh([${fingerprint.toLowerCase()}/${accountPath}]${extendedPublicKey}/<0;1>/*)`;
 }
 
+const compactRecoveryId = (value) => {
+  if (Number.isInteger(value) && value >= 0 && value <= 3) return value;
+  const ranges = [27, 31, 35, 39];
+  const range = ranges.find((start) => value >= start && value <= start + 3);
+  if (range == null) throw new Error('Ledger returned an invalid message recovery identifier.');
+  return value - range;
+};
+
+export function encodeLedgerMessageSignature({ v, r, s }) {
+  const recoveryId = compactRecoveryId(v);
+  const normalizeScalar = (value, label) => {
+    const normalized = typeof value === 'string' ? value.replace(/^0x/, '') : '';
+    if (!/^[0-9a-f]{64}$/i.test(normalized)) {
+      throw new Error(`Ledger returned an invalid message signature ${label} value.`);
+    }
+    return Buffer.from(normalized, 'hex');
+  };
+
+  // BIP-137 headers 39-42 identify compressed Native SegWit addresses.
+  return Buffer.concat([
+    Buffer.from([39 + recoveryId]),
+    normalizeScalar(r, 'R'),
+    normalizeScalar(s, 'S'),
+  ]).toString('base64');
+}
+
 export function validateLedgerSigningRequest({
   address,
   message,
@@ -34,7 +60,7 @@ export function validateLedgerSigningRequest({
   assertLedgerInteger(index, 'Address index');
   if (![0, 1].includes(branch)) throw new Error('The Ledger address chain must be receive or change.');
   if (descriptorInfo?.addressType !== 'p2wpkh' || descriptorInfo?.address !== address) {
-    throw new Error('Ledger USB signing is limited to the verified Native SegWit address.');
+    throw new Error('Direct Ledger signing is limited to the verified Native SegWit address.');
   }
 
   let psbt;

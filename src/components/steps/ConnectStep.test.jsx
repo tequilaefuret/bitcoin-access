@@ -113,7 +113,7 @@ test('uses the detected wallet directly from its in-app browser', () => {
   expect(onConnect).not.toHaveBeenCalled();
 });
 
-test('offers the direct Trezor USB journey for a hardware wallet', () => {
+test('offers the direct Trezor journey for a hardware wallet', () => {
   const connectTrezorUsb = jest.fn();
   renderConnectStep({
     selectedPersonaId: 'cold_single_seed',
@@ -128,9 +128,34 @@ test('offers the direct Trezor USB journey for a hardware wallet', () => {
   });
 
   fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
-  expect(screen.getByRole('heading', { name: /trezor usb/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /direct connection/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /^trezor$/i })).toBeInTheDocument();
+  expect(screen.getByText(/advanced address selection/i).closest('details')).not.toHaveAttribute('open');
   fireEvent.click(screen.getByRole('button', { name: /connect trezor and sign in/i }));
 
   expect(connectTrezorUsb).toHaveBeenCalledTimes(1);
-  expect(screen.getByText(/never enter your seed or approve a transaction/i)).toBeInTheDocument();
+  expect(screen.getByText(/never enter your seed or approve a real transaction/i)).toBeInTheDocument();
+});
+
+test('keeps the direct Ledger journey to one automatic action', () => {
+  const connectLedgerUsb = jest.fn();
+  renderConnectStep({
+    selectedPersonaId: 'cold_single_seed',
+    authMode: 'offline',
+    offlineProofFormat: 'psbt',
+    descriptorInput: '',
+    descriptorBranch: 0,
+    descriptorIndex: 0,
+    ledgerAccount: 0,
+    connectLedgerUsb,
+    ledgerUsbAvailability: { supported: true, reason: '' },
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+  expect(screen.getByText(/advanced account selection/i).closest('details')).not.toHaveAttribute('open');
+  expect(screen.queryByText(/import wallet policy/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /sign directly/i })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /connect ledger and sign in/i }));
+
+  expect(connectLedgerUsb).toHaveBeenCalledTimes(1);
 });
