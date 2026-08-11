@@ -203,7 +203,7 @@ test('opens the official wallet applications for mobile hardware journeys', () =
   expect(screen.getByText(/continue with ledger wallet through the secure wallet selector/i)).toBeInTheDocument();
 });
 
-test('offers Jade through direct USB and native QR proof journeys', () => {
+test('offers Jade through direct USB and xpub-derived QR proof journeys', () => {
   const selectOfflineProofFormat = jest.fn();
   const connectJadeUsb = jest.fn();
   const prepareJadeQrProof = jest.fn();
@@ -214,10 +214,15 @@ test('offers Jade through direct USB and native QR proof journeys', () => {
     descriptorInput: '',
     descriptorBranch: 0,
     descriptorIndex: 0,
-    manualAddress: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+    descriptorInfo: { address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh' },
     selectOfflineProofFormat,
     connectJadeUsb,
     prepareJadeQrProof,
+    jadeQrAccountInfo: {
+      account: 0,
+      accountPath: "m/84'/0'/0'",
+      descriptor: "wpkh([d34db33f/84'/0'/0']xpub-test/<0;1>/*)",
+    },
     jadeUsbAvailability: { supported: true, reason: '' },
   });
 
@@ -231,8 +236,23 @@ test('offers Jade through direct USB and native QR proof journeys', () => {
   expect(selectOfflineProofFormat).not.toHaveBeenCalled();
   expect(screen.getByRole('heading', { name: /jade air-gapped qr/i })).toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: /import wallet policy/i })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /create jade qr request/i }));
+  expect(screen.getByText(/public jade account imported/i)).toBeInTheDocument();
+  expect(screen.getByText(/bc1qxy2kgdy/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /create signing qr/i }));
   expect(prepareJadeQrProof).toHaveBeenCalledTimes(1);
+});
+
+test('explains why Jade USB from the Blockstream app is unavailable to a mobile browser', () => {
+  renderConnectStep({
+    selectedPersonaId: 'cold_single_seed',
+    authMode: 'offline',
+    mobileDevice: true,
+    jadeUsbAvailability: { supported: false, reason: 'Web Serial unavailable.' },
+  });
+
+  const usbButton = screen.getByRole('button', { name: /usb unavailable in this browser/i });
+  expect(usbButton).toBeDisabled();
+  expect(screen.getByText(/blockstream app is not exposed to this browser/i)).toBeInTheDocument();
 });
 
 test('shows the prepared Jade signmessage QR and submits its signature', () => {

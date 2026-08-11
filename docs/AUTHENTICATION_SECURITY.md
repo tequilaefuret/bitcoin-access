@@ -400,20 +400,30 @@ interaction timeouts. Replies must carry the expected request identifier.
 Only a canonical 65-byte recoverable message signature is accepted and it is
 normalized to the Native SegWit BIP-137 header before server verification.
 
-The air-gapped path emits the firmware's native Specter-compatible payload:
-`signmessage <BIP84 path> ascii:<server challenge>`. A camera-equipped Jade
-is unlocked independently, scans that static QR, displays the path and message,
-then returns a plain Base64
-signature QR. The site scans and validates that response; it does not create a
-PSBT. Verification fails unless the entered `bc1q...` address belongs to the
-selected path.
+The air-gapped path first scans the animated `crypto-account` BC-UR exported by
+Jade Plus from **Options → Wallet → Export Xpub**. It accepts exactly one public
+Bitcoin mainnet Native SegWit singlesig account rooted at
+`m/84'/0'/account'`; private keys, other networks, scripts and paths are
+rejected. The site appends the public receive/change derivation, derives the
+selected address locally and never asks the user to type that address.
 
-Web Serial requires HTTPS or localhost and a compatible Chromium browser.
-Safari and Firefox cannot use direct USB, but a camera-equipped Jade can still
-use the QR path. The interface never requests the PIN, recovery phrase, SeedQR,
-private descriptor or private key. Both paths remain beta until tested through
-unlock, address confirmation, signing, cancellation and timeout on physical
-Jade devices and firmware versions used by the project.
+The site then builds the firmware's native Specter-compatible payload,
+`signmessage <BIP84 path> ascii:<server challenge>`, and wraps its bytes in an
+animated `UR:BYTES` sequence. Jade assembles the low-density frames, displays
+the path and message, and returns a plain Base64 signature QR. The site scans
+and validates that response; it does not create a PSBT. Verification is bound
+to the address derived from the scanned account xpub and the selected path.
+
+Web Serial requires HTTPS or localhost and a compatible browser. The mobile
+Blockstream app owns its own USB-C session and cannot expose that session to a
+separate browser tab; installing the app therefore does not enable the site's
+USB button. Mobile users should use Jade QR, while direct USB is offered on a
+compatible desktop Chromium browser. If Jade cannot unlock in the current
+Blockstream app, update both the app and Jade firmware before diagnosing the
+site connection. The interface never requests the PIN, recovery phrase,
+SeedQR, private descriptor or private key. Both paths remain beta until tested
+through unlock, address confirmation, signing, cancellation and timeout on
+physical Jade devices and firmware versions used by the project.
 
 Challenge address validation decodes Base58, SegWit v0 Bech32 and Taproot v1
 Bech32m directly. It deliberately avoids `bitcoinjs-lib`'s

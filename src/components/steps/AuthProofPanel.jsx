@@ -1,5 +1,4 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import {
   CheckCircle2,
   Copy,
@@ -17,7 +16,9 @@ import { copyToClipboard } from '../../lib/clipboard';
 import ConnectionMethodHelp from './ConnectionMethodHelp';
 
 const AnimatedPsbtQr = lazy(() => import('./AnimatedPsbtQr'));
+const AnimatedJadeMessageQr = lazy(() => import('./AnimatedJadeMessageQr'));
 const BcUrPsbtScanner = lazy(() => import('./BcUrPsbtScanner'));
+const JadeAccountScanner = lazy(() => import('./JadeAccountScanner'));
 const JadeSignatureScanner = lazy(() => import('./JadeSignatureScanner'));
 
 const TrezorMark = ({ className = 'h-5 w-5' }) => (
@@ -104,6 +105,7 @@ const AuthProofPanel = ({
   trezorUsbAvailability = { supported: false, reason: 'Direct Trezor connection is unavailable.' },
   onConnectJade,
   onPrepareJadeQr,
+  onAcceptJadeAccountQr,
   onAcceptJadeQrSignature,
   onSubmitJadeQrProof,
   jadeAccount = 0,
@@ -113,6 +115,8 @@ const AuthProofPanel = ({
   jadeUsbAvailability = { supported: false, reason: 'Direct Jade connection is unavailable.' },
   jadeQrPayload = '',
   jadeQrPath = '',
+  jadeQrAccountInfo = null,
+  mobileDevice = false,
   hardwareMethod = 'direct',
   onHardwareMethodChange,
 }) => {
@@ -120,6 +124,7 @@ const AuthProofPanel = ({
   const [showAnimatedQr, setShowAnimatedQr] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [showJadeScanner, setShowJadeScanner] = useState(false);
+  const [showJadeAccountScanner, setShowJadeAccountScanner] = useState(false);
   const [copiedAction, setCopiedAction] = useState('');
   const isMultisig = selectedPersonaId === 'cold_multisig';
   const isHardware = selectedPersonaId === 'cold_single_seed';
@@ -350,7 +355,7 @@ const AuthProofPanel = ({
                 <div className="grid gap-2 sm:grid-cols-2">
                   <button type="button" onClick={onConnectJade} disabled={!jadeUsbAvailability.supported || jadeBusy || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
                     {jadeBusy ? <Loader className="h-4 w-4 animate-spin" /> : <JadeMark className="h-4 w-4" />}
-                    {jadeBusy ? 'Connecting Jade...' : 'Connect Jade by USB'}
+                    {jadeBusy ? 'Connecting Jade...' : mobileDevice && !jadeUsbAvailability.supported ? 'USB unavailable in this browser' : 'Connect Jade by USB'}
                   </button>
                   <button type="button" onClick={() => selectHardwareMethod('jade-qr')} disabled={jadeBusy || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
                     <QrCode className="h-4 w-4" />
@@ -359,6 +364,11 @@ const AuthProofPanel = ({
                 </div>
                 {jadeStatus && <p className="text-xs font-medium text-blue-700">{jadeStatus}</p>}
                 {jadeUsbAvailability.reason && <p className="text-xs leading-5 text-slate-500">{jadeUsbAvailability.reason}</p>}
+                {mobileDevice && !jadeUsbAvailability.supported && (
+                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                    A Jade connected inside the Blockstream app is not exposed to this browser. Use Jade QR here, or use USB from a compatible desktop Chromium browser.
+                  </p>
+                )}
                 <ConnectionMethodHelp compact guideId="hardware-jade-usb" />
               </div>
 
@@ -372,23 +382,62 @@ const AuthProofPanel = ({
                 <span className="rounded-xl bg-emerald-700 p-2 text-white"><QrCode className="h-5 w-5" /></span>
                 <div>
                   <h3 className="text-sm font-bold text-slate-950">Jade air-gapped QR</h3>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">For Jade models with a camera. No cable, companion app, transaction or PSBT is used.</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">Jade first shares a public xpub so the address can be derived automatically. No cable, transaction or PSBT is used.</p>
                 </div>
               </div>
-              <label className="grid gap-2">
-                <span className="text-sm font-semibold text-slate-700">Native SegWit receiving address</span>
-                <input
-                  value={manualAddress}
-                  onChange={(event) => onManualAddressChange(event.target.value)}
-                  placeholder="bc1q..."
-                  className="min-w-0 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
-                />
-              </label>
-              <p className="text-xs leading-5 text-slate-500">Use the address at account {jadeAccount}, {descriptorBranch === 0 ? 'receive' : 'change'} chain, index {descriptorIndex}. The signature is rejected if the address and path do not match.</p>
-              <button type="button" onClick={onPrepareJadeQr} disabled={jadeBusy || !manualAddress.trim()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3.5 text-sm font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
-                {jadeBusy ? <Loader className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
-                {jadeBusy ? 'Creating request...' : 'Create Jade QR request'}
+              <ol className="grid gap-1 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-xs leading-5 text-slate-700">
+                <li><strong>1.</strong> Start and unlock an air-gapped Jade session.</li>
+                <li><strong>2.</strong> On Jade, open <strong>Options → Wallet → Export Xpub</strong>.</li>
+                <li><strong>3.</strong> Keep <strong>Native SegWit · Singlesig</strong>, then scan Jade’s animated QR below.</li>
+              </ol>
+              <button type="button" onClick={() => setShowJadeAccountScanner((visible) => !visible)} className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-white px-4 py-3 text-sm font-bold text-emerald-800 transition hover:bg-emerald-50">
+                <ScanLine className="h-4 w-4" />
+                {showJadeAccountScanner ? 'Hide xpub scanner' : jadeQrAccountInfo ? 'Scan another Jade xpub' : 'Scan Jade animated xpub'}
               </button>
+              {showJadeAccountScanner && (
+                <Suspense fallback={<QrLoading />}>
+                  <JadeAccountScanner
+                    onDecoded={async (accountInfo) => {
+                      await onAcceptJadeAccountQr?.(accountInfo);
+                      setShowJadeAccountScanner(false);
+                    }}
+                    onClose={() => setShowJadeAccountScanner(false)}
+                  />
+                </Suspense>
+              )}
+              {jadeQrAccountInfo && descriptorInfo && (
+                <div className="grid gap-3 rounded-xl border border-emerald-200 bg-white p-3">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Public Jade account imported
+                  </div>
+                  <div className="grid gap-1 text-xs text-slate-600">
+                    <span>Path: <span className="font-mono">{jadeQrAccountInfo.accountPath}/{descriptorBranch}/{descriptorIndex}</span></span>
+                    <span className="break-all">Address: <span className="font-mono text-slate-900">{descriptorInfo.address}</span></span>
+                  </div>
+                  <details className="rounded-lg bg-slate-50 px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-600">Advanced address selection</summary>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                        Chain
+                        <select value={descriptorBranch} onChange={(event) => onDescriptorBranchChange(Number(event.target.value))} disabled={jadeBusy} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900">
+                          <option value={0}>Receive</option>
+                          <option value={1}>Change</option>
+                        </select>
+                      </label>
+                      <label className="grid gap-1 text-xs font-semibold text-slate-600">
+                        Index
+                        <input type="number" min="0" max="2147483647" step="1" value={descriptorIndex} onChange={(event) => onDescriptorIndexChange(Number(event.target.value))} disabled={jadeBusy} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900" />
+                      </label>
+                    </div>
+                  </details>
+                  <button type="button" onClick={onPrepareJadeQr} disabled={jadeBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3.5 text-sm font-bold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50">
+                    {jadeBusy ? <Loader className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />}
+                    {jadeBusy ? 'Creating request...' : 'Create signing QR'}
+                  </button>
+                </div>
+              )}
+              {descriptorError && <p className="text-xs font-medium text-red-700">{descriptorError}</p>}
               <ConnectionMethodHelp compact guideId="hardware-jade-qr" />
             </section>
           )}
@@ -535,21 +584,13 @@ const AuthProofPanel = ({
           </div>
           {authHint && <p className="text-sm text-slate-600">{authHint}</p>}
           <ol className="grid gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-950">
-            <li><strong>1.</strong> Unlock Jade, open <strong>Scan QR</strong> and scan the code below.</li>
+            <li><strong>1.</strong> On the unlocked Jade, open <strong>Scan QR</strong> and keep its camera pointed at the animation below.</li>
             <li><strong>2.</strong> Verify the login message and path <span className="font-mono">{jadeQrPath}</span>, then approve.</li>
             <li><strong>3.</strong> Select <strong>Scan Jade response</strong> here and show Jade’s signature QR to the camera.</li>
           </ol>
-          <div className="mx-auto max-w-full rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-200">
-            <QRCodeSVG
-              value={jadeQrPayload}
-              size={280}
-              level="L"
-              bgColor="#ffffff"
-              fgColor="#0f172a"
-              includeMargin
-              className="h-auto max-w-full"
-            />
-          </div>
+          <Suspense fallback={<QrLoading />}>
+            <AnimatedJadeMessageQr payload={jadeQrPayload} />
+          </Suspense>
           <button
             type="button"
             onClick={() => setShowJadeScanner((visible) => !visible)}

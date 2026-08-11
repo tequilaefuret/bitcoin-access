@@ -95,6 +95,7 @@ export default function useWalletAuthFlow({
   const [jadeBusy, setJadeBusy] = useState(false);
   const [jadeQrPayload, setJadeQrPayload] = useState('');
   const [jadeQrPath, setJadeQrPath] = useState('');
+  const [jadeQrAccountInfo, setJadeQrAccountInfo] = useState(null);
   const connectAttemptRef = useRef({ id: 0, interval: null });
   const trezorCallbackHandledRef = useRef(false);
 
@@ -258,7 +259,29 @@ export default function useWalletAuthFlow({
 
   useEffect(() => {
     setJadeStatus('');
-  }, [descriptorBranch, descriptorIndex, jadeAccount]);
+  }, [descriptorBranch, descriptorIndex]);
+
+  useEffect(() => {
+    let active = true;
+    if (!jadeQrAccountInfo?.descriptor) return undefined;
+
+    import('../lib/outputDescriptor').then(({ deriveOutputDescriptor }) => {
+      const result = deriveOutputDescriptor(jadeQrAccountInfo.descriptor, {
+        branch: Number(descriptorBranch),
+        index: Number(descriptorIndex),
+      });
+      if (!active) return;
+      setDescriptorInfo(result);
+      setManualAddress(result.address);
+      setDescriptorError('');
+    }).catch((derivationError) => {
+      if (!active) return;
+      setDescriptorInfo(null);
+      setDescriptorError(derivationError.message || 'Unable to derive an address from the Jade xpub.');
+    });
+
+    return () => { active = false; };
+  }, [descriptorBranch, descriptorIndex, jadeQrAccountInfo]);
 
   const importDescriptor = useCallback(async (value = descriptorInput) => {
     try {
@@ -835,9 +858,17 @@ export default function useWalletAuthFlow({
         buildJadeQrPayload,
         validateJadeAddress,
       } = await import('../lib/jadeValidation');
-      const address = validateJadeAddress(manualAddress.trim());
+      if (!jadeQrAccountInfo?.descriptor) {
+        throw new Error('Scan the animated Jade xpub before creating the signing request.');
+      }
+      const { deriveOutputDescriptor } = await import('../lib/outputDescriptor');
+      const derived = deriveOutputDescriptor(jadeQrAccountInfo.descriptor, {
+        branch: Number(descriptorBranch),
+        index: Number(descriptorIndex),
+      });
+      const address = validateJadeAddress(derived.address);
       const path = buildJadePath({
-        account: Number(jadeAccount),
+        account: Number(jadeQrAccountInfo.account),
         branch: Number(descriptorBranch),
         index: Number(descriptorIndex),
       });
@@ -863,11 +894,36 @@ export default function useWalletAuthFlow({
     clearProofState,
     descriptorBranch,
     descriptorIndex,
-    jadeAccount,
-    manualAddress,
+    jadeQrAccountInfo,
     prepareAuthRequest,
     setError,
   ]);
+
+  const acceptJadeAccountQr = useCallback(async (accountInfo) => {
+    try {
+      setError('');
+      clearProofState();
+      if (!accountInfo?.descriptor || !Number.isSafeInteger(accountInfo.account)) {
+        throw new Error('The scanned Jade account is incomplete.');
+      }
+      const { deriveOutputDescriptor } = await import('../lib/outputDescriptor');
+      const derived = deriveOutputDescriptor(accountInfo.descriptor, {
+        branch: Number(descriptorBranch),
+        index: Number(descriptorIndex),
+      });
+      setJadeQrAccountInfo(accountInfo);
+      setJadeAccount(accountInfo.account);
+      setDescriptorInputState(accountInfo.descriptor);
+      setDescriptorInfo(derived);
+      setDescriptorError('');
+      setManualAddress(derived.address);
+      setJadeStatus(`Jade account imported. Address ${derived.address} was derived automatically.`);
+      return derived;
+    } catch (accountError) {
+      setError(accountError.message || 'Unable to import the Jade xpub QR.');
+      throw accountError;
+    }
+  }, [clearProofState, descriptorBranch, descriptorIndex, setError]);
 
   const acceptJadeQrSignature = useCallback(async (value) => {
     try {
@@ -1230,6 +1286,7 @@ export default function useWalletAuthFlow({
     setDescriptorInputState('');
     setDescriptorInfo(null);
     setDescriptorError('');
+    setJadeQrAccountInfo(null);
     setLedgerStatus('');
     setTrezorStatus('');
     setJadeStatus('');
@@ -1298,6 +1355,7 @@ export default function useWalletAuthFlow({
     setDescriptorInputState('');
     setDescriptorInfo(null);
     setDescriptorError('');
+    setJadeQrAccountInfo(null);
     setDescriptorBranch(0);
     setDescriptorIndex(0);
     setLedgerStatus('');
@@ -1357,6 +1415,7 @@ export default function useWalletAuthFlow({
     trezorUsbAvailability: trezorConnectionAvailability,
     connectJadeUsb,
     prepareJadeQrProof,
+    acceptJadeAccountQr,
     acceptJadeQrSignature,
     submitJadeQrProof,
     jadeAccount,
@@ -1366,6 +1425,7 @@ export default function useWalletAuthFlow({
     jadeUsbAvailability,
     jadeQrPayload,
     jadeQrPath,
+    jadeQrAccountInfo,
     mobileEntry,
     mobileDevice,
     walletInAppBrowser,

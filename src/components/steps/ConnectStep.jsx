@@ -78,6 +78,7 @@ const ConnectStep = ({
   trezorUsbAvailability,
   connectJadeUsb,
   prepareJadeQrProof,
+  acceptJadeAccountQr,
   acceptJadeQrSignature,
   submitJadeQrProof,
   jadeAccount,
@@ -87,6 +88,7 @@ const ConnectStep = ({
   jadeUsbAvailability,
   jadeQrPayload,
   jadeQrPath,
+  jadeQrAccountInfo,
   walletConnected,
   canDirectSign,
   connectDirectSigner,
@@ -496,6 +498,7 @@ const ConnectStep = ({
               trezorUsbAvailability={trezorUsbAvailability}
               onConnectJade={connectJadeUsb}
               onPrepareJadeQr={prepareJadeQrProof}
+              onAcceptJadeAccountQr={acceptJadeAccountQr}
               onAcceptJadeQrSignature={acceptJadeQrSignature}
               onSubmitJadeQrProof={submitJadeQrProof}
               jadeAccount={jadeAccount}
@@ -505,6 +508,8 @@ const ConnectStep = ({
               jadeUsbAvailability={jadeUsbAvailability}
               jadeQrPayload={jadeQrPayload}
               jadeQrPath={jadeQrPath}
+              jadeQrAccountInfo={jadeQrAccountInfo}
+              mobileDevice={mobileDevice}
               hardwareMethod={hardwareMethod}
               onHardwareMethodChange={setHardwareMethod}
             />

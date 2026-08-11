@@ -49,7 +49,7 @@ export function getJadeUsbAvailability() {
   if (!navigator.serial) {
     return {
       supported: false,
-      reason: 'Use Chrome, Edge, Brave or Opera on a computer or compatible Android device. Safari and Firefox do not support Web Serial.',
+      reason: 'This browser does not expose a Web Serial port to the site. Use a compatible desktop Chromium browser or the Jade QR option.',
     };
   }
   return { supported: true, reason: '' };
