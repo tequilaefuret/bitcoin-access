@@ -33,7 +33,12 @@ const decodeJadeAccount = (cbor) => {
   }
 
   const outputItem = outputItems[0];
-  if (outputItem?.getTag?.() !== 404) {
+  const outputTag = outputItem?.getTag?.();
+  // Current Jade firmware labels a BIP84 Native SegWit export with tag 404.
+  // Older firmware had an xpub-QR metadata bug and can label the same BIP84
+  // account with tag 403 (legacy P2PKH).  We only tolerate that specific
+  // mismatch after independently validating the complete BIP84 origin below.
+  if (outputTag !== 404 && outputTag !== 403) {
     throw new Error('Only a Native SegWit singlesig Jade xpub is supported.');
   }
   const hdKeyItem = outputItem.getData?.();
@@ -109,6 +114,7 @@ const decodeJadeAccount = (cbor) => {
     fingerprint: fingerprintHex,
     accountPath: `m/84'/0'/${accountIndex}'`,
     descriptor: `wpkh([${fingerprintHex}/84'/0'/${accountIndex}']${xpub}/<0;1>/*)`,
+    legacyScriptMetadata: outputTag === 403,
   };
 };
 
@@ -125,6 +131,19 @@ export function createJadeMessageUrEncoder(payload, maxFragmentLength = 90) {
 export function createJadeAccountUrDecoder() {
   const decoder = new URDecoder();
   let receivedParts = 0;
+  const receivedPartValues = new Set();
+
+  const progressDetails = () => {
+    const sourceFrames = decoder.expectedPartCount();
+    return {
+      progress: Math.min(100, Math.round(decoder.estimatedPercentComplete() * 100)),
+      sourceFrames,
+      // One full animation cycle contains this many source frames.  The
+      // decoder can recover from a missed frame, but photos should normally
+      // capture each source frame once.
+      recommendedPhotoFrames: sourceFrames || 0,
+    };
+  };
 
   return {
     receivePart(part) {
@@ -133,19 +152,23 @@ export function createJadeAccountUrDecoder() {
       if (!normalizedPart.startsWith('ur:crypto-account/')) {
         throw new Error('Scan the animated crypto-account xpub displayed by Jade.');
       }
+      if (receivedPartValues.has(normalizedPart)) {
+        return { complete: false, duplicate: true, ...progressDetails() };
+      }
+      receivedPartValues.add(normalizedPart);
       receivedParts += 1;
       if (receivedParts > 2048) throw new Error('Too many Jade QR fragments were received. Restart the scan.');
 
       decoder.receivePart(normalizedPart);
       if (decoder.isError()) throw new Error(decoder.resultError() || 'Unable to decode the Jade xpub sequence.');
 
-      const progress = Math.min(100, Math.round(decoder.estimatedPercentComplete() * 100));
-      if (!decoder.isComplete()) return { complete: false, progress };
+      const details = progressDetails();
+      if (!decoder.isComplete()) return { complete: false, ...details };
 
       const ur = decoder.resultUR();
       if (ur.type !== 'crypto-account') throw new Error('The scanned BC-UR is not a Jade account.');
       if (ur.cbor.length > 2048) throw new Error('The Jade account payload is too large.');
-      return { complete: true, progress: 100, ...decodeJadeAccount(ur.cbor) };
+      return { complete: true, progress: 100, ...details, ...decodeJadeAccount(ur.cbor) };
     },
   };
 }

@@ -15,7 +15,7 @@ import {
 } from '@keystonehq/bc-ur-registry';
 import { createJadeAccountUrDecoder, createJadeMessageUrEncoder } from './jadeQr';
 
-const buildAccount = ({ purpose = 84, network, privateKey = false } = {}) => {
+const buildAccount = ({ purpose = 84, network, privateKey = false, scriptExpression = ScriptExpressions.WITNESS_PUBLIC_KEY_HASH } = {}) => {
   const fingerprint = Buffer.from('d34db33f', 'hex');
   const accountNode = HDKey.fromMasterSeed(Uint8Array.from(Buffer.alloc(32, 7))).derive("m/84'/0'/2'");
   const origin = new CryptoKeypath([
@@ -35,7 +35,7 @@ const buildAccount = ({ purpose = 84, network, privateKey = false } = {}) => {
     parentFingerprint: Buffer.alloc(4),
   });
   return new CryptoAccount(fingerprint, [
-    new CryptoOutput([ScriptExpressions.WITNESS_PUBLIC_KEY_HASH], key),
+    new CryptoOutput([scriptExpression], key),
   ]);
 };
 
@@ -62,6 +62,15 @@ test('rejects incompatible or private Jade account exports', () => {
     .toThrow('mainnet');
   expect(() => decodeAllParts(buildAccount({ privateKey: true }).toUREncoder(80), createJadeAccountUrDecoder()))
     .toThrow('Private keys');
+});
+
+test('accepts only the older Jade BIP84 metadata mismatch as a compatibility case', () => {
+  const result = decodeAllParts(buildAccount({ scriptExpression: ScriptExpressions.PUBLIC_KEY_HASH }).toUREncoder(80), createJadeAccountUrDecoder());
+  expect(result.legacyScriptMetadata).toBe(true);
+  expect(result.accountPath).toBe("m/84'/0'/2'");
+
+  expect(() => decodeAllParts(buildAccount({ purpose: 49, scriptExpression: ScriptExpressions.PUBLIC_KEY_HASH }).toUREncoder(80), createJadeAccountUrDecoder()))
+    .toThrow('Native SegWit');
 });
 
 test('encodes a Jade message request as animated UR bytes', () => {

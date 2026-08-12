@@ -12,6 +12,7 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
   const [starting, setStarting] = useState(true);
   const [manualPart, setManualPart] = useState('');
   const [recognizedFrames, setRecognizedFrames] = useState(0);
+  const [sourceFrames, setSourceFrames] = useState(0);
   const [cameraResolution, setCameraResolution] = useState('');
   const [zoom, setZoom] = useState(null);
   const [noQrDetected, setNoQrDetected] = useState(false);
@@ -24,10 +25,11 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
 
   const receivePart = (part) => {
     try {
-      setRecognizedFrames((count) => count + 1);
       setNoQrDetected(false);
       const result = decoderRef.current.receivePart(part);
       setProgress(result.progress);
+      if (result.sourceFrames) setSourceFrames(result.sourceFrames);
+      if (!result.duplicate) setRecognizedFrames((count) => count + 1);
       setError('');
       if (result.complete) {
         stopScanner();
@@ -89,7 +91,8 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
       </div>
       <p className="mt-2 text-xs text-slate-400">
         Keep the whole QR, including its white border, inside the frame · {progress}% received
-        {recognizedFrames > 0 ? ` · ${recognizedFrames} QR frame${recognizedFrames > 1 ? 's' : ''} recognized` : ''}
+        {recognizedFrames > 0 ? ` · ${recognizedFrames} unique QR frame${recognizedFrames > 1 ? 's' : ''} recognized` : ''}
+        {sourceFrames > 0 ? ` · ${sourceFrames} frame${sourceFrames > 1 ? 's' : ''} in one Jade animation cycle` : ''}
         {cameraResolution ? ` · ${cameraResolution}` : ''}
       </p>
       {zoom && (
@@ -120,9 +123,16 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
         </p>
       )}
       {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
+      {progress === 99 && !error && (
+        <p className="mt-3 rounded-lg bg-blue-400/15 px-3 py-2 text-xs leading-5 text-blue-100">
+          Almost complete. Animated BC-UR intentionally pauses at 99% until a final useful frame arrives; keep scanning until the result is imported.
+        </p>
+      )}
       <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3">
         <p className="text-xs leading-5 text-slate-300">
-          If live scanning stays at 0%, photograph one Jade frame at full resolution. Wait for Jade’s QR to change, then repeat until the progress reaches 100%.
+          If live scanning stays at 0%, photograph one Jade frame at full resolution. Wait for Jade’s QR to change between photos. {sourceFrames > 0
+            ? `This export has ${sourceFrames} frames in one complete animation cycle: take at most ${sourceFrames} distinct photos, one per frame, then restart the scan if it has not imported.`
+            : 'After the first readable frame, the exact number of photos for one complete animation cycle will appear above.'}
         </p>
         <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-950">
           {photoBusy ? <Loader className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
