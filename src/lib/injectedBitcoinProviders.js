@@ -158,7 +158,7 @@ const createWbipProvider = (name, source) => ({
   requestAccounts: async () => normalizeAccounts(await source.request('wallet_connect', {
     addresses: ['payment'],
     network: 'Mainnet',
-    message: 'Sign in to Bitcoin Access',
+    message: 'Sign in to Danaus',
   })),
   signMessage: async ({ address, message }) => unwrapRpcResult(await source.request('signMessage', {
     address,

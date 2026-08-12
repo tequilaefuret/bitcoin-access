@@ -160,7 +160,7 @@ test('adapts the Xverse WBIP provider to the common contract', async () => {
   expect(source.request).toHaveBeenNthCalledWith(1, 'wallet_connect', {
     addresses: ['payment'],
     network: 'Mainnet',
-    message: 'Sign in to Bitcoin Access',
+    message: 'Sign in to Danaus',
   });
   expect(source.request).toHaveBeenNthCalledWith(2, 'signMessage', {
     address: 'bc1q-payment',

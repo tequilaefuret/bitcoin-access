@@ -1,6 +1,6 @@
 // src/hooks/useBitcoinBalance.js - VERSION AVEC DEBUG BALANCE
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { 
+import {
   verifyAndRegister,
   syncUserBalance,
   publishMessage,
@@ -45,7 +45,7 @@ export const useBitcoinBalance = () => {
    */
   const checkBitcoinBalance = useCallback(async (bitcoinAddress, signatureData) => {
     if (!bitcoinAddress) {
-      setError('Adresse Bitcoin requise');
+      setError('A Bitcoin address is required');
       return;
     }
 
@@ -54,7 +54,7 @@ export const useBitcoinBalance = () => {
 
     try {
       if (!signatureData?.message || !signatureData?.signature) {
-        throw new Error('Preuve de propriété manquante');
+        throw new Error('Ownership proof is missing');
       }
 
       const authRequest = signatureData.authRequest || null;
@@ -70,16 +70,16 @@ export const useBitcoinBalance = () => {
       });
 
       if (!result.valid || !result.user) {
-        throw new Error(result?.error || 'Vérification échouée');
+        throw new Error(result?.error || 'Verification failed');
       }
 
       authenticatedAddressRef.current = bitcoinAddress;
       setBtcBalance(Number(result.user.btc_balance || 0));
       setShellsAvailable(Number(result.user.shells_balance || 0));
       return result;
-      
+
     } catch (err) {
-      setError(err.message || 'Erreur lors de la vérification');
+      setError(err.message || 'Verification failed');
       throw err;
     } finally {
       setLoading(false);
@@ -123,36 +123,36 @@ export const useBitcoinBalance = () => {
    */
   const startGame = useCallback(async () => {
     setError(''); // ← AJOUT : Réinitialiser l'erreur
-    
+
     try {
       setLoading(true); // ← AJOUT : Activer le loading
       const result = await deductGameCost(address);
-      
+
       if (!result.success) {
-        throw new Error(result.error || 'Déduction échouée');
+        throw new Error(result.error || 'Balance deduction failed');
       }
-      
+
       if (result.user) {
         setShellsAvailable(result.user.shells_balance);
         setBtcBalance(result.user.btc_balance); // ← AJOUT : Mise à jour BTC aussi
-        
+
       }
-      
+
       return true;
-      
+
     } catch (err) {
       // ← AJOUT : Gestion d'erreur améliorée
       if (err.message.includes('insuffisant') || err.message.includes('Insufficient')) {
         setError(
-          `Solde shells insuffisant\n\n` +
-          `Requis : ${0.000001.toFixed(8)} shells\n` +
-          `Actuel : ${shellsAvailable.toFixed(8)} shells\n\n` +
-          `Rechargez votre compte Bitcoin pour continuer.`
+          `Insufficient shells balance\n\n` +
+          `Required: ${0.000001.toFixed(8)} shells\n` +
+          `Available: ${shellsAvailable.toFixed(8)} shells\n\n` +
+          `Sync your Bitcoin balance to continue.`
         );
       } else {
         setError(err.message);
       }
-      
+
       return false;
     } finally {
       setLoading(false); // ← AJOUT : Désactiver le loading
@@ -164,41 +164,41 @@ export const useBitcoinBalance = () => {
    */
   const publishMessageCallback = useCallback(async (content, parentId = null) => {
     setError('');
-    
+
     try {
       setLoading(true);
-      
+
       const result = await publishMessage(address, content, parentId);
-      
+
       if (!result.success) {
-        throw new Error(result.error || 'Publication échouée');
+        throw new Error(result.error || 'Publishing failed');
       }
-      
+
       // Mise à jour des états
       setShellsAvailable(result.user.shells_balance);
       setBtcBalance(result.user.btc_balance);
-      
+
       setError('');
       return result;
-      
+
     } catch (err) {
       if (err.message.includes('insuffisant') || err.message.includes('Insufficient')) {
         // Calculer coût du message pour l'erreur
         const charCount = content.replace(/\n/g, '').length;
         const cost = charCount * 0.00000001;
-        
+
         setError(
-          `Solde shells insuffisant\n\n` +
-          `Requis : ${cost.toFixed(8)} shells\n` +
-          `Actuel : ${shellsAvailable.toFixed(8)} shells\n\n` +
-          `Rechargez votre compte Bitcoin pour continuer.`
+          `Insufficient shells balance\n\n` +
+          `Required: ${cost.toFixed(8)} shells\n` +
+          `Available: ${shellsAvailable.toFixed(8)} shells\n\n` +
+          `Sync your Bitcoin balance to continue.`
         );
       } else {
-        setError('Erreur : ' + err.message);
+        setError('Error: ' + err.message);
       }
-      
+
       return false;
-      
+
     } finally {
       setLoading(false);
     }
@@ -211,50 +211,50 @@ export const useBitcoinBalance = () => {
   const loadMessages = useCallback(async (limit = 20, offset = 0, sortMode = 'recent') => {
     try {
       setLoading(true);
-      
+
       // Passer l'adresse pour vérifier Useful et décompter la lecture.
       const result = await getMessages(limit, offset, address, null, sortMode);
-      
+
       // Mettre à jour le solde si retourné
       if (result.new_balance !== null && result.new_balance !== undefined) {
         setShellsAvailable(result.new_balance);
       }
-      
-      
+
+
       return result.messages;
     } catch (err) {
-      
+
       // Gestion d'erreur améliorée
       if (err.message?.includes('insuffisant')) {
-        setError(`Solde insuffisant pour charger les messages.\n\nRechargez votre compte Bitcoin.`);
+        setError(`Insufficient balance to load messages.\n\nSync your Bitcoin balance.`);
       } else {
-        setError('Erreur chargement messages : ' + err.message);
+        setError('Could not load messages: ' + err.message);
       }
-      
+
       return [];
     } finally {
       setLoading(false);
     }
   }, [address]);
-  
+
   /**
    * 💬 Charger les commentaires d'un message
    */
   const loadComments = useCallback(async (parentId, limit = 20, offset = 0) => {
     try {
       setLoading(true);
-      
+
       const result = await getMessages(limit, offset, address, parentId);
-      
+
       // Mise à jour du solde si retourné
       if (result.new_balance !== null && result.new_balance !== undefined) {
         setShellsAvailable(result.new_balance);
       }
-      
+
       return result.messages;
-      
+
     } catch (err) {
-      setError('Erreur chargement commentaires : ' + err.message);
+      setError('Could not load comments: ' + err.message);
       return [];
     } finally {
       setLoading(false);
@@ -266,15 +266,15 @@ export const useBitcoinBalance = () => {
    */
   const loadUserMessages = useCallback(async (limit = 20, offset = 0) => {
     if (!address) return [];
-    
+
     try {
       setLoading(true);
-      
+
       const messages = await getUserMessages(address, limit, offset);
-      
+
       return messages;
     } catch (err) {
-      setError('Erreur chargement historique : ' + err.message);
+      setError('Could not load history: ' + err.message);
       return [];
     } finally {
       setLoading(false);
@@ -286,41 +286,41 @@ export const useBitcoinBalance = () => {
    */
   const manualSync = useCallback(async () => {
     if (!address) return;
-    
+
     try {
       setLoading(true);
       setError('');
-      
-      
+
+
       const network = 'mainnet';
-      
+
       const result = await syncUserBalance(address, network);
-      
+
       if (result.success && result.user) {
         const newBTC = result.user.btc_balance;
         const unconfirmedBTC = result.delta || 0;
-        
+
         setBtcBalance(newBTC);
         setShellsAvailable(result.user.shells_balance);
-        
-        let message = '✅ Synchronisation réussie!\n\n';
+
+        let message = '✅ Balance synced successfully!\n\n';
         message += `BTC: ${newBTC.toFixed(8)}\n`;
         message += `Shells: ${result.user.shells_balance.toFixed(8)}`;
-        
+
         if (result.delta !== 0) {
-          const syncType = result.delta > 0 ? 'Rechargement' : 'Retrait';
+          const syncType = result.delta > 0 ? 'Added' : 'Removed';
           message += `\n\n${syncType} : ${Math.abs(result.delta).toFixed(8)} BTC`;
         }
-        
+
         if (unconfirmedBTC > 0) {
-          message += `\n\nEn attente : ${unconfirmedBTC.toFixed(8)} BTC`;
+          message += `\n\nPending: ${unconfirmedBTC.toFixed(8)} BTC`;
         }
-        
+
         alert(message);
       }
-      
+
     } catch (err) {
-      setError('Erreur synchronisation : ' + err.message);
+      setError('Could not sync balance: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -347,8 +347,8 @@ export const useBitcoinBalance = () => {
   // ============================================
   const submitCanvasPixels = useCallback(async (pixels) => {
     if (!address) {
-      setError('Adresse non définie');
-      return { success: false, error: 'Adresse non définie' };
+      setError('Bitcoin address is not set');
+      return { success: false, error: 'Bitcoin address is not set' };
     }
 
     try {
@@ -358,7 +358,7 @@ export const useBitcoinBalance = () => {
       const result = await placeCanvasPixels(address, pixels);
 
       if (!result.success) {
-        throw new Error(result.error || 'Placement pixels échoué');
+        throw new Error(result.error || 'Could not place pixels');
       }
 
       // Mettre à jour les balances locales
@@ -389,7 +389,7 @@ export const useBitcoinBalance = () => {
   }, [address]);
 
   const toggleUseful = useCallback(async (messageId) => {
-    if (!address) throw new Error('Adresse non définie');
+    if (!address) throw new Error('Bitcoin address is not set');
     const result = await toggleMessageUseful(address, messageId);
 
     if (result.new_balance !== null && result.new_balance !== undefined) {
@@ -402,7 +402,7 @@ export const useBitcoinBalance = () => {
   }, [address]);
 
   const repostMessage = useCallback(async (messageId, quoteContent = '') => {
-    if (!address) throw new Error('Adresse non définie');
+    if (!address) throw new Error('Bitcoin address is not set');
     const result = await createMessageRepost(address, messageId, quoteContent);
     if (result.new_balance !== null && result.new_balance !== undefined) {
       setShellsAvailable(Number(result.new_balance));
@@ -418,7 +418,7 @@ export const useBitcoinBalance = () => {
   }, [address]);
 
   const savePrivateTopicStance = useCallback(async (topicId, stance) => {
-    if (!address) throw new Error('Adresse non définie');
+    if (!address) throw new Error('Bitcoin address is not set');
     return persistPrivateTopicStance(address, topicId, stance);
   }, [address]);
 
@@ -431,7 +431,7 @@ export const useBitcoinBalance = () => {
     try {
       return await getSpendingHistory(address, limit);
     } catch (err) {
-      setError('Erreur chargement historique : ' + err.message);
+      setError('Could not load history: ' + err.message);
       return [];
     }
   }, [address]);

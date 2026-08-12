@@ -5,6 +5,7 @@ import ConnectStep from './components/steps/ConnectStep';
 import ProfileSetupStep from './components/steps/ProfileSetupStep';
 import PasswordSetupStep from './components/steps/PasswordSetupStep';
 import EnvIndicator from './components/ui/EnvIndicator';
+import LandingPage from './components/landing/LandingPage';
 import { useBitcoinBalance } from './hooks/useBitcoinBalance';
 import useReownWallet from './hooks/useReownWallet';
 import useWalletAuthFlow from './hooks/useWalletAuthFlow';
@@ -44,7 +45,7 @@ const ScreenFallback = () => (
 );
 
 const BitcoinExclusiveAccess = () => {
-  const [step, setStep] = useState('connect');
+  const [step, setStep] = useState('landing');
   const [showHistory, setShowHistory] = useState(false);
   const [userMessages, setUserMessages] = useState([]);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
@@ -285,7 +286,7 @@ const BitcoinExclusiveAccess = () => {
   }, [restoreAuthenticatedUser, routeAuthenticatedUser]);
 
   useEffect(() => {
-    if (!isCheckingSession && address && step === 'connect') {
+    if (!isCheckingSession && address && ['landing', 'connect'].includes(step)) {
       routeToNetwork();
     }
   }, [address, isCheckingSession, routeToNetwork, step]);
@@ -304,7 +305,7 @@ const BitcoinExclusiveAccess = () => {
       setPasswordSetupSkipped(false);
       setPasswordSetupMode('set');
       setPasswordRecoveryRequested(false);
-      setStep('connect');
+      setStep('landing');
     } catch (err) {
       setError('Unable to close the session. Please try again.');
     }
@@ -313,7 +314,7 @@ const BitcoinExclusiveAccess = () => {
   // ===== HANDLER : DÉMARRER JEU (depuis Dashboard) =====
   const handleGameToPlay = useCallback(async () => {
     if (!address) {
-      setError('Votre session a expiré. Veuillez vous reconnecter.');
+      setError('Your session has expired. Please sign in again.');
       setStep('connect');
       return;
     }
@@ -324,7 +325,7 @@ const BitcoinExclusiveAccess = () => {
   // ===== HANDLER : LANCER UNE PARTIE =====
   const handleStartGame = useCallback(async () => {
     if (!address) {
-      setError('Votre session a expiré. Veuillez vous reconnecter.');
+      setError('Your session has expired. Please sign in again.');
       setStep('connect');
       return false;
     }
@@ -341,7 +342,7 @@ const BitcoinExclusiveAccess = () => {
   // ===== HANDLER : PUBLICATION MESSAGE =====
   const handlePublishMessage = useCallback(async (content, parentId = null) => {
     try {
-      if (!address) throw new Error('Session absente');
+      if (!address) throw new Error('No active session');
       return await publishMessage(content, parentId);
     } catch (err) {
       setError(err.message || 'Publication failed');
@@ -461,13 +462,19 @@ const BitcoinExclusiveAccess = () => {
 
   // ===== RENDU PRINCIPAL =====
   return (
-    <div className={`min-h-screen p-4 ${
-      step === 'connect'
-        ? 'bg-[radial-gradient(circle_at_top_left,_#ffedd5_0%,_#fdba74_32%,_#f97316_68%,_#c2410c_100%)]'
-        : 'bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600'
-    }`}>
-      <EnvIndicator />
-      
+    <div className={step === 'landing'
+      ? 'min-h-screen'
+      : `min-h-screen p-4 ${
+        step === 'connect'
+          ? 'bg-[radial-gradient(circle_at_top_left,_#ffedd5_0%,_#fdba74_32%,_#f97316_68%,_#c2410c_100%)]'
+          : 'bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600'
+      }`
+    }>
+      {step !== 'landing' && <EnvIndicator />}
+
+      {step === 'landing' ? (
+        <LandingPage onStart={() => setStep('connect')} onSignIn={() => setStep('connect')} />
+      ) : (
       <div className="max-w-4xl mx-auto">
           <Header 
           connectedAddress={showPrivateSession ? authenticatedAddress : null}
@@ -663,6 +670,7 @@ const BitcoinExclusiveAccess = () => {
 
         {step !== 'connect' && <Footer />}
       </div>
+      )}
     </div>
   );
 };

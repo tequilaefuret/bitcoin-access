@@ -167,7 +167,7 @@ export async function skipPasswordSetup() {
 export async function getAuthenticatedJWT() {
   if (accessToken && !accessTokenNeedsRefresh(accessToken)) return accessToken;
   const session = await restoreSession();
-  if (!session || !accessToken) throw new Error('Non authentifié. Reconnectez-vous.');
+  if (!session || !accessToken) throw new Error('You are not authenticated. Please sign in again.');
   return accessToken;
 }
 
@@ -223,7 +223,7 @@ export async function verifyAndRegister({
   proofFormat = null
 }) {
   if (!address || !message || !signature || !network) {
-    throw new Error('Paramètres manquants pour la vérification');
+    throw new Error('Verification parameters are missing');
   }
     
     // Extraction signature si format objet Xverse
@@ -241,7 +241,7 @@ export async function verifyAndRegister({
         proofFormat,
     });
 
-  if (!data?.valid) throw new Error(data?.error || 'Vérification échouée');
+  if (!data?.valid) throw new Error(data?.error || 'Verification failed');
   storeJWT(data.jwt);
   return data;
 }
@@ -260,7 +260,7 @@ export async function getUserData(address, { throwOnError = false } = {}) {
 
     if (error) {
       if (throwOnError) {
-        throw new Error(error.message || 'Impossible de charger le profil utilisateur');
+        throw new Error(error.message || 'Unable to load user profile');
       }
       return null;
     }
@@ -295,7 +295,7 @@ function createRequestId() {
   const cryptoApi = typeof window !== 'undefined' ? window.crypto : null;
   if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
   if (typeof cryptoApi?.getRandomValues !== 'function') {
-    throw new Error('Ce navigateur ne permet pas de sécuriser cette requête. Mettez-le à jour.');
+    throw new Error('This browser cannot secure this request. Please update it.');
   }
 
   const bytes = cryptoApi.getRandomValues(new Uint8Array(16));
@@ -348,7 +348,7 @@ async function invokeEdgeFunction(functionName, body, fallbackMessage) {
 }
 
 async function invokeUserOperation(address, operation, payload = {}, fallbackMessage = 'Operation failed') {
-  if (!address) throw new Error('Authentification requise');
+  if (!address) throw new Error('Authentication required');
   const jwt = await getAuthenticatedJWT();
   return invokeEdgeFunction('user-operations', {
     operation,
@@ -369,7 +369,7 @@ export async function upsertUserProfile(address, displayName, bio = '') {
   const data = await invokeUserOperation(address, 'upsert_profile', {
     displayName: typeof displayName === 'string' ? displayName.trim() : '',
     bio: typeof bio === 'string' ? bio.trim() : '',
-  }, 'Erreur sauvegarde profil');
+  }, 'Could not save profile');
   return data.profile || data;
 }
 
@@ -380,7 +380,7 @@ export async function upsertUserProfile(address, displayName, bio = '') {
  * @returns {Promise<object>} { success: true, user, delta }
  */
 export async function syncUserBalance(address, network) {
-  return invokeUserOperation(address, 'sync', { network }, 'Erreur synchronisation');
+  return invokeUserOperation(address, 'sync', { network }, 'Could not sync balance');
 }
 
 /**
@@ -390,7 +390,7 @@ export async function syncUserBalance(address, network) {
  * @returns {Promise<object>} { success: true, user }
  */
 export async function deductGameCost(address) {
-  return invokeUserOperation(address, 'deduct', {}, 'Erreur déduction');
+  return invokeUserOperation(address, 'deduct', {}, 'Balance deduction failed');
 }
 
 // ========================================
@@ -406,14 +406,14 @@ export async function deductGameCost(address) {
  */
 export async function publishMessage(address, content, parentId = null) {
   const cleanedContent = typeof content === 'string' ? content.trim() : '';
-  if (!cleanedContent) throw new Error('Le message ne peut pas être vide');
-  if (cleanedContent.length > 1000) throw new Error('Message trop long (max 1000 caractères)');
+  if (!cleanedContent) throw new Error('Message cannot be empty');
+  if (cleanedContent.length > 1000) throw new Error('Message is too long (maximum 1,000 characters)');
 
   return invokeUserOperation(address, 'publish_message', {
       requestId: createRequestId(),
       content: cleanedContent,
       ...(parentId ? { parentId } : {}),
-  }, 'Erreur publication');
+  }, 'Publishing failed');
 }
 
 /**
@@ -432,7 +432,7 @@ export async function getMessages(limit = 20, offset = 0, userAddress = null, pa
       offset,
       sortMode,
       ...(parentId ? { parentId } : {}),
-  }, 'Erreur chargement des messages');
+  }, 'Could not load messages');
   return {
     messages: data?.messages || [],
     new_balance: data?.new_balance,
@@ -445,14 +445,14 @@ export async function getMessages(limit = 20, offset = 0, userAddress = null, pa
  * L'ajout coûte 0.00000001 shell ; le retrait est gratuit.
  */
 export async function toggleMessageUseful(address, messageId) {
-  return invokeUserOperation(address, 'toggle_message_useful', { messageId }, 'Le vote Useful a échoué');
+  return invokeUserOperation(address, 'toggle_message_useful', { messageId }, 'Could not update Useful');
 }
 
 export async function createMessageRepost(address, messageId, quoteContent = '') {
   return invokeUserOperation(address, 'repost_message', {
     messageId,
     quoteContent: typeof quoteContent === 'string' ? quoteContent.trim() : '',
-  }, 'Le repost a échoué');
+  }, 'Could not repost');
 }
 
 export async function listFollowingAddresses(address) {
@@ -479,7 +479,7 @@ export async function setFollowingAddress(address, targetAddress, follow) {
  * La répartition interne des perspectives n'est jamais renvoyée au navigateur.
  */
 export async function getOpinionTopics(address) {
-  const data = await invokeUserOperation(address, 'get_opinion_topics', {}, 'Chargement du mode Opinion échoué');
+  const data = await invokeUserOperation(address, 'get_opinion_topics', {}, 'Could not load Opinion mode');
   return data.topics || [];
 }
 
@@ -487,7 +487,7 @@ export async function getOpinionTopics(address) {
  * Sauvegarder la position privée du lecteur pour un sujet.
  */
 export async function setPrivateTopicStance(address, topicId, stance) {
-  return invokeUserOperation(address, 'set_private_topic_stance', { topicId, stance }, 'Sauvegarde de la position privée échouée');
+  return invokeUserOperation(address, 'set_private_topic_stance', { topicId, stance }, 'Could not save private stance');
 }
 
 /**
@@ -498,7 +498,7 @@ export async function setPrivateTopicStance(address, topicId, stance) {
  * @returns {Promise<array>} Liste des messages de l'utilisateur
  */
 export async function getUserMessages(address, limit = 20, offset = 0) {
-  const data = await invokeUserOperation(address, 'get_user_messages', { limit, offset }, 'Erreur chargement historique');
+  const data = await invokeUserOperation(address, 'get_user_messages', { limit, offset }, 'Could not load history');
   return data?.messages || [];
 }
 
@@ -508,7 +508,7 @@ export async function getUserMessages(address, limit = 20, offset = 0) {
  * @returns {Promise<object|null>} Statistiques
  */
 export async function getUserStats(address) {
-  const data = await invokeUserOperation(address, 'get_stats', {}, 'Erreur chargement des statistiques');
+  const data = await invokeUserOperation(address, 'get_stats', {}, 'Could not load statistics');
   return data?.stats || null;
 }
 
@@ -519,7 +519,7 @@ export async function getUserStats(address) {
  * @returns {Promise<array>} Liste des événements de dépense
  */
 export async function getSpendingHistory(address, limit = 20) {
-  const data = await invokeUserOperation(address, 'get_history', { limit }, 'Erreur chargement historique');
+  const data = await invokeUserOperation(address, 'get_history', { limit }, 'Could not load history');
   return data?.history || [];
 }
 
@@ -548,7 +548,7 @@ export async function getCanvasPixels() {
 // CANVAS - Placer des pixels (avec validation)
 // ============================================
 export async function placeCanvasPixels(address, pixels) {
-  return invokeUserOperation(address, 'place_pixels', { pixels }, 'Placement pixels échoué');
+  return invokeUserOperation(address, 'place_pixels', { pixels }, 'Could not place pixels');
 }
 
 // ============================================

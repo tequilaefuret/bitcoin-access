@@ -352,24 +352,22 @@ const AuthProofPanel = ({
                   </div>
                   <p className="mt-2 text-xs leading-5 text-slate-500">Defaults to the first BIP84 receiving address: m/84'/0'/0'/0/0.</p>
                 </details>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <button type="button" onClick={onConnectJade} disabled={!jadeUsbAvailability.supported || jadeBusy || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
-                    {jadeBusy ? <Loader className="h-4 w-4 animate-spin" /> : <JadeMark className="h-4 w-4" />}
-                    {jadeBusy ? 'Connecting Jade...' : mobileDevice && !jadeUsbAvailability.supported ? 'USB unavailable in this browser' : 'Connect Jade by USB'}
-                  </button>
+                <div className={`grid gap-2 ${mobileDevice ? '' : 'sm:grid-cols-2'}`}>
+                  {!mobileDevice && (
+                    <button type="button" onClick={onConnectJade} disabled={!jadeUsbAvailability.supported || jadeBusy || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">
+                      {jadeBusy ? <Loader className="h-4 w-4 animate-spin" /> : <JadeMark className="h-4 w-4" />}
+                      {jadeBusy ? 'Connecting Jade...' : 'Connect Jade by USB'}
+                    </button>
+                  )}
                   <button type="button" onClick={() => selectHardwareMethod('jade-qr')} disabled={jadeBusy || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
                     <QrCode className="h-4 w-4" />
                     Use Jade QR
                   </button>
                 </div>
                 {jadeStatus && <p className="text-xs font-medium text-blue-700">{jadeStatus}</p>}
-                {jadeUsbAvailability.reason && <p className="text-xs leading-5 text-slate-500">{jadeUsbAvailability.reason}</p>}
-                {mobileDevice && !jadeUsbAvailability.supported && (
-                  <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                    A Jade connected inside the Blockstream app is not exposed to this browser. Use Jade QR here, or use USB from a compatible desktop Chromium browser.
-                  </p>
-                )}
-                <ConnectionMethodHelp compact guideId="hardware-jade-usb" />
+                {!mobileDevice && jadeUsbAvailability.reason && <p className="text-xs leading-5 text-slate-500">{jadeUsbAvailability.reason}</p>}
+                {mobileDevice && <p className="text-xs leading-5 text-slate-500">On mobile, unlock Jade with QR PIN Unlock, then use Jade QR below.</p>}
+                <ConnectionMethodHelp compact guideId={mobileDevice ? 'hardware-jade-qr' : 'hardware-jade-usb'} />
               </div>
 
               <p className="text-xs leading-5 text-slate-500">Never enter your seed or approve a real transaction.</p>
@@ -386,13 +384,14 @@ const AuthProofPanel = ({
                 </div>
               </div>
               <ol className="grid gap-1 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-xs leading-5 text-slate-700">
-                <li><strong>1.</strong> Start and unlock an air-gapped Jade session. On Jade Plus, choose <strong>QR Mode → QR PIN Unlock</strong> to unlock without USB; it takes four QR scans with Blockstream’s official companion page.</li>
+                <li><strong>1.</strong> On Jade Plus, choose <strong>QR Mode → QR PIN Unlock</strong>, then complete both animated QR exchanges on Blockstream’s official page.</li>
                 <li><strong>2.</strong> On Jade, open <strong>Options → Wallet → Export Xpub</strong>.</li>
                 <li><strong>3.</strong> Keep <strong>Native SegWit · Singlesig</strong>, then scan Jade’s animated QR below.</li>
               </ol>
               <a href="https://blkstrm.com/pn" target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-emerald-800 underline underline-offset-2 hover:text-emerald-950">
                 Open the official Blockstream QR PIN Unlock page (Jade Plus)
               </a>
+              <p className="text-xs leading-5 text-slate-500">Return here without turning Jade off, then export the xpub. If QR PIN Unlock is absent, update Jade firmware or unlock it through the Blockstream app by USB/Bluetooth.</p>
               <button type="button" onClick={() => setShowJadeAccountScanner((visible) => !visible)} className="flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-300 bg-white px-4 py-3 text-sm font-bold text-emerald-800 transition hover:bg-emerald-50">
                 <ScanLine className="h-4 w-4" />
                 {showJadeAccountScanner ? 'Hide xpub scanner' : jadeQrAccountInfo ? 'Scan another Jade xpub' : 'Scan Jade animated xpub'}
@@ -418,11 +417,6 @@ const AuthProofPanel = ({
                     <span>Path: <span className="font-mono">{jadeQrAccountInfo.accountPath}/{descriptorBranch}/{descriptorIndex}</span></span>
                     <span className="break-all">Address: <span className="font-mono text-slate-900">{descriptorInfo.address}</span></span>
                   </div>
-                  {jadeQrAccountInfo.legacyScriptMetadata && (
-                    <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                      Jade’s QR metadata called this account Legacy, but its verified public origin is BIP84 Native SegWit. Danaus derived only Native SegWit addresses. Update Jade firmware before the next use to remove this old export-QR metadata mismatch.
-                    </p>
-                  )}
                   <details className="rounded-lg bg-slate-50 px-3 py-2">
                     <summary className="cursor-pointer text-xs font-semibold text-slate-600">Advanced address selection</summary>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">

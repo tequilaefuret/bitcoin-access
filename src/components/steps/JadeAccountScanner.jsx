@@ -7,16 +7,21 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
   const videoRef = useRef(null);
   const controlsRef = useRef(null);
   const decoderRef = useRef(createJadeAccountUrDecoder());
+  const progressRef = useRef(0);
+  const terminalErrorRef = useRef(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(true);
   const [manualPart, setManualPart] = useState('');
   const [recognizedFrames, setRecognizedFrames] = useState(0);
   const [sourceFrames, setSourceFrames] = useState(0);
+  const [maximumPhotoFrames, setMaximumPhotoFrames] = useState(0);
   const [cameraResolution, setCameraResolution] = useState('');
   const [zoom, setZoom] = useState(null);
   const [noQrDetected, setNoQrDetected] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [terminalError, setTerminalError] = useState(false);
+  const [scanSession, setScanSession] = useState(0);
 
   const stopScanner = () => {
     controlsRef.current?.stop?.();
@@ -24,20 +29,48 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
   };
 
   const receivePart = (part) => {
+    if (terminalErrorRef.current) return;
     try {
       setNoQrDetected(false);
       const result = decoderRef.current.receivePart(part);
+      progressRef.current = result.progress;
       setProgress(result.progress);
       if (result.sourceFrames) setSourceFrames(result.sourceFrames);
+      if (result.maximumPhotoFrames) setMaximumPhotoFrames(result.maximumPhotoFrames);
       if (!result.duplicate) setRecognizedFrames((count) => count + 1);
       setError('');
       if (result.complete) {
         stopScanner();
-        onDecoded?.(result);
+        Promise.resolve(onDecoded?.(result)).catch((accountError) => {
+          terminalErrorRef.current = true;
+          setTerminalError(true);
+          setError(accountError.message || 'The complete Jade account QR could not be imported.');
+        });
       }
     } catch (scanError) {
+      if (progressRef.current >= 95) {
+        terminalErrorRef.current = true;
+        setTerminalError(true);
+        stopScanner();
+      }
       setError(scanError.message || 'Unable to decode this Jade account QR.');
     }
+  };
+
+  const restartScanner = () => {
+    stopScanner();
+    decoderRef.current = createJadeAccountUrDecoder();
+    progressRef.current = 0;
+    terminalErrorRef.current = false;
+    setProgress(0);
+    setRecognizedFrames(0);
+    setSourceFrames(0);
+    setMaximumPhotoFrames(0);
+    setError('');
+    setTerminalError(false);
+    setNoQrDetected(false);
+    setStarting(true);
+    setScanSession((session) => session + 1);
   };
 
   useEffect(() => {
@@ -68,7 +101,7 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
       if (diagnosticTimer) window.clearTimeout(diagnosticTimer);
       stopScanner();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scanSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-950 p-4 text-white">
@@ -92,7 +125,7 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
       <p className="mt-2 text-xs text-slate-400">
         Keep the whole QR, including its white border, inside the frame · {progress}% received
         {recognizedFrames > 0 ? ` · ${recognizedFrames} unique QR frame${recognizedFrames > 1 ? 's' : ''} recognized` : ''}
-        {sourceFrames > 0 ? ` · ${sourceFrames} frame${sourceFrames > 1 ? 's' : ''} in one Jade animation cycle` : ''}
+        {sourceFrames > 0 ? ` · ${sourceFrames} source frame${sourceFrames > 1 ? 's' : ''}` : ''}
         {cameraResolution ? ` · ${cameraResolution}` : ''}
       </p>
       {zoom && (
@@ -123,6 +156,11 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
         </p>
       )}
       {error && <p className="mt-2 text-sm text-red-300">{error}</p>}
+      {terminalError && (
+        <button type="button" onClick={restartScanner} className="mt-3 w-full rounded-lg border border-red-300/40 bg-red-400/10 px-3 py-2 text-xs font-semibold text-red-100 hover:bg-red-400/20">
+          Restart Jade xpub scan
+        </button>
+      )}
       {progress === 99 && !error && (
         <p className="mt-3 rounded-lg bg-blue-400/15 px-3 py-2 text-xs leading-5 text-blue-100">
           Almost complete. Animated BC-UR intentionally pauses at 99% until a final useful frame arrives; keep scanning until the result is imported.
@@ -131,17 +169,17 @@ const JadeAccountScanner = ({ onDecoded, onClose }) => {
       <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3">
         <p className="text-xs leading-5 text-slate-300">
           If live scanning stays at 0%, photograph one Jade frame at full resolution. Wait for Jade’s QR to change between photos. {sourceFrames > 0
-            ? `This export has ${sourceFrames} frames in one complete animation cycle: take at most ${sourceFrames} distinct photos, one per frame, then restart the scan if it has not imported.`
+            ? `This export normally needs ${sourceFrames} different photos and Jade displays at most ${maximumPhotoFrames} frames in one complete cycle, including recovery frames. Stop as soon as the import succeeds; otherwise restart after ${maximumPhotoFrames} distinct photos.`
             : 'After the first readable frame, the exact number of photos for one complete animation cycle will appear above.'}
         </p>
-        <label className="mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-950">
+        <label className={`mt-2 flex items-center justify-center gap-2 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-slate-950 ${terminalError ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
           {photoBusy ? <Loader className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
           {photoBusy ? 'Reading photo...' : 'Photograph one QR frame'}
           <input
             type="file"
             accept="image/*"
             capture="environment"
-            disabled={photoBusy}
+            disabled={photoBusy || terminalError}
             className="sr-only"
             onChange={async (event) => {
               const file = event.target.files?.[0];

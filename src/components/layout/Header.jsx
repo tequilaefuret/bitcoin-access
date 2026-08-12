@@ -1,6 +1,7 @@
 // src/components/layout/Header.jsx
 import React, { useState } from 'react';
-import { Bitcoin, Wallet, LogOut, ChevronDown } from 'lucide-react';
+import { Wallet, LogOut, ChevronDown } from 'lucide-react';
+import DanausMark from './DanausMark';
 
 const Header = ({ connectedAddress, connectedWallet, onDisconnect, onViewProfile, minimal = false }) => {
   const [showDropdown, setShowDropdown] = useState(false);
@@ -81,7 +82,9 @@ const Header = ({ connectedAddress, connectedWallet, onDisconnect, onViewProfile
       )}
 
       <div className={`flex items-center gap-3 ${minimal ? '' : 'mb-2 justify-center'}`}>
-        <Bitcoin className={`${minimal ? 'h-8 w-8' : 'h-10 w-10'} text-orange-500`} />
+        <span className={`grid place-items-center rounded-xl bg-amber-300 text-black ${minimal ? 'h-8 w-8' : 'h-10 w-10'}`}>
+          <DanausMark className={minimal ? 'h-5 w-5' : 'h-6 w-6'} />
+        </span>
         <h1 className={`${minimal ? 'text-xl' : 'text-4xl'} font-bold tracking-tight text-slate-900`}>Danaus</h1>
       </div>
       

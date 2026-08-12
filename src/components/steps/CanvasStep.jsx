@@ -205,7 +205,7 @@ const CanvasStep = ({
     if (result.success) {
       // Afficher résultat
       if (result.conflicts > 0) {
-        alert(`✅ ${result.pixelsPlaced} pixel(s) placé(s)\n⚠️ ${result.conflicts} conflit(s) rejeté(s)`);
+        alert(`✅ ${result.pixelsPlaced} pixel(s) placed\n⚠️ ${result.conflicts} conflicting pixel(s) rejected`);
       }
       
       // Clear pending pixels and reload

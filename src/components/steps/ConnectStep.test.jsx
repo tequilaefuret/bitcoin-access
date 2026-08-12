@@ -242,7 +242,7 @@ test('offers Jade through direct USB and xpub-derived QR proof journeys', () => 
   expect(prepareJadeQrProof).toHaveBeenCalledTimes(1);
 });
 
-test('explains why Jade USB from the Blockstream app is unavailable to a mobile browser', () => {
+test('hides Jade USB on mobile and directs the user to QR PIN Unlock', () => {
   renderConnectStep({
     selectedPersonaId: 'cold_single_seed',
     authMode: 'offline',
@@ -250,9 +250,8 @@ test('explains why Jade USB from the Blockstream app is unavailable to a mobile 
     jadeUsbAvailability: { supported: false, reason: 'Web Serial unavailable.' },
   });
 
-  const usbButton = screen.getByRole('button', { name: /usb unavailable in this browser/i });
-  expect(usbButton).toBeDisabled();
-  expect(screen.getByText(/blockstream app is not exposed to this browser/i)).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /connect jade by usb/i })).not.toBeInTheDocument();
+  expect(screen.getByText(/unlock jade with qr pin unlock/i)).toBeInTheDocument();
 });
 
 test('shows the prepared Jade signmessage QR and submits its signature', () => {

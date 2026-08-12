@@ -32,20 +32,26 @@ const decodeJadeAccount = (cbor) => {
     throw new Error('Export one Native SegWit singlesig Jade account.');
   }
 
-  const outputItem = outputItems[0];
-  const outputTag = outputItem?.getTag?.();
-  // Current Jade firmware labels a BIP84 Native SegWit export with tag 404.
-  // Older firmware had an xpub-QR metadata bug and can label the same BIP84
-  // account with tag 403 (legacy P2PKH).  We only tolerate that specific
-  // mismatch after independently validating the complete BIP84 origin below.
-  if (outputTag !== 404 && outputTag !== 403) {
-    throw new Error('Only a Native SegWit singlesig Jade xpub is supported.');
+  // CBOR permits several nested semantic tags. Different Jade/decoder
+  // versions expose those layers in a different order, so unwrap the whole
+  // chain and validate the actual HD-key map and its BIP84 origin below.
+  const outputTags = [];
+  let taggedItem = outputItems[0];
+  let hdKey = null;
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (!taggedItem || typeof taggedItem.getData !== 'function') break;
+    const tag = taggedItem.getTag?.();
+    if (tag !== undefined) outputTags.push(tag);
+    const data = taggedItem.getData();
+    if (data && typeof data.getData === 'function') taggedItem = data;
+    else {
+      hdKey = data;
+      break;
+    }
   }
-  const hdKeyItem = outputItem.getData?.();
-  if (hdKeyItem?.getTag?.() !== 303) {
+  if (!outputTags.includes(303)) {
     throw new Error('The Jade QR must contain a public extended key.');
   }
-  const hdKey = hdKeyItem.getData?.();
   if (!hdKey || typeof hdKey !== 'object' || hdKey[1] === true || hdKey[2] === true) {
     throw new Error('Private keys are forbidden. Export the public xpub from Jade.');
   }
@@ -114,7 +120,10 @@ const decodeJadeAccount = (cbor) => {
     fingerprint: fingerprintHex,
     accountPath: `m/84'/0'/${accountIndex}'`,
     descriptor: `wpkh([${fingerprintHex}/84'/0'/${accountIndex}']${xpub}/<0;1>/*)`,
-    legacyScriptMetadata: outputTag === 403,
+    // The origin path is authoritative for this integration. Script tags are
+    // retained only for diagnostics because firmware/CBOR decoders may expose
+    // nested tags differently.
+    scriptTags: outputTags.filter((tag) => tag !== 303),
   };
 };
 
@@ -138,9 +147,9 @@ export function createJadeAccountUrDecoder() {
     return {
       progress: Math.min(100, Math.round(decoder.estimatedPercentComplete() * 100)),
       sourceFrames,
-      // One full animation cycle contains this many source frames.  The
-      // decoder can recover from a missed frame, but photos should normally
-      // capture each source frame once.
+      // Jade shows the pure source frames plus one fountain-code recovery
+      // frame for every three source frames (firmware BCUR_NUM_FRAGMENTS).
+      maximumPhotoFrames: sourceFrames ? Math.floor((4 * sourceFrames) / 3) : 0,
       recommendedPhotoFrames: sourceFrames || 0,
     };
   };

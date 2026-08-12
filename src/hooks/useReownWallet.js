@@ -132,8 +132,8 @@ export default function useReownWallet() {
         const networks = [bitcoin];
 
         const metadata = {
-          name: 'Bitcoin Exclusive Access',
-          description: 'Prouvez votre détention de Bitcoin pour accéder au jeu',
+          name: 'Danaus',
+          description: 'Prove Bitcoin ownership to access Danaus',
           url: window.location.origin,
           icons: ['https://avatars.githubusercontent.com/u/37784886']
         };
@@ -231,7 +231,7 @@ export default function useReownWallet() {
 
     try {
       if (!modal) {
-        throw new Error('Modal non initialisé. Rechargez la page.');
+        throw new Error('Wallet selector is not initialized. Reload the page.');
       }
 
       hasCheckedConnection.current = false;
@@ -241,7 +241,7 @@ export default function useReownWallet() {
       return null;
 
     } catch (err) {
-      setError(err.message || 'Échec de la connexion');
+      setError(err.message || 'Connection failed');
       setIsConnecting(false);
       return null;
     }
@@ -254,11 +254,11 @@ export default function useReownWallet() {
     setError('');
 
     try {
-      if (!modal && !injectedProviderRef.current) throw new Error('Wallet non connecté');
+      if (!modal && !injectedProviderRef.current) throw new Error('Wallet is not connected');
 
       const authRequest = options.authRequest;
       if (!authRequest?.requestId || !authRequest?.challenge) {
-        throw new Error('Challenge serveur manquant. Relancez la connexion.');
+        throw new Error('The server challenge is missing. Start the connection again.');
       }
       const signingTimeout = signatureWaitTime(authRequest);
       if (signingTimeout <= 0) {
@@ -267,7 +267,7 @@ export default function useReownWallet() {
       const message = typeof options.message === 'string' ? options.message : authRequest.challenge;
       const addressNetwork = address.startsWith('bc1') || address.startsWith('1') || address.startsWith('3') ? 'mainnet' : 'unknown';
       if (addressNetwork !== 'mainnet') {
-        throw new Error('Mauvaise adresse Bitcoin. Seules les adresses mainnet sont acceptées.');
+        throw new Error('Invalid Bitcoin address. Only mainnet addresses are accepted.');
       }
 
       const provider = injectedProviderRef.current || await modal.getWalletProvider();
@@ -284,7 +284,7 @@ export default function useReownWallet() {
         'No signature response was received. Reopen the wallet and try again.',
       );
 
-      if (!signature) throw new Error('Signature non reçue');
+      if (!signature) throw new Error('Signature was not received');
 
       return {
         message,
@@ -294,16 +294,16 @@ export default function useReownWallet() {
       };
     } catch (err) {
       if (err?.code === 4100) {
-        setError('Le wallet a refusé l’autorisation de signature pour cette adresse. Déconnecte puis reconnecte le wallet et réessaie.');
+        setError('The wallet refused to sign for this address. Disconnect it, reconnect it, and try again.');
         throw err;
       }
 
-      if (err.message?.includes('réseau')) {
+      if (err.message?.includes('network')) {
         setError(err.message);
-      } else if (err.message?.includes('rejected') || err.message?.includes('refusée')) {
-        setError('Signature refusée par l\'utilisateur');
+      } else if (err.message?.includes('rejected') || err.message?.includes('refused')) {
+        setError('Signature was rejected by the user');
       } else {
-        setError(err.message || 'Erreur signature');
+        setError(err.message || 'Signature failed');
       }
 
       throw err;

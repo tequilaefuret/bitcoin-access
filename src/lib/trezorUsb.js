@@ -155,6 +155,6 @@ export async function signTrezorAuthenticationMessage({ path, address, message, 
     responseAddress: response.payload?.address,
     signature: response.payload?.signature,
   });
-  onStatus?.('Signature received. Verifying ownership with Bitcoin Access.');
+  onStatus?.('Signature received. Verifying ownership with Danaus.');
   return { address: expectedAddress, signature };
 }

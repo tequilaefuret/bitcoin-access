@@ -183,7 +183,7 @@ const ConnectStep = ({
               <LockKeyhole className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-600">Bitcoin Access</p>
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-600">Danaus</p>
               <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
                 {accessMode === 'password' ? 'Sign in' : 'Use your wallet'}
               </h1>
