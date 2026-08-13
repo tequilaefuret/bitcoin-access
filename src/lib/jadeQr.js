@@ -2,6 +2,7 @@ import { Buffer } from 'buffer';
 import { HDKey } from '@scure/bip32';
 import { URDecoder } from '@ngraveio/bc-ur';
 import bs58check from 'bs58check';
+import '@keystonehq/bc-ur-registry/dist/patchCBOR';
 import { Bytes } from '@keystonehq/bc-ur-registry/dist/Bytes';
 import { decodeToDataItem } from '@keystonehq/bc-ur-registry/dist/lib';
 
@@ -16,6 +17,8 @@ const assertBufferLength = (value, length, label) => {
 const decodeJadeAccount = (cbor) => {
   let accountData;
   try {
+    // patchCBOR is imported above before this low-level decoder. Without that
+    // registration, valid Jade tags 404/303/304 are silently discarded.
     accountData = decodeToDataItem(cbor).getData();
   } catch {
     throw new Error('The Jade account QR is malformed. Export the xpub again from Jade.');
@@ -32,9 +35,6 @@ const decodeJadeAccount = (cbor) => {
     throw new Error('Export one Native SegWit singlesig Jade account.');
   }
 
-  // CBOR permits several nested semantic tags. Different Jade/decoder
-  // versions expose those layers in a different order, so unwrap the whole
-  // chain and validate the actual HD-key map and its BIP84 origin below.
   const outputTags = [];
   let taggedItem = outputItems[0];
   let hdKey = null;
@@ -49,10 +49,14 @@ const decodeJadeAccount = (cbor) => {
       break;
     }
   }
-  if (!outputTags.includes(303)) {
+  const scriptTags = outputTags.filter((tag) => tag !== 303);
+  if (scriptTags.length !== 1 || scriptTags[0] !== 404) {
+    throw new Error('Only a Native SegWit singlesig Jade xpub is supported.');
+  }
+  if (!outputTags.includes(303) || !hdKey || typeof hdKey !== 'object') {
     throw new Error('The Jade QR must contain a public extended key.');
   }
-  if (!hdKey || typeof hdKey !== 'object' || hdKey[1] === true || hdKey[2] === true) {
+  if (hdKey[1] === true || hdKey[2] === true) {
     throw new Error('Private keys are forbidden. Export the public xpub from Jade.');
   }
   const publicKey = assertBufferLength(hdKey[3], 33, 'The Jade public key');
@@ -120,10 +124,9 @@ const decodeJadeAccount = (cbor) => {
     fingerprint: fingerprintHex,
     accountPath: `m/84'/0'/${accountIndex}'`,
     descriptor: `wpkh([${fingerprintHex}/84'/0'/${accountIndex}']${xpub}/<0;1>/*)`,
-    // The origin path is authoritative for this integration. Script tags are
-    // retained only for diagnostics because firmware/CBOR decoders may expose
-    // nested tags differently.
-    scriptTags: outputTags.filter((tag) => tag !== 303),
+    // Retained for diagnostics after both the wpkh tag and BIP84 origin have
+    // been validated independently.
+    scriptTags,
   };
 };
 

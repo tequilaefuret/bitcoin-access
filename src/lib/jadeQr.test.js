@@ -65,12 +65,10 @@ test('rejects incompatible or private Jade account exports', () => {
     .toThrow('Private keys');
 });
 
-test('uses the validated BIP84 origin when script-tag layers differ between decoders', () => {
-  const result = decodeAllParts(buildAccount({ scriptExpression: ScriptExpressions.PUBLIC_KEY_HASH }).toUREncoder(80), createJadeAccountUrDecoder());
-  expect(result.scriptTags).toContain(403);
-  expect(result.accountPath).toBe("m/84'/0'/2'");
-
-  expect(() => decodeAllParts(buildAccount({ purpose: 49, scriptExpression: ScriptExpressions.PUBLIC_KEY_HASH }).toUREncoder(80), createJadeAccountUrDecoder()))
+test('requires both the Native SegWit script tag and its matching BIP84 origin', () => {
+  expect(() => decodeAllParts(buildAccount({ scriptExpression: ScriptExpressions.PUBLIC_KEY_HASH }).toUREncoder(80), createJadeAccountUrDecoder()))
+    .toThrow('Native SegWit');
+  expect(() => decodeAllParts(buildAccount({ purpose: 49 }).toUREncoder(80), createJadeAccountUrDecoder()))
     .toThrow('Native SegWit');
 });
 

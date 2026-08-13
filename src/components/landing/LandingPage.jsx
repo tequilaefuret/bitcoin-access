@@ -160,8 +160,8 @@ const LandingPage = ({ onStart, onSignIn }) => (
 
           <figure className="mt-12 overflow-hidden rounded-[2rem] border border-white/[0.09] bg-[#080a0e] shadow-[0_24px_70px_-32px_rgba(0,0,0,0.9)]">
             <img
-              src="/images/danaus-shells-flow.png"
-              alt="Visual diagram: a secure wallet verifies ownership, a reservoir mirrors the balance as shells, then Danaus features use shells."
+              src="/images/danaus-shells-flow-horizontal.png"
+              alt="Horizontal Danaus diagram: a self-custody wallet proves ownership, Bitcoin is mirrored into shells, then shells are used for reading, posting, and creating."
               className="block h-auto w-full"
             />
             <figcaption className="grid divide-y divide-white/[0.08] border-t border-white/[0.09] bg-white/[0.025] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
