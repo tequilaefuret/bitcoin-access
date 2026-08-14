@@ -586,7 +586,7 @@ const AuthProofPanel = ({
           </div>
           {authHint && <p className="text-sm text-slate-600">{authHint}</p>}
           <ol className="grid gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-950">
-            <li><strong>1.</strong> On the unlocked Jade, open <strong>Scan QR</strong> and keep its camera pointed at the animation below.</li>
+            <li><strong>1.</strong> On the unlocked Jade, open <strong>Scan QR</strong>. Enlarge the low-density QR below, turn up the phone brightness and hold Jade slightly farther away.</li>
             <li><strong>2.</strong> Verify the login message and path <span className="font-mono">{jadeQrPath}</span>, then approve.</li>
             <li><strong>3.</strong> Select <strong>Scan Jade response</strong> here and show Jade’s signature QR to the camera.</li>
           </ol>

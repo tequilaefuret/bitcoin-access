@@ -19,6 +19,7 @@ import {
   sessionCookie,
   sha256Hex,
 } from '../_shared/auth.ts';
+import { safeErrorForLog } from '../_shared/logging.mjs';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -134,7 +135,7 @@ function verifyBitcoinSignature(
     
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error('❌ Erreur BIP-322:', errorMessage);
+    console.error('❌ Erreur BIP-322:', safeErrorForLog(errorMessage));
     
     return {
       isValid: false,
@@ -482,7 +483,7 @@ function verifyBip322Psbt(
     return { isValid: true, addressType: addressInfo.type };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('❌ Erreur PSBT BIP-322:', message);
+    console.error('❌ Erreur PSBT BIP-322:', safeErrorForLog(message));
     return { isValid: false, addressType: addressInfo.type, error: message };
   }
 }
@@ -700,7 +701,7 @@ serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Authentication failed';
-    console.error('❌ [VERIFY-AND-REGISTER] Erreur:', message);
+    console.error('❌ [VERIFY-AND-REGISTER] Erreur:', safeErrorForLog(message));
     const status = message === 'Origin not allowed' ? 403 : 400;
     return jsonResponse(req, { valid: false, error: message }, status);
   }

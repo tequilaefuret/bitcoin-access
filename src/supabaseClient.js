@@ -154,6 +154,18 @@ export async function configurePassword(password, { reset = false } = {}) {
   return data;
 }
 
+export async function changePassword(currentPassword, newPassword) {
+  const jwt = await getAuthenticatedJWT();
+  const data = await authApiRequest('password-auth', {
+    action: 'change',
+    currentPassword,
+    password: newPassword,
+    accessToken: jwt,
+  });
+  if (!data.changed) throw new Error(data.error || 'Unable to update the password');
+  return data;
+}
+
 export async function skipPasswordSetup() {
   const jwt = await getAuthenticatedJWT();
   const data = await authApiRequest('password-auth', {
@@ -422,7 +434,7 @@ export async function publishMessage(address, content, parentId = null) {
  * @param {number} offset - Offset pour pagination (défaut: 0)
  * @param {string|null} userAddress - Adresse Bitcoin de l'utilisateur (pour likes/dislikes)
  * @param {string|null} parentId - ID du message parent (pour charger les commentaires)
- * @param {'recent'|'followed'} sortMode - Fil global ou comptes suivis
+ * @param {'for_you'|'recent'|'followed'} sortMode - Recommandations, fil global ou comptes suivis
  * @returns {Promise<array>} Liste des messages avec compteurs sociaux
  */
 export async function getMessages(limit = 20, offset = 0, userAddress = null, parentId = null, sortMode = 'recent') {
@@ -453,6 +465,54 @@ export async function createMessageRepost(address, messageId, quoteContent = '')
     messageId,
     quoteContent: typeof quoteContent === 'string' ? quoteContent.trim() : '',
   }, 'Could not repost');
+}
+
+/**
+ * Retirer une publication des recommandations futures et enregistrer ce
+ * signal négatif pour le classement personnalisé.
+ */
+export async function markForYouNotInterested(address, messageId) {
+  return invokeUserOperation(
+    address,
+    'for_you_not_interested',
+    { messageId },
+    'Could not update your recommendations'
+  );
+}
+
+export async function setEditorialAuthorPreference(address, targetAddress, preference) {
+  if (!['none', 'reduce', 'mute', 'block'].includes(preference)) {
+    throw new Error('Invalid editorial preference');
+  }
+
+  return invokeUserOperation(address, 'set_editorial_author_preference', {
+    targetAddress,
+    preference,
+  }, 'Could not update this author preference');
+}
+
+export async function listEditorialAuthorPreferences(address) {
+  const data = await invokeUserOperation(
+    address,
+    'list_editorial_author_preferences',
+    {},
+    'Could not load content controls'
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+export async function reportEditorialMessage(address, messageId) {
+  return invokeUserOperation(address, 'report_editorial_target', {
+    targetKind: 'message',
+    messageId,
+  }, 'Could not report this post');
+}
+
+export async function reportEditorialProfile(address, profileAddress) {
+  return invokeUserOperation(address, 'report_editorial_target', {
+    targetKind: 'profile',
+    profileAddress,
+  }, 'Could not report this profile');
 }
 
 export async function listFollowingAddresses(address) {

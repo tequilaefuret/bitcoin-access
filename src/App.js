@@ -19,6 +19,12 @@ import {
   setFollowingAddress,
 } from './supabaseClient';
 import { hasUserProfile } from './lib/userIdentity';
+import {
+  DEFAULT_USER_PREFERENCES,
+  loadUserPreferences,
+  saveUserPreferences,
+  shouldReduceMotion,
+} from './lib/userPreferences';
 
 const SocialStep = lazy(() => import('./components/steps/SocialStep'));
 const GameStep = lazy(() => import('./components/steps/GameStep'));
@@ -26,6 +32,7 @@ const ProfileStep = lazy(() => import('./components/steps/ProfileStep'));
 const CanvasStep = lazy(() => import('./components/steps/CanvasStep'));
 const HistoryModal = lazy(() => import('./components/ui/HistoryModal'));
 const StatsModal = lazy(() => import('./components/ui/StatsModal'));
+const SettingsStep = lazy(() => import('./components/steps/SettingsStep'));
 
 const FOLLOWING_KEY = 'danaus_following_addresses';
 
@@ -54,11 +61,14 @@ const BitcoinExclusiveAccess = () => {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [profileAddress, setProfileAddress] = useState(null);
   const [profileReturnStep, setProfileReturnStep] = useState('social');
+  const [settingsReturnStep, setSettingsReturnStep] = useState('social');
   const [profileSetupAddress, setProfileSetupAddress] = useState(null);
   const [passwordConfigured, setPasswordConfigured] = useState(false);
   const [passwordSetupSkipped, setPasswordSetupSkipped] = useState(false);
   const [passwordSetupMode, setPasswordSetupMode] = useState('set');
   const [passwordRecoveryRequested, setPasswordRecoveryRequested] = useState(false);
+  const [userPreferences, setUserPreferences] = useState({ ...DEFAULT_USER_PREFERENCES });
+  const [systemPrefersReducedMotion, setSystemPrefersReducedMotion] = useState(() => shouldReduceMotion('system'));
   const [followingAddresses, setFollowingAddresses] = useState(() => safeParseArray(localStorage.getItem(FOLLOWING_KEY)));
 
   const {
@@ -83,6 +93,11 @@ const BitcoinExclusiveAccess = () => {
     loadUserPixelCount,
     toggleUseful,
     repostMessage,
+    hideForYouMessage,
+    updateEditorialAuthorPreference,
+    loadEditorialAuthorPreferences,
+    reportMessage,
+    reportProfile,
     loadOpinionTopics,
     savePrivateTopicStance
   } = useBitcoinBalance();
@@ -103,9 +118,24 @@ const BitcoinExclusiveAccess = () => {
   const authenticatedAddress = address || null;
   const showPrivateSession = Boolean(authenticatedAddress)
     && !['connect', 'profile-setup', 'password-setup'].includes(step);
+  const reduceMotion = userPreferences.motion === 'reduced'
+    || (userPreferences.motion === 'system' && systemPrefersReducedMotion);
 
   const routeToNetwork = useCallback(() => {
     setStep('social');
+  }, []);
+
+  useEffect(() => {
+    setUserPreferences(loadUserPreferences(address));
+  }, [address]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateMotionPreference = () => setSystemPrefersReducedMotion(mediaQuery.matches);
+    updateMotionPreference();
+    mediaQuery.addEventListener?.('change', updateMotionPreference);
+    return () => mediaQuery.removeEventListener?.('change', updateMotionPreference);
   }, []);
 
   const {
@@ -226,6 +256,23 @@ const BitcoinExclusiveAccess = () => {
       throw followError;
     }
   }, [address, followingAddresses, setError]);
+
+  const handleEditorialPreference = useCallback(async (targetAddress, preference) => {
+    const result = await updateEditorialAuthorPreference(targetAddress, preference);
+
+    // Blocking also removes both follow relationships in the database. Keep the
+    // local navigation state in sync immediately so the UI never shows a stale
+    // "Following" badge after the action succeeds.
+    if (preference === 'block') {
+      setFollowingAddresses((current) => {
+        const next = current.filter((item) => item !== targetAddress);
+        localStorage.setItem(FOLLOWING_KEY, JSON.stringify(next));
+        return next;
+      });
+    }
+
+    return result;
+  }, [updateEditorialAuthorPreference]);
 
   useEffect(() => {
     if (!address) return;
@@ -400,6 +447,21 @@ const BitcoinExclusiveAccess = () => {
     setStep(profileReturnStep || 'social');
   }, [profileReturnStep, setError]);
 
+  const handleOpenSettings = useCallback(() => {
+    setError('');
+    setSettingsReturnStep(['profile', 'game', 'canvas'].includes(step) ? step : 'social');
+    setStep('settings');
+  }, [setError, step]);
+
+  const handleSettingsBack = useCallback(() => {
+    setError('');
+    setStep(settingsReturnStep || 'social');
+  }, [setError, settingsReturnStep]);
+
+  const handlePreferencesChange = useCallback((nextPreferences) => {
+    setUserPreferences(saveUserPreferences(address, nextPreferences));
+  }, [address]);
+
   // ===== HANDLER : PSEUDO CRÉÉ =====
   const handleProfileSetupComplete = useCallback(() => {
     setError('');
@@ -462,25 +524,34 @@ const BitcoinExclusiveAccess = () => {
 
   // ===== RENDU PRINCIPAL =====
   return (
-    <div className={step === 'landing'
+    <div className={`${step === 'landing'
       ? 'min-h-screen'
-      : `min-h-screen p-4 ${
-        step === 'connect'
-          ? 'bg-[radial-gradient(circle_at_top_left,_#ffedd5_0%,_#fdba74_32%,_#f97316_68%,_#c2410c_100%)]'
-          : 'bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600'
-      }`
-    }>
+      : step === 'connect'
+        ? 'relative isolate min-h-screen overflow-x-hidden bg-[#07080c] px-4 pb-8 text-white selection:bg-amber-300 selection:text-slate-950 sm:px-6'
+        : 'min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 p-4'
+    } ${reduceMotion ? 'danaus-reduce-motion' : ''}`}>
       {step !== 'landing' && <EnvIndicator />}
+
+      {step === 'connect' && (
+        <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
+          <div className="absolute left-1/2 top-[-26rem] h-[54rem] w-[64rem] -translate-x-1/2 rounded-full bg-amber-500/20 blur-[140px]" />
+          <div className="absolute bottom-[-18rem] right-[-12rem] h-[38rem] w-[38rem] rounded-full bg-orange-600/10 blur-[130px]" />
+          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.028)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.028)_1px,transparent_1px)] bg-[size:52px_52px] [mask-image:linear-gradient(to_bottom,black,transparent_75%)]" />
+        </div>
+      )}
 
       {step === 'landing' ? (
         <LandingPage onStart={() => setStep('connect')} onSignIn={() => setStep('connect')} />
       ) : (
-      <div className="max-w-4xl mx-auto">
+      <div className={`${step === 'connect' ? 'max-w-6xl' : 'max-w-4xl'} mx-auto`}>
           <Header 
           connectedAddress={showPrivateSession ? authenticatedAddress : null}
           connectedWallet={connectedWallet}
           minimal={step === 'connect'}
+          onHome={() => setStep('landing')}
           onDisconnect={handleManualDisconnect}
+          onSettings={showPrivateSession ? handleOpenSettings : null}
+          showFullAddress={userPreferences.showFullAddress}
           onViewProfile={
             !showPrivateSession
               ? null
@@ -584,6 +655,9 @@ const BitcoinExclusiveAccess = () => {
               onLoadComments={loadComments}
               onToggleUseful={toggleUseful}
               onRepostMessage={repostMessage}
+              onForYouNotInterested={hideForYouMessage}
+              onEditorialPreference={handleEditorialPreference}
+              onReportMessage={reportMessage}
               onLoadOpinionTopics={loadOpinionTopics}
               onSetPrivateStance={savePrivateTopicStance}
               loading={loading}
@@ -598,6 +672,7 @@ const BitcoinExclusiveAccess = () => {
               followingAddresses={followingAddresses}
               onFollowToggle={handleToggleFollow}
               isFollowing={isFollowing}
+              defaultFeed={userPreferences.defaultFeed}
             />
           )}
 
@@ -612,6 +687,10 @@ const BitcoinExclusiveAccess = () => {
               onShowStats={handleShowStats}
               passwordConfigured={passwordConfigured}
               onAddPassword={handleAddPassword}
+              showFullAddress={userPreferences.showFullAddress}
+              onEditorialPreference={handleEditorialPreference}
+              onReportMessage={reportMessage}
+              onReportProfile={reportProfile}
             />
           )}
 
@@ -631,6 +710,19 @@ const BitcoinExclusiveAccess = () => {
               mode={passwordSetupMode}
               onComplete={handlePasswordSetupComplete}
               onSkip={handlePasswordSetupSkip}
+            />
+          )}
+
+          {step === 'settings' && address && (
+            <SettingsStep
+              address={address}
+              passwordConfigured={passwordConfigured}
+              preferences={userPreferences}
+              onPreferencesChange={handlePreferencesChange}
+              onLoadEditorialPreferences={loadEditorialAuthorPreferences}
+              onEditorialPreference={handleEditorialPreference}
+              onAddPassword={handleAddPassword}
+              onBack={handleSettingsBack}
             />
           )}
 

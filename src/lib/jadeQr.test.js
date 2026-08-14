@@ -77,7 +77,9 @@ test('encodes a Jade message request as animated UR bytes', () => {
   const encoder = createJadeMessageUrEncoder(payload, 50);
   const decoder = new URDecoder();
   for (let index = 0; index < 200 && !decoder.isComplete(); index += 1) {
-    decoder.receivePart(encoder.nextPart());
+    // Jade and Sparrow display BC-UR in uppercase so QR generators can use
+    // the less dense alphanumeric mode. Decoding must preserve the payload.
+    decoder.receivePart(encoder.nextPart().toUpperCase());
   }
   expect(decoder.isComplete()).toBe(true);
   const ur = decoder.resultUR();

@@ -136,7 +136,7 @@ const GUIDES = {
       'Unlock Jade before opening Options. Jade Plus: select QR Mode, then QR PIN Unlock; use Blockstream’s official QR PIN Unlock companion page, enter the PIN on Jade only, and complete both animated QR exchanges. If your Jade has no QR PIN Unlock item, update its firmware or unlock it with the official Blockstream app by USB or Bluetooth.',
       'After it is unlocked, open Options, Wallet, Export Xpub.',
       'Keep Native SegWit and Singlesig selected. Scan Jade’s animated crypto-account QR with Danaus; keep the whole white border visible and use camera zoom if offered. The public address is derived automatically.',
-      'Create the signing request, open Scan QR on Jade and keep it pointed at Danaus’s animated QR until progress completes.',
+      'Create the signing request and open Scan QR on Jade. Enlarge Danaus’s low-density QR, turn up the phone brightness and hold Jade slightly farther away. Use Very slow or pause and advance frame by frame if needed.',
       'Verify the login message and path on Jade, approve it, then scan Jade’s signature QR with Danaus and select Verify and sign in.',
     ],
     note: 'If live scanning remains at 0%, use Photograph one QR frame and wait for Jade’s animation to change between photos. After the first readable frame Danaus displays both the usual number of photos and the maximum for one full cycle including recovery frames. The imported xpub is public and accepted only for Bitcoin mainnet BIP84 Native SegWit singlesig. Danaus never scans a SeedQR or private key.',

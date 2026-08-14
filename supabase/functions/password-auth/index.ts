@@ -11,6 +11,7 @@ import {
   sha256Hex,
   verifyAccessToken,
 } from '../_shared/auth.ts';
+import { safeErrorForLog, sanitizeLogText } from '../_shared/logging.mjs';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -25,7 +26,12 @@ function databaseError(stage: string, error: unknown): Error {
   const message = typeof value?.message === 'string' ? value.message : 'Unknown database error';
   const code = typeof value?.code === 'string' ? value.code : null;
   const details = typeof value?.details === 'string' ? value.details : null;
-  console.error('[PASSWORD-AUTH][DATABASE]', JSON.stringify({ stage, code, message, details }));
+  console.error('[PASSWORD-AUTH][DATABASE]', JSON.stringify({
+    stage,
+    code,
+    message: sanitizeLogText(message),
+    details: details ? sanitizeLogText(details) : null,
+  }));
   return new Error(`Password database operation failed at ${stage}`);
 }
 
@@ -270,6 +276,97 @@ async function configurePassword(
   return jsonResponse(req, { configured: true, address: auth.address });
 }
 
+async function changePassword(
+  req: Request,
+  currentPassword: unknown,
+  password: unknown,
+  accessToken: unknown,
+): Promise<Response> {
+  const passwordError = validateNewPassword(password);
+  if (passwordError) return jsonResponse(req, { changed: false, error: passwordError }, 400);
+  if (typeof currentPassword !== 'string' || currentPassword.length > MAX_PASSWORD_LENGTH) {
+    return jsonResponse(req, { changed: false, error: 'Current password is incorrect' }, 401);
+  }
+  if (typeof accessToken !== 'string') {
+    return jsonResponse(req, { changed: false, error: 'Authentication required' }, 401);
+  }
+
+  const auth = await verifyAccessToken(accessToken, supabase);
+  if (!auth.valid || !auth.address || !auth.sessionId) {
+    return jsonResponse(req, { changed: false, error: 'Authentication required' }, 401);
+  }
+
+  const accountScope = `password-change:${auth.address.toLocaleLowerCase('en-US')}`;
+  const ip = requestIp(req);
+  const accountAllowed = await consumeRateLimit(accountScope, 5, 15 * 60);
+  const ipAllowed = ip ? await consumeRateLimit(`password-change-ip:${ip}`, 30, 15 * 60) : true;
+  if (!accountAllowed || !ipAllowed) {
+    return jsonResponse(req, {
+      changed: false,
+      error: 'Too many attempts. Please wait 15 minutes before trying again.',
+    }, 429);
+  }
+
+  const { data: credential, error: credentialError } = await supabase
+    .from('auth_password_credentials')
+    .select('password_hash, password_salt, iterations')
+    .eq('bitcoin_address', auth.address)
+    .maybeSingle();
+  if (credentialError) throw databaseError('load_current_credential', credentialError);
+
+  const currentSalt = credential?.password_salt
+    ? base64UrlToBytes(credential.password_salt)
+    : new TextEncoder().encode('bitcoin-access-dummy-salt');
+  const currentHash = await derivePasswordHash(
+    currentPassword,
+    currentSalt,
+    credential?.iterations || PASSWORD_ITERATIONS,
+  );
+  const currentPasswordIsValid = Boolean(
+    credential?.password_hash
+    && constantTimeEqual(currentHash, credential.password_hash),
+  );
+
+  if (!currentPasswordIsValid) {
+    return jsonResponse(req, { changed: false, error: 'Current password is incorrect' }, 401);
+  }
+  if (currentPassword === password) {
+    return jsonResponse(req, {
+      changed: false,
+      error: 'New password must be different from the current password',
+    }, 400);
+  }
+
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const now = new Date().toISOString();
+  const passwordHash = await derivePasswordHash(password, salt);
+  const { error: saveError } = await supabase
+    .from('auth_password_credentials')
+    .update({
+      password_hash: passwordHash,
+      password_salt: bytesToBase64Url(salt),
+      algorithm: 'pbkdf2-sha256',
+      iterations: PASSWORD_ITERATIONS,
+      updated_at: now,
+      password_changed_at: now,
+    })
+    .eq('bitcoin_address', auth.address);
+  if (saveError) throw databaseError('change_password', saveError);
+
+  const { error: revokeError } = await supabase
+    .from('auth_sessions')
+    .update({ revoked_at: now })
+    .eq('bitcoin_address', auth.address)
+    .neq('family_id', auth.sessionId)
+    .is('revoked_at', null);
+  if (revokeError) throw databaseError('revoke_other_sessions', revokeError);
+
+  const accountScopeHash = await sha256Hex(`${PASSWORD_PEPPER}\u0000${accountScope}`);
+  await supabase.rpc('clear_password_rate_limit', { p_scope_hash: accountScopeHash });
+
+  return jsonResponse(req, { changed: true, address: auth.address });
+}
+
 async function skipPasswordSetup(req: Request, accessToken: unknown): Promise<Response> {
   if (typeof accessToken !== 'string') {
     return jsonResponse(req, { skipped: false, error: 'Wallet authentication required' }, 401);
@@ -303,8 +400,11 @@ serve(async (req) => {
     if (req.method !== 'POST') return jsonResponse(req, { error: 'Method not allowed' }, 405);
     if (!PASSWORD_PEPPER) throw new Error('Password authentication is not configured');
 
-    const { action, identifier, password, accessToken } = await req.json();
+    const { action, identifier, currentPassword, password, accessToken } = await req.json();
     if (action === 'login') return await login(req, identifier, password);
+    if (action === 'change') {
+      return await changePassword(req, currentPassword, password, accessToken);
+    }
     if (action === 'set' || action === 'reset') {
       return await configurePassword(req, action, password, accessToken);
     }
@@ -312,7 +412,7 @@ serve(async (req) => {
     return jsonResponse(req, { error: 'Unsupported password operation' }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Password operation failed';
-    console.error('[PASSWORD-AUTH]', JSON.stringify({ message }));
+    console.error('[PASSWORD-AUTH]', JSON.stringify({ message: safeErrorForLog(error) }));
     const status = message === 'Origin not allowed' ? 403 : 500;
     const publicMessage = status === 403 ? message : 'Password service unavailable';
     return jsonResponse(req, { authenticated: false, error: publicMessage }, status);

@@ -34,7 +34,7 @@ test('requires a wallet proof before password recovery', () => {
   fireEvent.click(screen.getByRole('button', { name: /forgot password/i }));
 
   expect(onPasswordRecovery).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole('heading', { name: /use your wallet/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /sign in with your wallet/i })).toBeInTheDocument();
   expect(screen.getByText(/wallet type/i)).toBeInTheDocument();
 });
 
@@ -127,7 +127,7 @@ test('offers the direct Trezor journey for a hardware wallet', () => {
     trezorUsbAvailability: { supported: true, reason: '' },
   });
 
-  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+  fireEvent.click(screen.getByRole('button', { name: /don't have an account/i }));
   expect(screen.getByRole('heading', { name: /direct connection/i })).toBeInTheDocument();
   expect(screen.getByRole('heading', { name: /^trezor$/i })).toBeInTheDocument();
   expect(screen.getByTestId('trezor-brand-mark')).toHaveClass('bg-[#60E198]', 'text-[#062D16]');
@@ -156,7 +156,7 @@ test('keeps the direct Ledger journey to one automatic action', () => {
     ledgerUsbAvailability: { supported: true, reason: '' },
   });
 
-  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+  fireEvent.click(screen.getByRole('button', { name: /don't have an account/i }));
   expect(screen.getByText(/advanced account selection/i).closest('details')).not.toHaveAttribute('open');
   expect(screen.queryByText(/import wallet policy/i)).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /sign directly/i })).not.toBeInTheDocument();
@@ -226,7 +226,7 @@ test('offers Jade through direct USB and xpub-derived QR proof journeys', () => 
     jadeUsbAvailability: { supported: true, reason: '' },
   });
 
-  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+  fireEvent.click(screen.getByRole('button', { name: /don't have an account/i }));
 
   expect(screen.getByRole('heading', { name: /^jade$/i })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /connect jade by usb/i }));
@@ -272,7 +272,7 @@ test('shows the prepared Jade signmessage QR and submits its signature', () => {
     submitJadeQrProof,
   });
 
-  fireEvent.click(screen.getByRole('button', { name: /create an account with a wallet/i }));
+  fireEvent.click(screen.getByRole('button', { name: /don't have an account/i }));
   expect(screen.getByText(/jade qr request ready/i)).toBeInTheDocument();
   expect(screen.getByText('m/84h/0h/0h/0/0')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /verify and sign in/i }));

@@ -175,34 +175,62 @@ const ConnectStep = ({
   };
 
   return (
-    <div className="mx-auto w-full max-w-2xl py-4 sm:py-8">
-      <div className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_24px_80px_-32px_rgba(15,23,42,0.38)]">
-        <header className="border-b border-slate-100 px-5 py-6 sm:px-8 sm:py-8">
+    <div className="mx-auto w-full max-w-6xl py-2 sm:py-6 lg:py-10">
+      <div className="grid overflow-hidden rounded-[28px] border border-white/10 bg-[#11131a]/95 shadow-[0_36px_110px_-30px_rgba(0,0,0,0.95)] backdrop-blur-xl lg:grid-cols-[0.78fr_1.22fr] lg:rounded-[36px]">
+        <aside className="relative isolate flex min-h-[190px] flex-col justify-between overflow-hidden border-b border-white/10 p-6 sm:min-h-[220px] sm:p-8 lg:min-h-[650px] lg:border-b-0 lg:border-r lg:p-10">
+          <div className="pointer-events-none absolute inset-0 -z-10">
+            <div className="absolute -left-20 -top-24 h-72 w-72 rounded-full bg-amber-400/20 blur-[90px]" />
+            <div className="absolute -bottom-40 -right-24 h-80 w-80 rounded-full bg-orange-600/15 blur-[110px]" />
+            <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:44px_44px] [mask-image:linear-gradient(to_bottom,black,transparent_85%)]" />
+          </div>
+
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/20 bg-amber-100/[0.06] px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.17em] text-amber-200/90 sm:text-xs">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-300 shadow-[0_0_10px_#fcd34d]" />
+              Secure access
+            </div>
+            <h2 className="mt-5 max-w-md text-3xl font-black leading-[0.98] tracking-[-0.055em] text-white sm:text-4xl lg:mt-8 lg:text-5xl">
+              Your place is <span className="text-amber-300">ready.</span>
+            </h2>
+            <p className="mt-3 max-w-sm text-sm leading-6 text-white/55 sm:text-base lg:mt-5">
+              Sign in and continue where you left off.
+            </p>
+          </div>
+
+          <div className="mt-6 hidden border-t border-white/10 pt-6 text-xs font-semibold text-white/45 sm:flex sm:flex-wrap sm:gap-x-5 sm:gap-y-2 lg:mt-10">
+            <span className="inline-flex items-center gap-2"><Check className="h-3.5 w-3.5 text-amber-300" /> No transaction</span>
+            <span className="inline-flex items-center gap-2"><Check className="h-3.5 w-3.5 text-amber-300" /> No fee</span>
+            <span className="inline-flex items-center gap-2"><Check className="h-3.5 w-3.5 text-amber-300" /> Your keys stay yours</span>
+          </div>
+        </aside>
+
+        <section className="bg-[#f7f5ef] text-slate-950">
+        <header className="border-b border-stone-200/80 px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-9">
           <div className="flex items-start gap-4">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-orange-500 text-white shadow-lg shadow-orange-500/20">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-amber-300 text-slate-950 shadow-[0_8px_28px_rgba(252,211,77,0.28)] sm:h-12 sm:w-12">
               <LockKeyhole className="h-6 w-6" />
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-orange-600">Danaus</p>
-              <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">
-                {accessMode === 'password' ? 'Sign in' : 'Use your wallet'}
+
+              <h1 className="mt-1 text-2xl font-black tracking-[-0.04em] text-slate-950 sm:text-3xl">
+                {accessMode === 'password' ? 'Sign in with your password' : 'Sign in with your wallet'}
               </h1>
-              <p className="mt-2 text-sm text-slate-500">
+              <p className="mt-1.5 text-sm text-slate-500">
                 {accessMode === 'password'
-                  ? 'Access your account without signing again.'
-                  : 'Prove wallet ownership. No transaction or fee.'}
+                  ? 'Access your account without using your wallet.'
+                  : 'Prove wallet ownership by signing a message to access your account.'}
               </p>
             </div>
           </div>
         </header>
 
-        <div className="px-5 py-6 sm:px-8 sm:py-8">
-          <div className="mb-6 grid grid-cols-2 rounded-2xl bg-slate-100 p-1">
+        <div className="px-5 py-6 sm:px-8 sm:py-8 lg:px-10 lg:py-9">
+          <div className="mb-6 grid grid-cols-2 rounded-2xl bg-[#e9e6de] p-1.5">
             <button
               type="button"
               onClick={() => setAccessMode('password')}
               className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                accessMode === 'password' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                accessMode === 'password' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/45 hover:text-slate-800'
               }`}
             >
               Password
@@ -211,7 +239,7 @@ const ConnectStep = ({
               type="button"
               onClick={showWalletConnection}
               className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition ${
-                accessMode === 'wallet' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                accessMode === 'wallet' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/45 hover:text-slate-800'
               }`}
             >
               Wallet
@@ -229,7 +257,7 @@ const ConnectStep = ({
                   autoComplete="username"
                   maxLength={100}
                   required
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-slate-950 outline-none transition focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10"
+                  className="w-full rounded-2xl border border-stone-300 bg-white px-4 py-3.5 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-stone-400 focus:border-amber-500 focus:ring-4 focus:ring-amber-400/15"
                   placeholder="Username or bc1..."
                 />
               </label>
@@ -244,7 +272,7 @@ const ConnectStep = ({
                     autoComplete="current-password"
                     maxLength={128}
                     required
-                    className="w-full rounded-2xl border border-slate-200 px-4 py-3 pr-12 text-slate-950 outline-none transition focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10"
+                    className="w-full rounded-2xl border border-stone-300 bg-white px-4 py-3.5 pr-12 text-slate-950 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-stone-400 focus:border-amber-500 focus:ring-4 focus:ring-amber-400/15"
                     placeholder="Your password"
                   />
                   <button
@@ -267,19 +295,19 @@ const ConnectStep = ({
               <button
                 type="submit"
                 disabled={isPasswordLoginLoading || !identifier.trim() || !password}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-bold text-white shadow-lg shadow-orange-500/20 transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                className="group flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-4 font-extrabold text-slate-950 shadow-[0_12px_34px_rgba(245,158,11,0.22)] transition hover:-translate-y-0.5 hover:bg-amber-200 hover:shadow-[0_16px_40px_rgba(245,158,11,0.28)] disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none"
               >
                 {isPasswordLoginLoading ? <Loader className="h-5 w-5 animate-spin" /> : <LockKeyhole className="h-5 w-5" />}
                 {isPasswordLoginLoading ? 'Signing in...' : 'Sign in'}
-                {!isPasswordLoginLoading && <ArrowRight className="h-5 w-5" />}
+                {!isPasswordLoginLoading && <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-0.5" />}
               </button>
 
               <div className="flex flex-col items-center gap-3 pt-2 text-sm sm:flex-row sm:justify-between">
                 <button type="button" onClick={startPasswordRecovery} className="font-semibold text-slate-500 hover:text-slate-900">
                   Forgot password?
                 </button>
-                <button type="button" onClick={showWalletConnection} className="font-semibold text-orange-600 hover:text-orange-700">
-                  Create an account with a wallet
+                <button type="button" onClick={showWalletConnection} className="font-semibold text-amber-700 hover:text-amber-900">
+                  Don't have an account?
                 </button>
               </div>
             </form>
@@ -300,13 +328,13 @@ const ConnectStep = ({
                   className={`relative flex min-h-20 flex-col items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-sm font-semibold transition ${
                     isSelected
                       ? 'border-slate-950 bg-slate-950 text-white shadow-md'
-                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                      : 'border-stone-300 bg-white text-slate-600 hover:border-amber-400 hover:bg-amber-50/50'
                   }`}
                 >
                   <TypeIcon className="h-5 w-5" />
                   <span>{details.label}</span>
                   {isSelected && (
-                    <span className="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-orange-500">
+                    <span className="absolute right-2 top-2 flex h-4 w-4 items-center justify-center rounded-full bg-amber-300 text-slate-950">
                       <Check className="h-3 w-3" />
                     </span>
                   )}
@@ -389,7 +417,7 @@ const ConnectStep = ({
                 type="button"
                 onClick={onConnect}
                 disabled={loading || Boolean(statusLabel)}
-                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-bold text-white shadow-lg shadow-orange-500/20 transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-4 font-extrabold text-slate-950 shadow-[0_12px_34px_rgba(245,158,11,0.22)] transition hover:-translate-y-0.5 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Wallet className="h-5 w-5" />
                 {injectedWallets.length > 0 ? 'Find another wallet' : 'Find a wallet'}
@@ -405,7 +433,7 @@ const ConnectStep = ({
                   type="button"
                   onClick={handleMobileConnect}
                   disabled={loading || Boolean(statusLabel)}
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-4 font-bold text-white shadow-lg shadow-orange-500/20 transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-4 font-extrabold text-slate-950 shadow-[0_12px_34px_rgba(245,158,11,0.22)] transition hover:-translate-y-0.5 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Wallet className="h-5 w-5" />
                   {walletInAppBrowser && injectedWallets.length === 1
@@ -540,6 +568,7 @@ const ConnectStep = ({
             </>
           )}
         </div>
+        </section>
       </div>
     </div>
   );

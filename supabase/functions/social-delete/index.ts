@@ -6,6 +6,7 @@ import {
   jsonResponse,
   verifyAccessToken,
 } from '../_shared/auth.ts';
+import { safeErrorForLog } from '../_shared/logging.mjs';
 
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -24,7 +25,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { messageId, bitcoinAddress, jwt } = body;
     
-    console.log('🗑️ social-delete:', { messageId: messageId?.slice(0, 8), address: bitcoinAddress?.slice(0, 8) });
+    console.log('🗑️ social-delete:', { messageId: messageId?.slice(0, 8) });
 
     if (!messageId || !bitcoinAddress || !jwt) {
       return new Response(
@@ -71,7 +72,7 @@ Deno.serve(async (req) => {
       .eq('id', messageId);
 
     if (deleteError) {
-      console.error('❌ Erreur suppression:', deleteError.message);
+      console.error('❌ Erreur suppression:', safeErrorForLog(deleteError));
       throw deleteError;
     }
 
@@ -82,7 +83,7 @@ Deno.serve(async (req) => {
     );
 
   } catch (error: any) {
-    console.error('❌ Erreur social-delete:', error.message);
+    console.error('❌ Erreur social-delete:', safeErrorForLog(error));
     const status = error?.message === 'Origin not allowed' ? 403 : 500;
     return jsonResponse(req, {
       error: status === 403 ? error.message : 'Unable to delete message',

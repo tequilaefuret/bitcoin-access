@@ -30,6 +30,8 @@ The authentication flow is now:
     random salt and a secret server-side pepper.
 11. Password login creates the same rotating `HttpOnly` session as wallet login.
 12. A forgotten password can only be replaced after a new wallet proof.
+13. An authenticated user can change the password from Settings only after the
+    current password has been verified; other session families are then revoked.
 
 Disconnecting a wallet does not disconnect the Bitcoin Access account. The
 `Log out` action revokes every refresh session in the current session family.
@@ -224,14 +226,15 @@ through the proxy.
 11. An incorrect password returns the same error for known and unknown accounts.
 12. `Forgot password` requires a new wallet proof before accepting a replacement.
 13. Replacing a password revokes the account's other active session families.
-14. Selecting `Continue with wallet only` opens the site and is remembered.
-15. A wallet-only user can add a password later from the personal profile.
-16. Signing in with either the exact address or the display name opens the same account.
-17. A duplicate display name displays `Ce pseudo est déjà pris` instead of a generic Edge Function error.
-18. A simple repost appears in `Latest`, in `Followed` for followers and in the author's `Reposts` profile tab.
-19. A quoted post displays the author's text and an embedded copy of the original post.
-20. The `Followed` feed contains only publications from accounts followed by the current user.
-21. Publications marked Useful appear in the profile's `Useful` tab.
+14. Settings requires the correct current password before accepting a new one.
+15. Selecting `Continue with wallet only` opens the site and is remembered.
+16. A wallet-only user can add a password later from the personal profile or Settings.
+17. Signing in with either the exact address or the display name opens the same account.
+18. A duplicate display name displays `Ce pseudo est déjà pris` instead of a generic Edge Function error.
+19. A simple repost appears in `Latest`, in `Followed` for followers and in the author's `Reposts` profile tab.
+20. A quoted post displays the author's text and an embedded copy of the original post.
+21. The `Followed` feed contains only publications from accounts followed by the current user.
+22. Publications marked Useful appear in the profile's `Useful` tab.
 
 ## Social feed deployment
 
@@ -451,6 +454,14 @@ personal profile.
 1. The browser first tries to restore its secure session automatically.
 2. If no session is available, enter the display name or public Bitcoin address.
 3. Enter the password. No wallet interaction is required.
+
+### Change an existing password
+
+1. Open the `Private session` menu, then select `Settings`.
+2. Enter the current password, the new password and its confirmation.
+3. Select `Update password`.
+4. The current browser stays connected and other active session families are
+   revoked. The old password can no longer be used for a new connection.
 
 ### Forgotten password
 

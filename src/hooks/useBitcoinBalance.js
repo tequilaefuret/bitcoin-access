@@ -13,6 +13,11 @@ import {
   getUserPixelCount,
   toggleMessageUseful,
   createMessageRepost,
+  markForYouNotInterested,
+  setEditorialAuthorPreference as persistEditorialAuthorPreference,
+  listEditorialAuthorPreferences as fetchEditorialAuthorPreferences,
+  reportEditorialMessage as persistEditorialMessageReport,
+  reportEditorialProfile as persistEditorialProfileReport,
   getOpinionTopics,
   setPrivateTopicStance as persistPrivateTopicStance
 } from '../supabaseClient';
@@ -412,6 +417,31 @@ export const useBitcoinBalance = () => {
     return result;
   }, [address]);
 
+  const hideForYouMessage = useCallback(async (messageId) => {
+    if (!address) throw new Error('Bitcoin address is not set');
+    return markForYouNotInterested(address, messageId);
+  }, [address]);
+
+  const updateEditorialAuthorPreference = useCallback(async (targetAddress, preference) => {
+    if (!address) throw new Error('Bitcoin address is not set');
+    return persistEditorialAuthorPreference(address, targetAddress, preference);
+  }, [address]);
+
+  const loadEditorialAuthorPreferences = useCallback(async () => {
+    if (!address) return [];
+    return fetchEditorialAuthorPreferences(address);
+  }, [address]);
+
+  const reportMessage = useCallback(async (messageId) => {
+    if (!address) throw new Error('Bitcoin address is not set');
+    return persistEditorialMessageReport(address, messageId);
+  }, [address]);
+
+  const reportProfile = useCallback(async (profileAddress) => {
+    if (!address) throw new Error('Bitcoin address is not set');
+    return persistEditorialProfileReport(address, profileAddress);
+  }, [address]);
+
   const loadOpinionTopics = useCallback(async () => {
     if (!address) return [];
     return getOpinionTopics(address);
@@ -458,6 +488,11 @@ export const useBitcoinBalance = () => {
     loadComments,
     toggleUseful,
     repostMessage,
+    hideForYouMessage,
+    updateEditorialAuthorPreference,
+    loadEditorialAuthorPreferences,
+    reportMessage,
+    reportProfile,
     loadOpinionTopics,
     savePrivateTopicStance
   };

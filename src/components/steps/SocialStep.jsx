@@ -96,6 +96,9 @@ const SocialStep = ({
   onLoadComments,
   onToggleUseful,
   onRepostMessage,
+  onForYouNotInterested,
+  onEditorialPreference,
+  onReportMessage,
   onLoadOpinionTopics,
   onSetPrivateStance,
   loading,
@@ -107,10 +110,11 @@ const SocialStep = ({
   onShowHistory,
   onShowStats,
   onSync,
-  followingAddresses = []
+  followingAddresses = [],
+  defaultFeed = 'for_you'
 }) => {
   const [activeMode, setActiveMode] = useState('classic');
-  const [classicSort, setClassicSort] = useState('recent');
+  const [classicSort, setClassicSort] = useState(defaultFeed);
   const [messageContent, setMessageContent] = useState('');
   const [messages, setMessages] = useState([]);
   const [topics, setTopics] = useState([]);
@@ -121,6 +125,7 @@ const SocialStep = ({
   const [isLoadingOpinion, setIsLoadingOpinion] = useState(false);
   const [isSavingStance, setIsSavingStance] = useState(false);
   const [screenError, setScreenError] = useState('');
+  const [editorialNotice, setEditorialNotice] = useState('');
   const loadedSessionRef = useRef('');
 
   const selectedTopic = useMemo(
@@ -169,11 +174,12 @@ const SocialStep = ({
   };
 
   useEffect(() => {
-    const sessionKey = address || 'anonymous';
+    const sessionKey = `${address || 'anonymous'}:${defaultFeed}`;
     if (loadedSessionRef.current === sessionKey) return;
     loadedSessionRef.current = sessionKey;
 
-    loadClassicFeed('recent');
+    setClassicSort(defaultFeed);
+    loadClassicFeed(defaultFeed);
     loadOpinionFeed();
     // Initial loading is deliberately keyed to the authenticated session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -226,8 +232,14 @@ const SocialStep = ({
     try {
       const loadedMessages = await onLoadMessages?.(20, messages.length, classicSort);
       const activeMessages = (loadedMessages || []).filter((message) => !message.deleted_at);
-      setMessages((current) => [...current, ...activeMessages]);
-      setHasMore(activeMessages.length === 20);
+      const existingIds = new Set(messages.map((message) => message.id));
+      const newMessages = activeMessages.filter((message) => !existingIds.has(message.id));
+      setMessages((current) => [...current, ...newMessages]);
+      setHasMore(
+        classicSort === 'for_you'
+          ? newMessages.length === 20
+          : activeMessages.length === 20
+      );
     } finally {
       setIsLoadingMore(false);
     }
@@ -294,6 +306,63 @@ const SocialStep = ({
     if (result) await loadClassicFeed(classicSort);
     return result;
   };
+
+  const handleForYouNotInterested = async (messageId) => {
+    const hiddenMessage = messages.find((message) => message.id === messageId);
+    setMessages((current) => current.filter((message) => message.id !== messageId));
+    setScreenError('');
+
+    try {
+      await onForYouNotInterested?.(messageId);
+    } catch (feedbackError) {
+      if (hiddenMessage) {
+        setMessages((current) => (
+          current.some((message) => message.id === messageId)
+            ? current
+            : [hiddenMessage, ...current]
+        ));
+      }
+      setScreenError(feedbackError.message || 'Your recommendation could not be updated.');
+    }
+  };
+
+  const handleEditorialPreference = async (authorAddress, preference) => {
+    if (!authorAddress || !onEditorialPreference) return null;
+    setScreenError('');
+    setEditorialNotice('');
+
+    const result = await onEditorialPreference(authorAddress, preference);
+    if (['mute', 'block'].includes(preference)) {
+      const isFromAuthor = (message) => (
+        message.bitcoin_address === authorAddress
+        || message.reposted_message?.bitcoin_address === authorAddress
+      );
+      setMessages((current) => current.filter((message) => !isFromAuthor(message)));
+      setTopics((current) => current.map((topic) => ({
+        ...topic,
+        posts: (topic.posts || []).filter((post) => !isFromAuthor(post)),
+      })));
+    }
+
+    const labels = {
+      reduce: 'You will see fewer posts from this author.',
+      mute: 'This author is now hidden from your feeds.',
+      block: 'This account is now blocked.',
+    };
+    setEditorialNotice(labels[preference] || 'Your preference was updated.');
+    return result;
+  };
+
+  const handleReportMessage = async (messageId) => {
+    if (!onReportMessage) return null;
+    setScreenError('');
+    setEditorialNotice('');
+    const result = await onReportMessage(messageId);
+    setEditorialNotice(result?.created
+      ? 'Report recorded. Thank you.'
+      : 'You already reported this post.');
+    return result;
+  };
   const charCount = messageContent.replace(/\n/g, '').length;
 
   const renderMessage = (message) => (
@@ -307,6 +376,11 @@ const SocialStep = ({
       onRepost={handleRepost}
       onDelete={handleDelete}
       onUserClick={onUserClick}
+      onNotInterested={classicSort === 'for_you' && onForYouNotInterested
+        ? handleForYouNotInterested
+        : null}
+      onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null}
+      onReportMessage={onReportMessage ? handleReportMessage : null}
       isFollowed={followingAddresses.includes(message.bitcoin_address)}
     />
   );
@@ -314,6 +388,11 @@ const SocialStep = ({
   return (
     <div className="mx-auto max-w-5xl">
       <ErrorAlert error={screenError || error} />
+      {editorialNotice && (
+        <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+          {editorialNotice}
+        </div>
+      )}
 
       <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.28),_transparent_38%),linear-gradient(135deg,_#ffffff_0%,_#f8fafc_100%)] p-6 shadow-xl shadow-slate-900/10">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
@@ -409,11 +488,16 @@ const SocialStep = ({
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">Classic feed</p>
                   <h3 className="mt-1 text-xl font-black text-slate-950">
-                    {classicSort === 'followed' ? 'Posts from people you follow' : 'Posts from the network'}
+                    {classicSort === 'for_you'
+                      ? 'Selected for you'
+                      : classicSort === 'followed'
+                        ? 'Posts from people you follow'
+                        : 'Posts from the network'}
                   </h3>
                 </div>
                 <div className="flex rounded-full bg-slate-100 p-1">
                   {[
+                    { id: 'for_you', label: 'For you', icon: Sparkles },
                     { id: 'recent', label: 'Latest', icon: Clock3 },
                     { id: 'followed', label: 'Followed', icon: Users }
                   ].map((sort) => {
@@ -423,7 +507,8 @@ const SocialStep = ({
                         key={sort.id}
                         type="button"
                         onClick={() => handleSortChange(sort.id)}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${
+                        aria-pressed={classicSort === sort.id}
+                        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-semibold sm:px-3 ${
                           classicSort === sort.id ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500'
                         }`}
                       >
@@ -443,6 +528,8 @@ const SocialStep = ({
                 <p className="py-12 text-center text-sm text-slate-500">
                   {classicSort === 'followed'
                     ? 'Follow users from their profile to build this feed.'
+                    : classicSort === 'for_you'
+                      ? 'Interact with posts or follow people to shape your recommendations.'
                     : 'No posts yet.'}
                 </p>
               )}
@@ -463,14 +550,26 @@ const SocialStep = ({
 
           <aside className="space-y-4">
             <div className="rounded-[1.5rem] bg-slate-950 p-5 text-white">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">One signal</p>
-              <h3 className="mt-2 text-xl font-black">Useful, not agreeable.</h3>
-              <p className="mt-3 text-sm leading-6 text-white/70">
-                Mark a post when it helps you understand. Useful posts can rise here and enter the Opinion candidate pool.
-              </p>
-              <p className="mt-3 text-xs font-semibold text-amber-300">
-                Adding Useful costs 1 satoshi. Removing it is free.
-              </p>
+              {classicSort === 'for_you' ? (
+                <>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">Your signals</p>
+                  <h3 className="mt-2 text-xl font-black">Relevant, with room to discover.</h3>
+                  <p className="mt-3 text-sm leading-6 text-white/70">
+                    Follows, Useful marks, replies and reposts shape this feed. Fresh voices are blended in automatically.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">One signal</p>
+                  <h3 className="mt-2 text-xl font-black">Useful, not agreeable.</h3>
+                  <p className="mt-3 text-sm leading-6 text-white/70">
+                    Mark a post when it helps you understand. Useful posts can rise here and enter the Opinion candidate pool.
+                  </p>
+                  <p className="mt-3 text-xs font-semibold text-amber-300">
+                    Adding Useful costs 1 satoshi. Removing it is free.
+                  </p>
+                </>
+              )}
             </div>
             <div className="rounded-[1.5rem] border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-600">
               Only a small, topic-relevant share of the Classic feed will be selected for Opinion.

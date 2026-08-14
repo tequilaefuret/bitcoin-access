@@ -2,13 +2,18 @@ import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   BadgeCheck,
+  Ban,
   Bitcoin,
   Copy,
+  Ellipsis,
+  EyeOff,
+  Flag,
   Loader,
   KeyRound,
   Lightbulb,
   MessageSquare,
   Repeat2,
+  UserMinus,
   UserRound
 } from 'lucide-react';
 import MessageCard from '../social/MessageCard';
@@ -19,6 +24,7 @@ import {
   getPublicUserUsefulMessages,
   getUserMessages,
   getUserStats,
+  truncateAddress,
 } from '../../supabaseClient';
 
 const PAGE_SIZE = 25;
@@ -67,6 +73,10 @@ const ProfileStep = ({
   onShowStats,
   passwordConfigured = false,
   onAddPassword,
+  showFullAddress = false,
+  onEditorialPreference,
+  onReportMessage,
+  onReportProfile,
 }) => {
   const [profileUser, setProfileUser] = useState(null);
   const [profileStats, setProfileStats] = useState(null);
@@ -79,6 +89,9 @@ const ProfileStep = ({
   const [hasMoreUseful, setHasMoreUseful] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [showEditorialMenu, setShowEditorialMenu] = useState(false);
+  const [editorialAction, setEditorialAction] = useState('');
+  const [editorialNotice, setEditorialNotice] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -156,6 +169,59 @@ const ProfileStep = ({
     } catch (err) {
       setError('Unable to copy the address');
     }
+  };
+
+  const handleEditorialPreference = async (targetAddress, preference) => {
+    if (!onEditorialPreference || !targetAddress || editorialAction) return null;
+    if (preference === 'block' && !window.confirm(
+      'Block this account? Its posts will disappear from your feeds and interactions between both accounts will be disabled.'
+    )) return null;
+
+    setEditorialAction(preference);
+    setError('');
+    setEditorialNotice('');
+    try {
+      const result = await onEditorialPreference(targetAddress, preference);
+      setShowEditorialMenu(false);
+      setEditorialNotice({
+        reduce: 'You will see fewer posts from this author.',
+        mute: 'This author is now hidden from your feeds.',
+        block: 'This account is now blocked.',
+      }[preference] || 'Your preference was updated.');
+      return result;
+    } catch (actionError) {
+      setError(actionError.message || 'This preference could not be saved.');
+      return null;
+    } finally {
+      setEditorialAction('');
+    }
+  };
+
+  const handleReportProfile = async () => {
+    if (!onReportProfile || editorialAction) return;
+    setEditorialAction('report-profile');
+    setError('');
+    setEditorialNotice('');
+    try {
+      const result = await onReportProfile(profileAddress);
+      setShowEditorialMenu(false);
+      setEditorialNotice(result?.created
+        ? 'Profile report recorded. Thank you.'
+        : 'You already reported this profile.');
+    } catch (actionError) {
+      setError(actionError.message || 'This profile could not be reported.');
+    } finally {
+      setEditorialAction('');
+    }
+  };
+
+  const handleReportMessage = async (messageId) => {
+    if (!onReportMessage) return null;
+    const result = await onReportMessage(messageId);
+    setEditorialNotice(result?.created
+      ? 'Post report recorded. Thank you.'
+      : 'You already reported this post.');
+    return result;
   };
 
   const loadMore = async () => {
@@ -264,7 +330,7 @@ const ProfileStep = ({
                 </div>
                 {isOwnProfile && (
                   <p className="mt-1 text-white/90 font-mono text-sm break-all">
-                    {profileAddress}
+                    {showFullAddress ? profileAddress : truncateAddress(profileAddress)}
                   </p>
                 )}
               </div>
@@ -305,6 +371,44 @@ const ProfileStep = ({
                   {copied ? 'Address copied' : 'Copy address'}
                 </button>
               )}
+
+              {!isOwnProfile && (onEditorialPreference || onReportProfile) && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditorialMenu((visible) => !visible)}
+                    disabled={Boolean(editorialAction)}
+                    aria-label="Profile options"
+                    aria-expanded={showEditorialMenu}
+                    className="inline-flex items-center justify-center rounded-xl bg-white/20 p-2.5 text-white transition hover:bg-white/30 disabled:opacity-50"
+                  >
+                    <Ellipsis className="h-5 w-5" />
+                  </button>
+
+                  {showEditorialMenu && (
+                    <div className="absolute right-0 top-12 z-20 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1 text-left text-slate-800 shadow-xl">
+                      {onEditorialPreference && (
+                        <>
+                          <button type="button" onClick={() => handleEditorialPreference(profileAddress, 'reduce')} className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-slate-50">
+                            <UserMinus className="h-4 w-4" /> Show fewer posts
+                          </button>
+                          <button type="button" onClick={() => handleEditorialPreference(profileAddress, 'mute')} className="flex w-full items-center gap-3 px-4 py-3 text-sm hover:bg-slate-50">
+                            <EyeOff className="h-4 w-4" /> Hide this author
+                          </button>
+                          <button type="button" onClick={() => handleEditorialPreference(profileAddress, 'block')} className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-red-700 hover:bg-red-50">
+                            <Ban className="h-4 w-4" /> Block this account
+                          </button>
+                        </>
+                      )}
+                      {onReportProfile && (
+                        <button type="button" onClick={handleReportProfile} className="flex w-full items-center gap-3 border-t border-slate-100 px-4 py-3 text-sm text-red-700 hover:bg-red-50">
+                          <Flag className="h-4 w-4" /> Report this profile
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -320,6 +424,12 @@ const ProfileStep = ({
               {error && (
                 <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-red-800">
                   {error}
+                </div>
+              )}
+
+              {editorialNotice && (
+                <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">
+                  {editorialNotice}
                 </div>
               )}
 
@@ -450,6 +560,8 @@ const ProfileStep = ({
                         message={message}
                         currentAddress={currentAddress}
                         onUserClick={onOpenProfile}
+                        onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null}
+                        onReportMessage={onReportMessage ? handleReportMessage : null}
                         showActions={false}
                       />
                     </div>

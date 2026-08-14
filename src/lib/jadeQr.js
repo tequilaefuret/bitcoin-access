@@ -130,7 +130,7 @@ const decodeJadeAccount = (cbor) => {
   };
 };
 
-export function createJadeMessageUrEncoder(payload, maxFragmentLength = 90) {
+export function createJadeMessageUrEncoder(payload, maxFragmentLength = 30) {
   const bytes = Buffer.from(typeof payload === 'string' ? payload : '', 'utf8');
   if (!bytes.length) throw new Error('The Jade signing request is empty.');
   if (bytes.length > 4096) throw new Error('The Jade signing request is too large.');

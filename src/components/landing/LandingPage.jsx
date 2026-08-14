@@ -56,13 +56,9 @@ const LandingPage = ({ onStart, onSignIn }) => (
         <a href="#mission" className="transition hover:text-white">Mission</a>
         <a href="#possibilities" className="transition hover:text-white">Possibilities</a>
         <a href="#new-to-bitcoin" className="transition hover:text-white">New to Bitcoin?</a>
-        <a href="#access" className="transition hover:text-white">Access</a>
       </nav>
 
       <div className="flex items-center gap-3">
-        <button type="button" onClick={onSignIn} className="hidden text-sm font-semibold text-white/70 transition hover:text-white sm:block">
-          Sign in
-        </button>
         <button type="button" onClick={onStart} className="inline-flex items-center gap-2 rounded-full bg-amber-300 px-4 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-200 hover:shadow-[0_0_28px_rgba(252,211,77,0.25)] sm:px-5">
           Open Danaus <ArrowRight className="h-4 w-4" />
         </button>
@@ -72,10 +68,6 @@ const LandingPage = ({ onStart, onSignIn }) => (
     <main id="top">
       <section className="mx-auto max-w-7xl px-5 pb-16 pt-8 sm:px-8 sm:pb-20 sm:pt-12 lg:px-10 lg:pt-14">
         <div className="mx-auto max-w-4xl text-center">
-          <div className="inline-flex items-center gap-2 rounded-full border border-amber-200/20 bg-amber-100/5 px-3 py-1.5 text-xs font-bold uppercase tracking-[0.16em] text-amber-200/90">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-300 shadow-[0_0_10px_#fcd34d]" />
-            Explore the first bitcoiners network
-          </div>
           <h1 className="mx-auto mt-5 max-w-4xl text-4xl font-black leading-[0.98] tracking-[-0.06em] text-white sm:text-6xl lg:text-7xl">
             Bitcoin opens the door.<br />
             <span className="text-amber-300">What happens next is yours.</span>
@@ -160,8 +152,8 @@ const LandingPage = ({ onStart, onSignIn }) => (
 
           <figure className="mt-12 overflow-hidden rounded-[2rem] border border-white/[0.09] bg-[#080a0e] shadow-[0_24px_70px_-32px_rgba(0,0,0,0.9)]">
             <img
-              src="/images/danaus-shells-flow-horizontal.png"
-              alt="Horizontal Danaus diagram: a self-custody wallet proves ownership, Bitcoin is mirrored into shells, then shells are used for reading, posting, and creating."
+              src="/images/danaus-shells-flow.png"
+              alt="Visual diagram: a secure wallet verifies ownership, a reservoir mirrors the balance as shells, then Danaus features use shells."
               className="block h-auto w-full"
             />
             <figcaption className="grid divide-y divide-white/[0.08] border-t border-white/[0.09] bg-white/[0.025] sm:grid-cols-3 sm:divide-x sm:divide-y-0">

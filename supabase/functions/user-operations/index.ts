@@ -11,6 +11,7 @@ import {
   jsonResponse,
   verifyAccessToken,
 } from '../_shared/auth.ts';
+import { safeErrorForLog } from '../_shared/logging.mjs';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -81,6 +82,186 @@ async function loadDisplayNames(addresses: string[]) {
   return new Map<string, string>(
     (data || []).map((row: any) => [row.bitcoin_address, row.display_name])
   );
+}
+
+type EditorialPolicy = {
+  hiddenAuthors: Set<string>;
+  reducedAuthors: Set<string>;
+  blockedAuthors: Set<string>;
+};
+
+async function loadEditorialPolicy(readerAddress: string): Promise<EditorialPolicy> {
+  const [outboundResult, inboundBlocksResult] = await Promise.all([
+    supabase
+      .from('editorial_author_preferences')
+      .select('target_address, preference')
+      .eq('reader_address', readerAddress),
+    supabase
+      .from('editorial_author_preferences')
+      .select('reader_address')
+      .eq('target_address', readerAddress)
+      .eq('preference', 'block'),
+  ]);
+
+  if (outboundResult.error) throw outboundResult.error;
+  if (inboundBlocksResult.error) throw inboundBlocksResult.error;
+
+  const hiddenAuthors = new Set<string>();
+  const reducedAuthors = new Set<string>();
+  const blockedAuthors = new Set<string>();
+
+  for (const row of outboundResult.data || []) {
+    if (row.preference === 'reduce') reducedAuthors.add(row.target_address);
+    if (row.preference === 'mute' || row.preference === 'block') {
+      hiddenAuthors.add(row.target_address);
+    }
+    if (row.preference === 'block') blockedAuthors.add(row.target_address);
+  }
+
+  for (const row of inboundBlocksResult.data || []) {
+    hiddenAuthors.add(row.reader_address);
+    blockedAuthors.add(row.reader_address);
+  }
+
+  return { hiddenAuthors, reducedAuthors, blockedAuthors };
+}
+
+async function loadEditorialRiskScores(messageIds: string[]) {
+  if (messageIds.length === 0) return new Map<string, number>();
+
+  const { data, error } = await supabase
+    .from('editorial_message_risk')
+    .select('message_id, risk_score')
+    .in('message_id', messageIds);
+
+  if (error) throw error;
+  return new Map<string, number>(
+    (data || []).map((row: any) => [row.message_id, Number(row.risk_score) || 0])
+  );
+}
+
+async function assertEditorialInteractionAllowed(actorAddress: string, messageId: string) {
+  const { data: message, error } = await supabase
+    .from('messages')
+    .select('id, bitcoin_address, repost_of')
+    .eq('id', messageId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!message) throw new OperationError('Publication introuvable', 404);
+
+  let targetAddress = message.bitcoin_address;
+  if (message.repost_of) {
+    const { data: original, error: originalError } = await supabase
+      .from('messages')
+      .select('bitcoin_address')
+      .eq('id', message.repost_of)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (originalError) throw originalError;
+    if (original?.bitcoin_address) targetAddress = original.bitcoin_address;
+  }
+
+  if (!targetAddress || targetAddress === actorAddress) return;
+
+  const [outbound, inbound] = await Promise.all([
+    supabase
+      .from('editorial_author_preferences')
+      .select('preference')
+      .eq('reader_address', actorAddress)
+      .eq('target_address', targetAddress)
+      .eq('preference', 'block')
+      .maybeSingle(),
+    supabase
+      .from('editorial_author_preferences')
+      .select('preference')
+      .eq('reader_address', targetAddress)
+      .eq('target_address', actorAddress)
+      .eq('preference', 'block')
+      .maybeSingle(),
+  ]);
+
+  if (outbound.error) throw outbound.error;
+  if (inbound.error) throw inbound.error;
+  if (outbound.data || inbound.data) {
+    throw new OperationError('Interaction impossible entre ces comptes', 403);
+  }
+}
+
+async function setEditorialAuthorPreference(
+  readerAddress: string,
+  targetAddress: string,
+  preference: string,
+) {
+  const { data, error } = await supabase.rpc('set_editorial_author_preference', {
+    p_reader_address: readerAddress,
+    p_target_address: targetAddress,
+    p_preference: preference,
+  });
+
+  if (error) {
+    if (error.message?.includes('Compte introuvable')) {
+      throw new OperationError('Compte introuvable', 404);
+    }
+    throw error;
+  }
+
+  return {
+    success: true,
+    target_address: targetAddress,
+    preference: data?.[0]?.preference || preference,
+    active: Boolean(data?.[0]?.active),
+  };
+}
+
+async function listEditorialAuthorPreferences(readerAddress: string) {
+  const { data, error } = await supabase
+    .from('editorial_author_preferences')
+    .select('target_address, preference, updated_at')
+    .eq('reader_address', readerAddress)
+    .order('updated_at', { ascending: false });
+
+  if (error) throw error;
+
+  const displayNames = await loadDisplayNames(
+    (data || []).map((row: any) => row.target_address)
+  );
+
+  return (data || []).map((row: any) => ({
+    target_address: row.target_address,
+    preference: row.preference,
+    display_name: displayNames.get(row.target_address) || '',
+    updated_at: row.updated_at,
+  }));
+}
+
+async function recordEditorialReport(
+  reporterAddress: string,
+  targetKind: string,
+  messageId?: string,
+  profileAddress?: string,
+) {
+  const { data, error } = await supabase.rpc('record_editorial_report', {
+    p_reporter_address: reporterAddress,
+    p_target_kind: targetKind,
+    p_message_id: messageId || null,
+    p_profile_address: profileAddress || null,
+  });
+
+  if (error) {
+    if (error.message?.includes('introuvable')) {
+      throw new OperationError(error.message.includes('Profil') ? 'Profil introuvable' : 'Publication introuvable', 404);
+    }
+    throw error;
+  }
+
+  const report = data?.[0];
+  return {
+    success: true,
+    created: Boolean(report?.created),
+    report_count: Number(report?.report_count) || 0,
+  };
 }
 
 async function upsertProfile(address: string, displayName: string, bio: string = '') {
@@ -164,8 +345,7 @@ async function upsertProfile(address: string, displayName: string, bio: string =
 // OPÉRATION 1 : SYNC BALANCE
 // ========================================
 async function syncBalance(address: string, network: string) {
-  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
-  console.log('🔄 [SYNC] Démarrage pour:', addressTrunc);
+  console.log('🔄 [SYNC] Démarrage');
   
   try {
     // Timestamp the observation before the HTTP request. If two explorer calls
@@ -195,7 +375,7 @@ async function syncBalance(address: string, network: string) {
     };
     
   } catch (error: any) {
-    console.error('❌ [SYNC] Erreur:', error.message);
+    console.error('❌ [SYNC] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
@@ -209,10 +389,11 @@ async function publishMessage(
   requestId: string,
   parentId?: string
 ) {
-  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
-  console.log('📝 [PUBLISH_MESSAGE] Nouveau message de:', addressTrunc);
-  
+  console.log('📝 [PUBLISH_MESSAGE] Nouveau message');
+
   try {
+    if (parentId) await assertEditorialInteractionAllowed(address, parentId);
+
     const { data, error } = await supabase.rpc('publish_message_with_cost_idempotent', {
       p_request_id: requestId,
       p_bitcoin_address: address,
@@ -258,12 +439,14 @@ async function publishMessage(
     };
     
   } catch (error: any) {
-    console.error('❌ [PUBLISH_MESSAGE] Erreur:', error.message);
+    console.error('❌ [PUBLISH_MESSAGE] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
 
 async function repostMessage(address: string, messageId: string, quoteContent?: string | null) {
+  await assertEditorialInteractionAllowed(address, messageId);
+
   const { data, error } = await supabase.rpc('toggle_or_create_message_repost', {
     p_bitcoin_address: address,
     p_target_message_id: messageId,
@@ -316,8 +499,15 @@ async function getMessages(
   try {
     const boundedLimit = Math.max(1, Math.min(Number(limit) || FEED_BATCH_SIZE, FEED_BATCH_SIZE));
     const boundedOffset = Math.max(0, Number(offset) || 0);
-    const safeSortMode = sortMode === 'followed' && !parentId ? 'followed' : 'recent';
+    const safeSortMode = !parentId && ['followed', 'for_you'].includes(sortMode)
+      ? sortMode
+      : 'recent';
     let followedAddresses: string[] = [];
+    let rankedMessageIds: string[] = [];
+    let rankScoreByMessageId = new Map<string, number>();
+    const editorialPolicy = userAddress
+      ? await loadEditorialPolicy(userAddress)
+      : { hiddenAuthors: new Set<string>(), reducedAuthors: new Set<string>(), blockedAuthors: new Set<string>() };
 
     if (safeSortMode === 'followed' && userAddress) {
       const { data: followed, error: followedError } = await supabase
@@ -325,8 +515,25 @@ async function getMessages(
         .select('following_address')
         .eq('follower_address', userAddress);
       if (followedError) throw followedError;
-      followedAddresses = (followed || []).map((row: any) => row.following_address);
+      followedAddresses = (followed || [])
+        .map((row: any) => row.following_address)
+        .filter((followedAddress: string) => !editorialPolicy.hiddenAuthors.has(followedAddress));
       if (followedAddresses.length === 0) {
+        return { success: true, messages: [], count: 0 };
+      }
+    }
+
+    if (safeSortMode === 'for_you' && userAddress) {
+      const { data: ranked, error: rankingError } = await supabase.rpc('rank_for_you_feed', {
+        p_bitcoin_address: userAddress,
+        p_limit: boundedLimit,
+      });
+      if (rankingError) throw rankingError;
+      rankedMessageIds = (ranked || []).map((row: any) => row.message_id).filter(Boolean);
+      rankScoreByMessageId = new Map(
+        (ranked || []).map((row: any) => [row.message_id, Number(row.rank_score) || 0])
+      );
+      if (rankedMessageIds.length === 0) {
         return { success: true, messages: [], count: 0 };
       }
     }
@@ -345,19 +552,39 @@ async function getMessages(
       : query.is('parent_id', null);
 
     if (safeSortMode === 'followed') query = query.in('bitcoin_address', followedAddresses);
-    query = query.order('created_at', { ascending: false });
+    if (safeSortMode === 'for_you') query = query.in('id', rankedMessageIds);
+    if (editorialPolicy.hiddenAuthors.size > 0) {
+      const hiddenList = [...editorialPolicy.hiddenAuthors].map((value) => `"${value}"`).join(',');
+      query = query.not('bitcoin_address', 'in', `(${hiddenList})`);
+    }
 
-    const { data: messages, error } = await query.range(
-      boundedOffset,
-      boundedOffset + boundedLimit - 1
-    );
+    let messagesResult;
+    if (safeSortMode === 'for_you') {
+      messagesResult = await query;
+    } else {
+      messagesResult = await query
+        .order('created_at', { ascending: false })
+        .range(boundedOffset, boundedOffset + boundedLimit - 1);
+    }
+
+    const { data: messages, error } = messagesResult;
 
     if (error) throw error;
 
-    const messageList = messages || [];
-    const messageIds = messageList.map((message: any) => message.id);
-    const repostTargetIds = messageList.map((message: any) => message.repost_of || message.id);
-    const originalIds = [...new Set(messageList.map((message: any) => message.repost_of).filter(Boolean))];
+    const riskScoreByMessageId = safeSortMode === 'for_you'
+      ? await loadEditorialRiskScores((messages || []).map((message: any) => message.id))
+      : new Map<string, number>();
+    const sortedMessageList = safeSortMode === 'for_you'
+      ? [...(messages || [])].sort((left: any, right: any) => {
+          const adjustedScore = (message: any) => {
+            const authorMultiplier = editorialPolicy.reducedAuthors.has(message.bitcoin_address) ? 0.45 : 1;
+            const riskMultiplier = 1 - Math.min(0.9, riskScoreByMessageId.get(message.id) || 0) * 0.60;
+            return (rankScoreByMessageId.get(message.id) || 0) * authorMultiplier * riskMultiplier;
+          };
+          return adjustedScore(right) - adjustedScore(left);
+        })
+      : messages || [];
+    const originalIds = [...new Set(sortedMessageList.map((message: any) => message.repost_of).filter(Boolean))];
     let originalById = new Map<string, any>();
     if (originalIds.length > 0) {
       const { data: originals, error: originalsError } = await supabase
@@ -368,6 +595,14 @@ async function getMessages(
       if (originalsError) throw originalsError;
       originalById = new Map((originals || []).map((original: any) => [original.id, original]));
     }
+    // A hidden or blocked author must not reappear indirectly through somebody
+    // else's repost.
+    const messageList = sortedMessageList.filter((message: any) => {
+      const originalAuthor = originalById.get(message.repost_of)?.bitcoin_address;
+      return !originalAuthor || !editorialPolicy.hiddenAuthors.has(originalAuthor);
+    });
+    const messageIds = messageList.map((message: any) => message.id);
+    const repostTargetIds = messageList.map((message: any) => message.repost_of || message.id);
     const profileMap = await loadDisplayNames(messageList.flatMap((message: any) => [
       message.bitcoin_address,
       originalById.get(message.repost_of)?.bitcoin_address,
@@ -419,12 +654,14 @@ async function getMessages(
       count: formatted.length
     };
   } catch (error: any) {
-    console.error('❌ [GET_MESSAGES] Erreur:', error.message);
+    console.error('❌ [GET_MESSAGES] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
 
 async function toggleMessageUseful(address: string, messageId: string) {
+  await assertEditorialInteractionAllowed(address, messageId);
+
   const { data, error } = await supabase.rpc('toggle_message_useful_with_cost', {
     p_message_id: messageId,
     p_bitcoin_address: address
@@ -443,6 +680,36 @@ async function toggleMessageUseful(address: string, messageId: string) {
     shells_spent_total: Number(result.shells_spent_total) || 0,
     cost: Number(result.cost) || 0
   };
+}
+
+async function recordForYouFeedback(address: string, messageId: string) {
+  const { error } = await supabase.rpc('record_for_you_feedback', {
+    p_bitcoin_address: address,
+    p_message_id: messageId,
+    p_feedback_kind: 'not_interested'
+  });
+
+  if (error) {
+    if (error.message?.includes('Publication introuvable')) {
+      throw new OperationError('Publication introuvable', 404);
+    }
+    throw error;
+  }
+
+  return { success: true, message_id: messageId, feedback: 'not_interested' };
+}
+
+async function recordForYouImpressions(address: string, requestId: string, messageIds: string[]) {
+  if (messageIds.length === 0) return;
+
+  const { error } = await supabase.rpc('record_for_you_impressions', {
+    p_bitcoin_address: address,
+    p_request_id: requestId,
+    p_message_ids: messageIds,
+  });
+
+  // Impression analytics must never hide content after the paid read succeeds.
+  if (error) console.error('❌ [FOR_YOU_IMPRESSIONS] Comptage impossible:', safeErrorForLog(error));
 }
 
 function shuffleItems<T>(items: T[]) {
@@ -466,7 +733,7 @@ async function recordMessageExposures(messageIds: string[]) {
 
   // A metrics failure must not hide content after a reader has paid for it.
   if (error) {
-    console.error('❌ [EXPOSURES] Comptage impossible:', error.message);
+    console.error('❌ [EXPOSURES] Comptage impossible:', safeErrorForLog(error));
   }
 }
 
@@ -769,8 +1036,7 @@ async function setPrivateTopicStance(address: string, topicId: string, stance: s
 // OPÉRATION 4 : GET_USER_MESSAGES (historique utilisateur)
 // ========================================
 async function getUserMessages(address: string, limit: number = 20, offset: number = 0) {
-  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
-  console.log('📜 [GET_USER_MESSAGES] Récupération pour:', addressTrunc, '| Limit:', limit, '| Offset:', offset);
+  console.log('📜 [GET_USER_MESSAGES] Récupération | Limit:', limit, '| Offset:', offset);
   
   try {
     const { data: messages, error } = await supabase
@@ -823,7 +1089,7 @@ async function getUserMessages(address: string, limit: number = 20, offset: numb
     };
     
   } catch (error: any) {
-    console.error('❌ [GET_USER_MESSAGES] Erreur:', error.message);
+    console.error('❌ [GET_USER_MESSAGES] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
@@ -832,8 +1098,7 @@ async function getUserMessages(address: string, limit: number = 20, offset: numb
 // OPÉRATION 5 : GET_STATS
 // ========================================
 async function getStats(address: string) {
-  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
-  console.log('📊 [GET_STATS] Récupération pour:', addressTrunc);
+  console.log('📊 [GET_STATS] Récupération');
   
   try {
     const { data: balance, error: balanceError } = await supabase
@@ -872,7 +1137,7 @@ async function getStats(address: string) {
     };
     
   } catch (error: any) {
-    console.error('❌ [GET_STATS] Erreur:', error.message);
+    console.error('❌ [GET_STATS] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
@@ -893,8 +1158,7 @@ function toShellAmount(value: number | string | null | undefined) {
 // OPÉRATION 6 : GET_HISTORY
 // ========================================
 async function getHistory(address: string, limit: number = 20) {
-  const addressTrunc = address.slice(0, 8) + '...' + address.slice(-6);
-  console.log('🧾 [GET_HISTORY] Récupération pour:', addressTrunc, '| Limit:', limit);
+  console.log('🧾 [GET_HISTORY] Récupération | Limit:', limit);
 
   try {
     const boundedLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
@@ -1078,7 +1342,7 @@ async function getHistory(address: string, limit: number = 20) {
     };
 
   } catch (error: any) {
-    console.error('❌ [GET_HISTORY] Erreur:', error.message);
+    console.error('❌ [GET_HISTORY] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
@@ -1089,7 +1353,7 @@ async function getHistory(address: string, limit: number = 20) {
 // ========================================
 async function deductShells(address: string) {
   const amount = GAME_COST;
-  console.log('💳 [DEDUCT] Déduction de', amount, 'shells pour:', address.slice(0, 15) + '...');
+  console.log('💳 [DEDUCT] Déduction de', amount, 'shells');
 
   try {
     const { data, error } = await supabase.rpc('charge_game', {
@@ -1116,7 +1380,7 @@ async function deductShells(address: string) {
     };
     
   } catch (error: any) {
-    console.error('❌ [DEDUCT] Erreur:', error.message);
+    console.error('❌ [DEDUCT] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
@@ -1125,7 +1389,7 @@ async function deductShells(address: string) {
 // OPÉRATION 9 : PLACE_PIXELS (Canvas)
 // ========================================
 async function placePixels(address: string, pixels: Array<{ x: number; y: number; color: string }>) {
-  console.log(`🎨 [PLACE_PIXELS] Placement de ${pixels.length} pixels pour:`, address.slice(0, 15) + '...');
+  console.log(`🎨 [PLACE_PIXELS] Placement de ${pixels.length} pixels`);
   
   try {
     // Validation des pixels
@@ -1253,7 +1517,7 @@ async function placePixels(address: string, pixels: Array<{ x: number; y: number
       .upsert(pixelsToUpsert, { onConflict: 'x,y' });
 
     if (upsertError) {
-      console.error('❌ Erreur insertion pixels:', upsertError);
+      console.error('❌ Erreur insertion pixels:', safeErrorForLog(upsertError));
       // Rollback: rembourser l'utilisateur
       await supabase
         .from('user_balances')
@@ -1285,7 +1549,7 @@ async function placePixels(address: string, pixels: Array<{ x: number; y: number
     };
     
   } catch (error: any) {
-    console.error('❌ [PLACE_PIXELS] Erreur:', error.message);
+    console.error('❌ [PLACE_PIXELS] Erreur:', safeErrorForLog(error));
     throw error;
   }
 }
@@ -1323,12 +1587,15 @@ serve(async (req) => {
       topicId,
       stance,
       sortMode,
-      requestId
+      requestId,
+      targetAddress,
+      preference,
+      targetKind,
+      profileAddress,
     } = body;
 
     console.log('🔧 [HANDLER] Opération:', operation);
     console.log('🔍 [DEBUG] JWT reçu:', jwt ? 'OUI' : 'NON');
-    console.log('🔍 [DEBUG] Address:', address);
 
     // ========================================
     // VALIDATION JWT OBLIGATOIRE (plus d'exception)
@@ -1413,7 +1680,9 @@ serve(async (req) => {
               limit: Math.max(1, Math.min(Number(limit) || FEED_BATCH_SIZE, FEED_BATCH_SIZE)),
               offset: Math.max(0, Number(offset) || 0),
               parent_id: body.parentId || null,
-              sort_mode: sortMode === 'followed' && !body.parentId ? 'followed' : 'recent',
+              sort_mode: !body.parentId && ['followed', 'for_you'].includes(sortMode)
+                ? sortMode
+                : 'recent',
             },
             p_messages_snapshot: messagesResult.messages,
           },
@@ -1444,6 +1713,14 @@ serve(async (req) => {
           paidMessages.map((message: any) => message.id)
         );
 
+        if (sortMode === 'for_you' && !body.parentId) {
+          await recordForYouImpressions(
+            address,
+            requestId,
+            paidMessages.map((message: any) => message.id)
+          );
+        }
+
         console.log(`✅ [GET_MESSAGES] ${totalCost.toFixed(8)} shells déduits`);
         
         // Retourner les 20 messages et le résultat de leur débit unique.
@@ -1459,6 +1736,41 @@ serve(async (req) => {
       case 'toggle_message_useful':
         if (!messageId) throw new Error('Paramètre "messageId" manquant');
         result = await toggleMessageUseful(address, messageId);
+        break;
+
+      case 'for_you_not_interested':
+        if (!messageId) throw new OperationError('Paramètre "messageId" manquant');
+        result = await recordForYouFeedback(address, messageId);
+        break;
+
+      case 'set_editorial_author_preference':
+        if (!targetAddress) throw new OperationError('Paramètre "targetAddress" manquant');
+        if (!['none', 'reduce', 'mute', 'block'].includes(preference)) {
+          throw new OperationError('Choix éditorial invalide');
+        }
+        result = await setEditorialAuthorPreference(address, targetAddress, preference);
+        break;
+
+      case 'list_editorial_author_preferences':
+        result = await listEditorialAuthorPreferences(address);
+        break;
+
+      case 'report_editorial_target':
+        if (!['message', 'profile'].includes(targetKind)) {
+          throw new OperationError('Type de signalement invalide');
+        }
+        if (targetKind === 'message' && !messageId) {
+          throw new OperationError('Paramètre "messageId" manquant');
+        }
+        if (targetKind === 'profile' && !profileAddress) {
+          throw new OperationError('Paramètre "profileAddress" manquant');
+        }
+        result = await recordEditorialReport(
+          address,
+          targetKind,
+          messageId,
+          profileAddress,
+        );
         break;
 
       case 'repost_message':
@@ -1500,7 +1812,7 @@ serve(async (req) => {
     return jsonResponse(req, result, 200);
 
   } catch (error: any) {
-    console.error('❌ [HANDLER] Erreur:', error.message);
+    console.error('❌ [HANDLER] Erreur:', safeErrorForLog(error));
     const status = error?.message === 'Origin not allowed'
       ? 403
       : error instanceof OperationError

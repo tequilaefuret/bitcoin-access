@@ -62,5 +62,7 @@ if search_frontend 'console\.(log|debug|info|warn|error)'; then
   fail 'browser console logging found'
 fi
 
+node scripts/validate-server-logging.mjs
+
 printf 'Deployment structure valid: %s migrations, %s Edge Functions.\n' \
   "$migration_count" "$function_count"

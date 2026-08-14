@@ -1,5 +1,17 @@
 import React, { useState } from 'react';
-import { Lightbulb, MessageCircle, Quote, Repeat2, Trash2, X } from 'lucide-react';
+import {
+  Ban,
+  Ellipsis,
+  EyeOff,
+  Flag,
+  Lightbulb,
+  MessageCircle,
+  Quote,
+  Repeat2,
+  Trash2,
+  UserMinus,
+  X
+} from 'lucide-react';
 
 const TEXT_PREVIEW_LENGTH = 150;
 
@@ -36,6 +48,9 @@ const MessageCard = ({
   onRepost,
   onDelete,
   onUserClick,
+  onNotInterested,
+  onEditorialPreference,
+  onReportMessage,
   isFollowed = false,
   showActions = true
 }) => {
@@ -59,6 +74,11 @@ const MessageCard = ({
   const [quoteText, setQuoteText] = useState('');
   const [repostLoading, setRepostLoading] = useState(false);
   const [repostError, setRepostError] = useState('');
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
+  const [showEditorialMenu, setShowEditorialMenu] = useState(false);
+  const [editorialAction, setEditorialAction] = useState('');
+  const [editorialError, setEditorialError] = useState('');
 
   const authorAddress = message.bitcoin_address || null;
   const isOwnMessage = authorAddress === currentAddress;
@@ -144,6 +164,51 @@ const MessageCard = ({
     }
   };
 
+  const markNotInterested = async () => {
+    if (!onNotInterested || feedbackLoading) return;
+    setFeedbackLoading(true);
+    setFeedbackError('');
+    try {
+      await onNotInterested(message.id);
+    } catch (error) {
+      setFeedbackError(error.message || 'Your recommendation could not be updated.');
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  const applyEditorialPreference = async (preference) => {
+    if (!onEditorialPreference || !authorAddress || editorialAction) return;
+    if (preference === 'block' && !window.confirm(
+      'Block this account? Its posts will disappear from your feeds and interactions between both accounts will be disabled.'
+    )) return;
+
+    setEditorialAction(preference);
+    setEditorialError('');
+    try {
+      await onEditorialPreference(authorAddress, preference);
+      setShowEditorialMenu(false);
+    } catch (error) {
+      setEditorialError(error.message || 'This preference could not be saved.');
+    } finally {
+      setEditorialAction('');
+    }
+  };
+
+  const reportMessage = async () => {
+    if (!onReportMessage || editorialAction) return;
+    setEditorialAction('report');
+    setEditorialError('');
+    try {
+      await onReportMessage(message.id);
+      setShowEditorialMenu(false);
+    } catch (error) {
+      setEditorialError(error.message || 'This post could not be reported.');
+    } finally {
+      setEditorialAction('');
+    }
+  };
+
   const originalMessage = message.reposted_message || null;
   const repostedText = originalMessage?.content || message.content || '';
   const repostedCharacterCount = repostedText.replace(/\n/g, '').length;
@@ -171,10 +236,23 @@ const MessageCard = ({
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="relative flex items-center gap-3">
           <span className="text-xs text-gray-500">
             {formatTimestamp(message.created_at || message.timestamp)}
           </span>
+          {!isOwnMessage && (onNotInterested || onEditorialPreference || onReportMessage) && (
+            <button
+              type="button"
+              onClick={() => setShowEditorialMenu((visible) => !visible)}
+              disabled={feedbackLoading || Boolean(editorialAction)}
+              className="rounded-full p-1 text-gray-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+              title="Post options"
+              aria-label="Post options"
+              aria-expanded={showEditorialMenu}
+            >
+              <Ellipsis className="h-4 w-4" />
+            </button>
+          )}
           {isOwnMessage && showActions && onDelete && (
             <button
               type="button"
@@ -184,6 +262,64 @@ const MessageCard = ({
             >
               <Trash2 className="h-4 w-4" />
             </button>
+          )}
+
+          {showEditorialMenu && !isOwnMessage && (
+            <div className="absolute right-0 top-7 z-20 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1 text-left shadow-xl">
+              {onNotInterested && (
+                <button
+                  type="button"
+                  onClick={markNotInterested}
+                  disabled={feedbackLoading}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <EyeOff className="h-4 w-4" />
+                  Not interested in this post
+                </button>
+              )}
+              {onEditorialPreference && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => applyEditorialPreference('reduce')}
+                    disabled={Boolean(editorialAction)}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <UserMinus className="h-4 w-4" />
+                    Show fewer posts from this author
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyEditorialPreference('mute')}
+                    disabled={Boolean(editorialAction)}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    <EyeOff className="h-4 w-4" />
+                    Hide this author
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyEditorialPreference('block')}
+                    disabled={Boolean(editorialAction)}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    <Ban className="h-4 w-4" />
+                    Block this account
+                  </button>
+                </>
+              )}
+              {onReportMessage && (
+                <button
+                  type="button"
+                  onClick={reportMessage}
+                  disabled={Boolean(editorialAction)}
+                  className="flex w-full items-center gap-3 border-t border-slate-100 px-4 py-3 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                >
+                  <Flag className="h-4 w-4" />
+                  Report this post
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -273,6 +409,8 @@ const MessageCard = ({
 
       {usefulError && <p className="mt-2 text-xs text-red-600">{usefulError}</p>}
       {repostError && <p className="mt-2 text-xs text-red-600">{repostError}</p>}
+      {feedbackError && <p className="mt-2 text-xs text-red-600">{feedbackError}</p>}
+      {editorialError && <p className="mt-2 text-xs text-red-600">{editorialError}</p>}
 
       {showActions && showRepostOptions && (
         <div className="mt-3 flex w-fit overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
@@ -408,6 +546,8 @@ const MessageCard = ({
                   onRepost={onRepost}
                   onDelete={onDelete}
                   onUserClick={onUserClick}
+                  onEditorialPreference={onEditorialPreference}
+                  onReportMessage={onReportMessage}
                   showActions
                 />
               ))}

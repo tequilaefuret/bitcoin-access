@@ -81,6 +81,29 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'follow') {
+      const [outboundBlock, inboundBlock] = await Promise.all([
+        supabase
+          .from('editorial_author_preferences')
+          .select('preference')
+          .eq('reader_address', address)
+          .eq('target_address', targetAddress)
+          .eq('preference', 'block')
+          .maybeSingle(),
+        supabase
+          .from('editorial_author_preferences')
+          .select('preference')
+          .eq('reader_address', targetAddress)
+          .eq('target_address', address)
+          .eq('preference', 'block')
+          .maybeSingle(),
+      ]);
+
+      if (outboundBlock.error) throw outboundBlock.error;
+      if (inboundBlock.error) throw inboundBlock.error;
+      if (outboundBlock.data || inboundBlock.data) {
+        return jsonResponse(req, { error: 'Interaction impossible entre ces comptes' }, 403);
+      }
+
       const { error } = await supabase
         .from('follows')
         .upsert(

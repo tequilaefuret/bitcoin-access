@@ -338,6 +338,29 @@ Fields:
 - `follower_address`
 - `following_address`
 
+### Feed « For you »
+
+- `for_you_algorithm_settings` centralise les poids et fenêtres de classement
+- `for_you_impressions` mémorise les publications réellement servies
+- `for_you_feedback` conserve le signal privé `not_interested`
+- `rank_for_you_feed` combine réseau suivi, similarité sémantique, engagement,
+  fraîcheur, historique de service et diversité d’auteurs
+- les tables et scores internes ne sont jamais lisibles directement par le navigateur
+
+### Editorial safety
+
+- `editorial_author_preferences` stores one private `reduce`, `mute`, or `block`
+  choice per reader/author pair
+- `editorial_reports` stores private idempotency receipts without a textual reason;
+  only aggregate `report_count` values are maintained on posts and profiles
+- `editorial_message_risk` stores an internal manipulation-risk score derived
+  from short engagement bursts, new-account concentration, and repeated actions
+- `reduce` lowers an author's For-you score; `mute` and bidirectional `block`
+  remove direct posts and indirect reposts from feeds
+- block prevents follow, reply, repost, and Useful interactions in both directions
+- automatic detection downranks only and must never delete or hide content
+- users can remove every author restriction under Settings → Content controls
+
 ### `canvas_pixels`
 
 Purpose:
@@ -404,6 +427,7 @@ Supported operations:
 - `upsert_profile`
 - `place_pixels`
 - `toggle_message_useful`
+- `for_you_not_interested`
 - `get_opinion_topics`
 - `set_private_topic_stance`
 
@@ -527,6 +551,10 @@ Role:
 17. Automatic topic grouping must require both a minimum similarity and a minimum lead over the second topic.
 18. Uncertain automatic classifications must not appear in the Opinion feed.
 19. Embeddings, confidence scores and candidate topics must remain server-only.
+20. Editorial preferences, report receipts, risk scores and reason codes must remain server-only.
+21. A user can contribute at most one report count per post or profile, with no free-form report text.
+22. Automated manipulation detection may downrank content but must never delete it automatically.
+23. Blocking disables interactions in both directions but does not make an otherwise public profile private.
 
 ## 12. Known Implementation Notes
 

@@ -1,5 +1,6 @@
 import {
   clearJWT,
+  changePassword,
   configurePassword,
   getJWT,
   loginWithPassword,
@@ -135,6 +136,32 @@ test('configures a password through the authenticated wallet session', async () 
   expect(JSON.parse(global.fetch.mock.calls[1][1].body)).toEqual({
     action: 'set',
     password: 'a different long password',
+    accessToken,
+  });
+});
+
+test('changes a password through the authenticated session', async () => {
+  global.fetch
+    .mockResolvedValueOnce(jsonResponse({
+      authenticated: true,
+      address: 'bc1q-session-address',
+      accessToken,
+    }))
+    .mockResolvedValueOnce(jsonResponse({
+      changed: true,
+      address: 'bc1q-session-address',
+    }));
+
+  await restoreSession();
+  await expect(changePassword('current long password', 'new different long password')).resolves.toEqual({
+    changed: true,
+    address: 'bc1q-session-address',
+  });
+
+  expect(JSON.parse(global.fetch.mock.calls[1][1].body)).toEqual({
+    action: 'change',
+    currentPassword: 'current long password',
+    password: 'new different long password',
     accessToken,
   });
 });
