@@ -24,6 +24,41 @@ const GAME_COST = 0.000001;
 const FEED_BATCH_SIZE = 20;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+type ChronologicalFeedCursor = {
+  createdAt: string;
+  messageId: string;
+};
+
+function encodeFeedCursor(cursor: ChronologicalFeedCursor): string {
+  return btoa(JSON.stringify(cursor))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replace(/=+$/u, '');
+}
+
+function decodeFeedCursor(value?: string): ChronologicalFeedCursor | null {
+  if (!value) return null;
+  if (typeof value !== 'string' || value.length > 256) {
+    throw new OperationError('Curseur de pagination invalide');
+  }
+
+  try {
+    const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+    const parsed = JSON.parse(atob(padded));
+    const createdAt = typeof parsed?.createdAt === 'string' ? parsed.createdAt : '';
+    const messageId = typeof parsed?.messageId === 'string' ? parsed.messageId : '';
+
+    if (!UUID_PATTERN.test(messageId) || !Number.isFinite(Date.parse(createdAt))) {
+      throw new Error('Invalid feed cursor payload');
+    }
+
+    return { createdAt: new Date(createdAt).toISOString(), messageId };
+  } catch {
+    throw new OperationError('Curseur de pagination invalide');
+  }
+}
+
 class OperationError extends Error {
   status: number;
 
@@ -486,14 +521,16 @@ async function getMessages(
   offset: number = 0,
   userAddress?: string,
   parentId?: string,
-  sortMode: string = 'recent'
+  sortMode: string = 'recent',
+  cursor?: string,
 ) {
   console.log('📨 [GET_MESSAGES] Params reçus:', {
     limit,
     offset,
     userAddress: userAddress?.slice(0, 8),
     parentId,
-    sortMode
+    sortMode,
+    hasCursor: Boolean(cursor),
   });
 
   try {
@@ -502,9 +539,13 @@ async function getMessages(
     const safeSortMode = !parentId && ['followed', 'for_you'].includes(sortMode)
       ? sortMode
       : 'recent';
+    const chronologicalCursor = !parentId && safeSortMode !== 'for_you'
+      ? decodeFeedCursor(cursor)
+      : null;
     let followedAddresses: string[] = [];
     let rankedMessageIds: string[] = [];
     let rankScoreByMessageId = new Map<string, number>();
+    let forYouAlgorithmVersion: string | null = null;
     const editorialPolicy = userAddress
       ? await loadEditorialPolicy(userAddress)
       : { hiddenAuthors: new Set<string>(), reducedAuthors: new Set<string>(), blockedAuthors: new Set<string>() };
@@ -519,22 +560,39 @@ async function getMessages(
         .map((row: any) => row.following_address)
         .filter((followedAddress: string) => !editorialPolicy.hiddenAuthors.has(followedAddress));
       if (followedAddresses.length === 0) {
-        return { success: true, messages: [], count: 0 };
+        return {
+          success: true,
+          messages: [],
+          count: 0,
+          algorithm_version: null,
+          has_more: false,
+          next_cursor: null,
+        };
       }
     }
 
     if (safeSortMode === 'for_you' && userAddress) {
-      const { data: ranked, error: rankingError } = await supabase.rpc('rank_for_you_feed', {
+      const { data: ranked, error: rankingError } = await supabase.rpc('rank_for_you_feed_versioned', {
         p_bitcoin_address: userAddress,
         p_limit: boundedLimit,
       });
       if (rankingError) throw rankingError;
+      forYouAlgorithmVersion = typeof ranked?.[0]?.algorithm_version === 'string'
+        ? ranked[0].algorithm_version
+        : null;
       rankedMessageIds = (ranked || []).map((row: any) => row.message_id).filter(Boolean);
       rankScoreByMessageId = new Map(
         (ranked || []).map((row: any) => [row.message_id, Number(row.rank_score) || 0])
       );
       if (rankedMessageIds.length === 0) {
-        return { success: true, messages: [], count: 0 };
+        return {
+          success: true,
+          messages: [],
+          count: 0,
+          algorithm_version: forYouAlgorithmVersion,
+          has_more: false,
+          next_cursor: null,
+        };
       }
     }
 
@@ -561,15 +619,51 @@ async function getMessages(
     let messagesResult;
     if (safeSortMode === 'for_you') {
       messagesResult = await query;
+    } else if (!parentId) {
+      if (chronologicalCursor) {
+        query = query.or(
+          `created_at.lt.${chronologicalCursor.createdAt},and(created_at.eq.${chronologicalCursor.createdAt},id.lt.${chronologicalCursor.messageId})`
+        );
+      }
+      messagesResult = await query
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        // Fetch one extra row to know whether a next keyset page exists.
+        .range(
+          chronologicalCursor ? 0 : boundedOffset,
+          (chronologicalCursor ? 0 : boundedOffset) + boundedLimit
+        );
     } else {
       messagesResult = await query
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .range(boundedOffset, boundedOffset + boundedLimit - 1);
     }
 
-    const { data: messages, error } = messagesResult;
+    const { data: queriedMessages, error } = messagesResult;
 
     if (error) throw error;
+
+    const chronologicalHasMore = !parentId
+      && safeSortMode !== 'for_you'
+      && (queriedMessages || []).length > boundedLimit;
+    const messages = !parentId && safeSortMode !== 'for_you'
+      ? (queriedMessages || []).slice(0, boundedLimit)
+      : queriedMessages || [];
+    const chronologicalBoundary = chronologicalHasMore && messages.length > 0
+      ? messages[messages.length - 1]
+      : null;
+    const nextCursor = safeSortMode === 'for_you'
+      ? ((rankedMessageIds.length === boundedLimit) ? 'for-you-served-history' : null)
+      : chronologicalBoundary
+        ? encodeFeedCursor({
+            createdAt: chronologicalBoundary.created_at,
+            messageId: chronologicalBoundary.id,
+          })
+        : null;
+    const pageHasMore = safeSortMode === 'for_you'
+      ? rankedMessageIds.length === boundedLimit
+      : chronologicalHasMore;
 
     const riskScoreByMessageId = safeSortMode === 'for_you'
       ? await loadEditorialRiskScores((messages || []).map((message: any) => message.id))
@@ -643,7 +737,10 @@ async function getMessages(
       comments_count: message.comments?.[0]?.count || 0,
       reposts_count: message.reposts?.[0]?.count || 0,
       user_has_marked_useful: usefulMessageIds.has(message.id),
-      user_has_reposted: repostedTargetIds.has(message.repost_of || message.id)
+      user_has_reposted: repostedTargetIds.has(message.repost_of || message.id),
+      ...(safeSortMode === 'for_you' && forYouAlgorithmVersion
+        ? { recommendation_algorithm_version: forYouAlgorithmVersion }
+        : {}),
     }));
 
     console.log(`✅ [GET_MESSAGES] ${formatted.length} ${parentId ? 'commentaires' : 'messages'}`);
@@ -651,7 +748,10 @@ async function getMessages(
     return {
       success: true,
       messages: formatted,
-      count: formatted.length
+      count: formatted.length,
+      algorithm_version: forYouAlgorithmVersion,
+      has_more: pageHasMore,
+      next_cursor: nextCursor,
     };
   } catch (error: any) {
     console.error('❌ [GET_MESSAGES] Erreur:', safeErrorForLog(error));
@@ -699,13 +799,19 @@ async function recordForYouFeedback(address: string, messageId: string) {
   return { success: true, message_id: messageId, feedback: 'not_interested' };
 }
 
-async function recordForYouImpressions(address: string, requestId: string, messageIds: string[]) {
+async function recordForYouImpressions(
+  address: string,
+  requestId: string,
+  messageIds: string[],
+  algorithmVersion: string
+) {
   if (messageIds.length === 0) return;
 
   const { error } = await supabase.rpc('record_for_you_impressions', {
     p_bitcoin_address: address,
     p_request_id: requestId,
     p_message_ids: messageIds,
+    p_algorithm_version: algorithmVersion,
   });
 
   // Impression analytics must never hide content after the paid read succeeds.
@@ -1587,6 +1693,7 @@ serve(async (req) => {
       topicId,
       stance,
       sortMode,
+      cursor,
       requestId,
       targetAddress,
       preference,
@@ -1660,7 +1767,8 @@ serve(async (req) => {
           offset || 0,
           address,
           body.parentId,
-          sortMode || 'recent'
+          sortMode || 'recent',
+          cursor,
         );
         
         if (!messagesResult.success) {
@@ -1683,8 +1791,19 @@ serve(async (req) => {
               sort_mode: !body.parentId && ['followed', 'for_you'].includes(sortMode)
                 ? sortMode
                 : 'recent',
+              ...(typeof cursor === 'string' ? { cursor } : {}),
             },
-            p_messages_snapshot: messagesResult.messages,
+            p_messages_snapshot: messagesResult.messages.map((message: any, index: number) => (
+              index === 0
+                ? {
+                    ...message,
+                    __danaus_feed_page: {
+                      has_more: Boolean(messagesResult.has_more),
+                      next_cursor: messagesResult.next_cursor || null,
+                    },
+                  }
+                : message
+            )),
           },
         );
         if (chargeError) {
@@ -1705,20 +1824,40 @@ serve(async (req) => {
         const charged = chargedRows?.[0];
         if (!charged) throw new Error('Le lot de messages n’a pas pu être débité');
         const totalCost = Number(charged.cost) || 0;
-        const paidMessages = Array.isArray(charged.messages_snapshot)
+        const paidMessagesWithContext = Array.isArray(charged.messages_snapshot)
           ? charged.messages_snapshot
           : messagesResult.messages;
+        const paidPageContext = paidMessagesWithContext.find(
+          (message: any) => message?.__danaus_feed_page
+        )?.__danaus_feed_page || {
+          has_more: Boolean(messagesResult.has_more),
+          next_cursor: messagesResult.next_cursor || null,
+        };
+        const paidMessages = paidMessagesWithContext.map((message: any) => {
+          const cleanMessage = { ...message };
+          delete cleanMessage.__danaus_feed_page;
+          return cleanMessage;
+        });
 
         await recordMessageExposures(
           paidMessages.map((message: any) => message.id)
         );
 
         if (sortMode === 'for_you' && !body.parentId) {
-          await recordForYouImpressions(
-            address,
-            requestId,
-            paidMessages.map((message: any) => message.id)
-          );
+          const paidAlgorithmVersion = paidMessages.find(
+            (message: any) => typeof message.recommendation_algorithm_version === 'string'
+          )?.recommendation_algorithm_version || messagesResult.algorithm_version;
+
+          if (typeof paidAlgorithmVersion === 'string') {
+            await recordForYouImpressions(
+              address,
+              requestId,
+              paidMessages.map((message: any) => message.id),
+              paidAlgorithmVersion
+            );
+          } else if (paidMessages.length > 0) {
+            console.error('❌ [FOR_YOU_IMPRESSIONS] Version de classement absente');
+          }
         }
 
         console.log(`✅ [GET_MESSAGES] ${totalCost.toFixed(8)} shells déduits`);
@@ -1728,6 +1867,11 @@ serve(async (req) => {
           ...messagesResult,
           messages: paidMessages,
           count: paidMessages.length,
+          algorithm_version: paidMessages.find(
+            (message: any) => typeof message.recommendation_algorithm_version === 'string'
+          )?.recommendation_algorithm_version || messagesResult.algorithm_version || null,
+          has_more: Boolean(paidPageContext.has_more),
+          next_cursor: paidPageContext.next_cursor || null,
           new_balance: Number(charged.new_balance) || 0,
           cost: totalCost
         };

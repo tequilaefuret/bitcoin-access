@@ -60,6 +60,8 @@ const MessageCard = ({
   const [comments, setComments] = useState([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [commentsLoaded, setCommentsLoaded] = useState(false);
+  const [commentLoading, setCommentLoading] = useState(false);
+  const [commentError, setCommentError] = useState('');
   const [localUsefulCount, setLocalUsefulCount] = useState(Number(message.useful_count) || 0);
   const [localUserMarkedUseful, setLocalUserMarkedUseful] = useState(
     Boolean(message.user_has_marked_useful)
@@ -134,12 +136,45 @@ const MessageCard = ({
     setLoadingComments(true);
     try {
       const loadedComments = await onLoadComments(message.id);
-      setComments(loadedComments || []);
+      setComments((current) => {
+        const merged = [...current, ...(loadedComments || [])];
+        const seen = new Set();
+        return merged.filter((comment) => {
+          if (!comment?.id || seen.has(comment.id)) return false;
+          seen.add(comment.id);
+          return true;
+        });
+      });
       setCommentsLoaded(true);
     } catch {
-      setComments([]);
+      // Keep comments created locally even if the initial fetch failed.
     } finally {
       setLoadingComments(false);
+    }
+  };
+
+  const submitComment = async () => {
+    if (!onComment || commentLoading || !commentText.trim()) return;
+
+    setCommentLoading(true);
+    setCommentError('');
+    try {
+      await onComment(message.id, commentText, (newComment) => {
+        setLocalCommentsCount((count) => count + 1);
+        if (newComment) {
+          setComments((current) => (
+            current.some((comment) => comment.id === newComment.id)
+              ? current
+              : [newComment, ...current]
+          ));
+        }
+        setCommentText('');
+        setShowCommentForm(false);
+      });
+    } catch (error) {
+      setCommentError(error.message || 'The comment could not be published.');
+    } finally {
+      setCommentLoading(false);
     }
   };
 
@@ -382,6 +417,7 @@ const MessageCard = ({
 
           <button
             type="button"
+            aria-label={`Show comments (${localCommentsCount})`}
             onClick={() => {
               setShowComments((current) => !current);
               if (!showComments && !commentsLoaded) loadComments();
@@ -409,6 +445,7 @@ const MessageCard = ({
 
       {usefulError && <p className="mt-2 text-xs text-red-600">{usefulError}</p>}
       {repostError && <p className="mt-2 text-xs text-red-600">{repostError}</p>}
+      {commentError && <p className="mt-2 text-xs text-red-600">{commentError}</p>}
       {feedbackError && <p className="mt-2 text-xs text-red-600">{feedbackError}</p>}
       {editorialError && <p className="mt-2 text-xs text-red-600">{editorialError}</p>}
 
@@ -512,19 +549,11 @@ const MessageCard = ({
                   </button>
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (!onComment) return;
-                      await onComment(message.id, commentText, (newComment) => {
-                        setLocalCommentsCount((count) => count + 1);
-                        if (newComment) setComments((current) => [newComment, ...current]);
-                        setCommentText('');
-                        setShowCommentForm(false);
-                      });
-                    }}
-                    disabled={!commentText.trim()}
+                    onClick={submitComment}
+                    disabled={!commentText.trim() || commentLoading}
                     className="rounded bg-orange-600 px-3 py-1 text-sm text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Publish
+                    {commentLoading ? 'Publishing...' : 'Publish'}
                   </button>
                 </div>
               </div>

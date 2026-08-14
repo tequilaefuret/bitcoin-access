@@ -29,22 +29,109 @@ const renderSocialStep = (overrides = {}) => {
     ...overrides,
   };
 
-  return { ...render(<SocialStep {...props} />), onLoadMessages };
+  return { ...render(<SocialStep {...props} />), onLoadMessages: props.onLoadMessages };
 };
 
 test('opens the personalized feed by default and keeps Latest and Followed available', async () => {
   const { onLoadMessages } = renderSocialStep();
 
   await waitFor(() => {
-    expect(onLoadMessages).toHaveBeenCalledWith(20, 0, 'for_you');
+    expect(onLoadMessages).toHaveBeenCalledWith(20, 0, 'for_you', null);
   });
   expect(screen.getByRole('button', { name: /for you/i })).toHaveAttribute('aria-pressed', 'true');
 
   fireEvent.click(screen.getByRole('button', { name: /latest/i }));
-  await waitFor(() => expect(onLoadMessages).toHaveBeenCalledWith(20, 0, 'recent'));
+  await waitFor(() => expect(onLoadMessages).toHaveBeenCalledWith(20, 0, 'recent', null));
 
   fireEvent.click(screen.getByRole('button', { name: /followed/i }));
-  await waitFor(() => expect(onLoadMessages).toHaveBeenCalledWith(20, 0, 'followed'));
+  await waitFor(() => expect(onLoadMessages).toHaveBeenCalledWith(20, 0, 'followed', null));
+
+  fireEvent.click(screen.getByRole('button', { name: /for you/i }));
+  expect(onLoadMessages).toHaveBeenCalledTimes(3);
+});
+
+test('loads the next page from its opaque cursor and removes duplicate posts', async () => {
+  const secondMessage = {
+    ...message,
+    id: 'message-2',
+    content: 'A second stable page.',
+  };
+  const onLoadMessages = jest.fn()
+    .mockResolvedValueOnce({ messages: [message], hasMore: true, nextCursor: 'cursor-1' })
+    .mockResolvedValueOnce({ messages: [message, secondMessage], hasMore: false, nextCursor: null });
+
+  renderSocialStep({ onLoadMessages });
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: /load more/i }));
+
+  await waitFor(() => {
+    expect(onLoadMessages).toHaveBeenLastCalledWith(20, 1, 'for_you', 'cursor-1');
+  });
+  expect(await screen.findByText(secondMessage.content)).toBeInTheDocument();
+  expect(screen.getAllByText(message.content)).toHaveLength(1);
+  expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+});
+
+test('adds a newly published post locally without loading the feed again', async () => {
+  const publishedMessage = {
+    ...message,
+    id: 'message-published',
+    bitcoin_address: 'bc1q-reader',
+    content: 'My locally inserted post.',
+  };
+  const onPublishMessage = jest.fn().mockResolvedValue({
+    success: true,
+    message: publishedMessage,
+  });
+  const { onLoadMessages } = renderSocialStep({
+    defaultFeed: 'recent',
+    onPublishMessage,
+  });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  fireEvent.change(screen.getByPlaceholderText(/share something worth reading/i), {
+    target: { value: publishedMessage.content },
+  });
+  const publishButton = screen.getAllByRole('button', { name: /^publish$/i })
+    .find((button) => !button.disabled);
+  fireEvent.click(publishButton);
+
+  expect(await screen.findByText(publishedMessage.content)).toBeInTheDocument();
+  expect(onPublishMessage).toHaveBeenCalledWith(publishedMessage.content);
+  expect(onLoadMessages).toHaveBeenCalledTimes(1);
+  expect(await screen.findByText(/added without moving your feed/i)).toBeInTheDocument();
+});
+
+test('inserts a published comment without reloading the parent feed', async () => {
+  const publishedComment = {
+    ...message,
+    id: 'comment-published',
+    bitcoin_address: 'bc1q-reader',
+    content: 'A local comment.',
+    parent_id: message.id,
+  };
+  const onPublishMessage = jest.fn().mockResolvedValue({
+    success: true,
+    message: publishedComment,
+  });
+  const { onLoadMessages } = renderSocialStep({ onPublishMessage });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /show comments/i }));
+  fireEvent.click(await screen.findByRole('button', { name: /add a comment/i }));
+  fireEvent.change(screen.getByPlaceholderText(/write your comment/i), {
+    target: { value: publishedComment.content },
+  });
+  const commentPublishButton = screen.getAllByRole('button', { name: /^publish$/i })
+    .find((button) => !button.disabled);
+  fireEvent.click(commentPublishButton);
+
+  await waitFor(() => {
+    expect(onPublishMessage).toHaveBeenCalledWith(publishedComment.content, message.id);
+  });
+  expect(await screen.findByText(publishedComment.content)).toBeInTheDocument();
+  expect(onLoadMessages).toHaveBeenCalledTimes(1);
 });
 
 test('removes a not-interested recommendation and forwards the negative signal', async () => {

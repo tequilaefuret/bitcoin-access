@@ -55,6 +55,78 @@ create table public.message_embeddings (
 
 \ir ../supabase/migrations/202608130001_for_you_feed.sql
 \ir ../supabase/migrations/202608140002_for_you_exponential_decay.sql
+\ir ../supabase/migrations/202608140003_weak_recommendation_signals.sql
+
+-- Rows created before versioning must remain distinguishable from v1 data.
+insert into public.user_balances (bitcoin_address)
+values ('legacy-reader'), ('legacy-author');
+
+insert into public.messages (id, bitcoin_address, content, created_at)
+values (
+  '00000000-0000-4000-8000-000000000001',
+  'legacy-author',
+  'Pre-versioning recommendation',
+  now() - interval '2 years'
+);
+
+insert into public.for_you_impressions (
+  bitcoin_address,
+  request_id,
+  message_id,
+  rank_position,
+  served_at
+) values (
+  'legacy-reader',
+  '00000000-0000-4000-8000-000000000002',
+  '00000000-0000-4000-8000-000000000001',
+  0,
+  now() - interval '1 day'
+);
+
+insert into public.for_you_feedback (
+  bitcoin_address,
+  message_id,
+  feedback_kind
+) values (
+  'legacy-reader',
+  '00000000-0000-4000-8000-000000000001',
+  'not_interested'
+);
+
+\ir ../supabase/migrations/202608140004_for_you_algorithm_versioning.sql
+\ir ../supabase/migrations/202608140005_stable_feed_pagination.sql
+
+do $$
+begin
+  if to_regclass('public.messages_chronological_feed_cursor_idx') is null
+    or to_regclass('public.messages_followed_feed_cursor_idx') is null then
+    raise exception 'Stable feed pagination indexes must exist';
+  end if;
+
+  if not exists (
+    select 1
+    from public.for_you_impressions
+    where bitcoin_address = 'legacy-reader'
+      and algorithm_version = 'for-you-v0.0.0'
+  ) or not exists (
+    select 1
+    from public.for_you_feedback
+    where bitcoin_address = 'legacy-reader'
+      and source_algorithm_version = 'for-you-v0.0.0'
+  ) then
+    raise exception 'Pre-versioning data must be isolated under the legacy label';
+  end if;
+
+  if exists (
+    select 1
+    from public.for_you_algorithm_versions
+    where version = 'for-you-v0.0.0'
+      and is_activatable
+  ) then
+    raise exception 'The legacy label must never be activatable';
+  end if;
+end;
+$$;
 
 do $$
 declare
@@ -81,6 +153,93 @@ begin
   end if;
   if abs(at_one_month - at_one_year) > 0.0000001 then
     raise exception 'One-month and one-year interactions must have the same residual weight';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  active_version text;
+  registered_configuration jsonb;
+begin
+  select settings.algorithm_version
+  into active_version
+  from public.for_you_algorithm_settings as settings
+  where settings.singleton;
+
+  select version.configuration
+  into registered_configuration
+  from public.for_you_algorithm_versions as version
+  where version.version = active_version;
+
+  if active_version <> 'for-you-v1.0.0' then
+    raise exception 'The initial active version must be for-you-v1.0.0';
+  end if;
+  if registered_configuration is null
+    or (registered_configuration ->> 'core_score_weight')::double precision <> 0.92 then
+    raise exception 'The registered version must preserve its complete settings snapshot';
+  end if;
+end;
+$$;
+
+-- A registered version can be activated and the previous snapshot can be
+-- restored without changing application code.
+insert into public.for_you_algorithm_versions (
+  version,
+  implementation_version,
+  configuration,
+  release_notes
+)
+select
+  'for-you-v1.1.0',
+  'for-you-v1.0.0',
+  jsonb_set(version.configuration, '{candidate_lookback_days}', '15'::jsonb),
+  'Transactional activation and rollback test.'
+from public.for_you_algorithm_versions as version
+where version.version = 'for-you-v1.0.0';
+
+select public.activate_for_you_algorithm_version(
+  'for-you-v1.1.0',
+  'Test activation'
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from public.for_you_algorithm_settings as settings
+    where settings.singleton
+      and settings.algorithm_version = 'for-you-v1.1.0'
+      and settings.candidate_lookback_days = 15
+  ) then
+    raise exception 'Activating a version must restore its registered settings';
+  end if;
+end;
+$$;
+
+select public.activate_for_you_algorithm_version(
+  'for-you-v1.0.0',
+  'Test rollback'
+);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from public.for_you_algorithm_settings as settings
+    where settings.singleton
+      and settings.algorithm_version = 'for-you-v1.0.0'
+      and settings.candidate_lookback_days = 30
+  ) then
+    raise exception 'Rolling back must restore the previous version snapshot';
+  end if;
+
+  if (
+    select count(*)
+    from public.for_you_algorithm_activations
+    where algorithm_version in ('for-you-v1.0.0', 'for-you-v1.1.0')
+  ) <> 3 then
+    raise exception 'Every initial, release, or rollback activation must be audited';
   end if;
 end;
 $$;
@@ -114,8 +273,32 @@ begin
 end;
 $$;
 
+do $$
+declare
+  empty_signal double precision;
+  partial_signal double precision;
+  saturated_signal double precision;
+begin
+  select public.for_you_saturating_log_signal(0, 5) into empty_signal;
+  select public.for_you_saturating_log_signal(1, 5) into partial_signal;
+  select public.for_you_saturating_log_signal(5, 5) into saturated_signal;
+
+  if empty_signal <> 0 then
+    raise exception 'An absent weak signal must score zero';
+  end if;
+  if partial_signal <= 0 or partial_signal >= 1 then
+    raise exception 'A partial weak signal must stay strictly between zero and one';
+  end if;
+  if saturated_signal <> 1 then
+    raise exception 'A signal at its saturation point must score one';
+  end if;
+end;
+$$;
+
 insert into public.user_balances (bitcoin_address)
-values ('reader'), ('followed-author'), ('discovery-author'), ('other-author'), ('engager');
+values
+  ('reader'), ('followed-author'), ('discovery-author'), ('other-author'),
+  ('engager'), ('weak-author-a'), ('weak-author-b');
 
 insert into public.follows (follower_address, following_address)
 values ('reader', 'followed-author'), ('reader', 'reader');
@@ -160,6 +343,7 @@ declare
   ranked_count integer;
   own_count integer;
   duplicate_count integer;
+  unexpected_version_count integer;
 begin
   select count(*) into ranked_count
   from public.rank_for_you_feed('reader', 20);
@@ -182,6 +366,14 @@ begin
   if duplicate_count <> 0 then
     raise exception 'The recommendation list contains duplicates';
   end if;
+
+  select count(*) into unexpected_version_count
+  from public.rank_for_you_feed_versioned('reader', 20) as ranked
+  where ranked.algorithm_version <> 'for-you-v1.0.0';
+
+  if unexpected_version_count <> 0 then
+    raise exception 'Every ranked candidate must expose the active algorithm version';
+  end if;
 end;
 $$;
 
@@ -191,15 +383,31 @@ select public.record_for_you_impressions(
   array[
     '10000000-0000-4000-8000-000000000002'::uuid,
     '10000000-0000-4000-8000-000000000003'::uuid
-  ]
+  ],
+  'for-you-v1.0.0'
 );
+
+do $$
+begin
+  if (
+    select count(*)
+    from public.for_you_impressions
+    where bitcoin_address = 'reader'
+      and request_id = '20000000-0000-4000-8000-000000000001'
+      and algorithm_version = 'for-you-v1.0.0'
+  ) <> 2 then
+    raise exception 'Every impression must retain the version that ranked it';
+  end if;
+end;
+$$;
 
 do $$
 begin
   if public.record_for_you_impressions(
     'reader',
     '20000000-0000-4000-8000-000000000001',
-    array['10000000-0000-4000-8000-000000000002'::uuid]
+    array['10000000-0000-4000-8000-000000000002'::uuid],
+    'for-you-v1.0.0'
   ) <> 0 then
     raise exception 'Impression retries must be idempotent';
   end if;
@@ -229,6 +437,20 @@ select public.record_for_you_feedback(
 
 do $$
 begin
+  if not exists (
+    select 1
+    from public.for_you_feedback
+    where bitcoin_address = 'reader'
+      and message_id = '10000000-0000-4000-8000-000000000004'
+      and source_algorithm_version = 'for-you-v1.0.0'
+  ) then
+    raise exception 'Explicit feedback must be attributed to an algorithm version';
+  end if;
+end;
+$$;
+
+do $$
+begin
   if exists (
     select 1
     from public.rank_for_you_feed('reader', 20) as ranked
@@ -244,8 +466,8 @@ $$;
 insert into public.messages (
   id, bitcoin_address, content, created_at, useful_count
 ) values
-  ('10000000-0000-4000-8000-000000000007', 'discovery-author', 'Fresh engagement', now() - interval '1 hour', 1),
-  ('10000000-0000-4000-8000-000000000008', 'other-author', 'Old engagement', now() - interval '1 hour', 1);
+  ('10000000-0000-4000-8000-000000000007', 'weak-author-a', 'Fresh engagement', now() - interval '1 hour', 1),
+  ('10000000-0000-4000-8000-000000000008', 'weak-author-b', 'Old engagement', now() - interval '1 hour', 1);
 
 insert into public.message_useful_votes (message_id, bitcoin_address, created_at)
 values
@@ -279,6 +501,80 @@ begin
   end if;
   if fresh_score <= old_score * 10 then
     raise exception 'Fresh engagement must substantially outweigh old engagement: % vs %', fresh_score, old_score;
+  end if;
+end;
+$$;
+
+-- Complementary signals are checked separately with identical core freshness:
+-- candidate 7 has broader support and one followed supporter, while candidate
+-- 8 starts a reply that receives a Useful from another person.
+insert into public.message_useful_votes (message_id, bitcoin_address, created_at)
+values ('10000000-0000-4000-8000-000000000007', 'followed-author', now());
+
+insert into public.messages (id, bitcoin_address, content, created_at, parent_id)
+values (
+  '10000000-0000-4000-8000-000000000009',
+  'engager',
+  'Useful conversation reply',
+  now(),
+  '10000000-0000-4000-8000-000000000008'
+);
+
+insert into public.message_useful_votes (message_id, bitcoin_address, created_at)
+values ('10000000-0000-4000-8000-000000000009', 'followed-author', now());
+
+-- Make the core score identical for both candidates to isolate each weak
+-- signal in turn.
+update public.for_you_algorithm_settings
+set
+  semantic_weight = 0,
+  author_affinity_weight = 0,
+  engagement_weight = 0,
+  freshness_weight = 1,
+  in_network_weight = 0,
+  exploration_weight = 0;
+
+do $$
+declare
+  candidate_a double precision;
+  candidate_b double precision;
+begin
+  update public.for_you_algorithm_settings set
+    core_score_weight = 0.90,
+    social_proof_weight = 0.10,
+    conversation_quality_weight = 0,
+    engagement_breadth_weight = 0;
+
+  select rank_score into candidate_a from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000007';
+  select rank_score into candidate_b from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000008';
+  if candidate_a <= candidate_b then
+    raise exception 'Followed-account social proof must increase the score';
+  end if;
+
+  update public.for_you_algorithm_settings set
+    social_proof_weight = 0,
+    conversation_quality_weight = 0.10;
+
+  select rank_score into candidate_a from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000007';
+  select rank_score into candidate_b from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000008';
+  if candidate_b <= candidate_a then
+    raise exception 'A Useful received by a reply must increase conversation quality';
+  end if;
+
+  update public.for_you_algorithm_settings set
+    conversation_quality_weight = 0,
+    engagement_breadth_weight = 0.10;
+
+  select rank_score into candidate_a from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000007';
+  select rank_score into candidate_b from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000008';
+  if candidate_a <= candidate_b then
+    raise exception 'Broader independent engagement must increase the score';
   end if;
 end;
 $$;

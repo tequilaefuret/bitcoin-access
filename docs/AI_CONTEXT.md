@@ -351,6 +351,30 @@ Fields:
 - active follows remain structural and do not decay while the relationship exists
 - decayed engagement is normalized as `E / (max(E, decayed For-you exposures) + 20)`;
   the conservative 20-impression prior prevents tiny samples from dominating
+- the validated core score keeps 92%; weak reranking adds followed-account
+  social proof (3%), useful direct replies (3%), and distinct participant
+  breadth (2%), all time-decayed and logarithmically saturated
+- weak signals rerank only the 20 core candidates and never generate candidates
+  on their own; self-actions and repeated actions by one actor do not stack
+- `for-you-v1.0.0` is the first immutable algorithm release; its complete
+  settings snapshot and retained SQL implementation mapping live in
+  `for_you_algorithm_versions`
+- pre-versioning impressions and feedback are honestly isolated under the
+  non-activatable `for-you-v0.0.0` label instead of being attributed to v1
+- `for_you_algorithm_activations` audits releases and rollbacks, while
+  `activate_for_you_algorithm_version` atomically restores a registered snapshot
+- every ranked response, paid-read snapshot, stored impression, and explicit
+  negative-feedback attribution carries the algorithm version that produced it
+- the service role cannot update ranking weights directly; future scoring or
+  code changes require a reviewed migration and a new semantic version
+- Latest and Followed use opaque `(created_at, id)` keyset cursors backed by
+  partial composite indexes; legacy numeric offsets remain temporarily accepted
+- For-you pagination advances through recorded served-history, and every
+  frontend page is defensively deduplicated
+- Classic feed tabs cache messages/cursors independently; publishing a post,
+  comment, or repost patches local state instead of reloading a paid feed page
+- billing snapshots retain internal page metadata so an idempotent replay keeps
+  the original `has_more` value and next cursor
 - les tables et scores internes ne sont jamais lisibles directement par le navigateur
 
 ### Editorial safety

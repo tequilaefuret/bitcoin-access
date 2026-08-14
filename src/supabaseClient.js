@@ -432,21 +432,33 @@ export async function publishMessage(address, content, parentId = null) {
  * Récupérer les messages du réseau social (tous les messages) ou les commentaires d'un message
  * @param {number} limit - Nombre de messages (défaut: 20)
  * @param {number} offset - Offset pour pagination (défaut: 0)
- * @param {string|null} userAddress - Adresse Bitcoin de l'utilisateur (pour likes/dislikes)
+ * @param {string|null} userAddress - Adresse Bitcoin de l'utilisateur (pour ses interactions)
  * @param {string|null} parentId - ID du message parent (pour charger les commentaires)
  * @param {'for_you'|'recent'|'followed'} sortMode - Recommandations, fil global ou comptes suivis
- * @returns {Promise<array>} Liste des messages avec compteurs sociaux
+ * @param {string|null} cursor - Curseur opaque retourné par la page précédente
+ * @returns {Promise<object>} Page stable de messages avec son prochain curseur
  */
-export async function getMessages(limit = 20, offset = 0, userAddress = null, parentId = null, sortMode = 'recent') {
+export async function getMessages(
+  limit = 20,
+  offset = 0,
+  userAddress = null,
+  parentId = null,
+  sortMode = 'recent',
+  cursor = null
+) {
   const data = await invokeUserOperation(userAddress, 'get_messages', {
       requestId: createRequestId(),
       limit,
       offset,
       sortMode,
+      ...(cursor ? { cursor } : {}),
       ...(parentId ? { parentId } : {}),
   }, 'Could not load messages');
   return {
     messages: data?.messages || [],
+    hasMore: Boolean(data?.has_more),
+    nextCursor: data?.next_cursor || null,
+    algorithmVersion: data?.algorithm_version || null,
     new_balance: data?.new_balance,
     cost: data?.cost || 0,
   };

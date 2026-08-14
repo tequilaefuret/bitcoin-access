@@ -213,20 +213,24 @@ export const useBitcoinBalance = () => {
    * 📨 Charger les messages (tous) avec pagination
    * Décompte 1 satoshi par message chargé
    */
-  const loadMessages = useCallback(async (limit = 20, offset = 0, sortMode = 'recent') => {
+  const loadMessages = useCallback(async (
+    limit = 20,
+    offset = 0,
+    sortMode = 'recent',
+    cursor = null
+  ) => {
     try {
       setLoading(true);
 
       // Passer l'adresse pour vérifier Useful et décompter la lecture.
-      const result = await getMessages(limit, offset, address, null, sortMode);
+      const result = await getMessages(limit, offset, address, null, sortMode, cursor);
 
       // Mettre à jour le solde si retourné
       if (result.new_balance !== null && result.new_balance !== undefined) {
         setShellsAvailable(result.new_balance);
       }
 
-
-      return result.messages;
+      return result;
     } catch (err) {
 
       // Gestion d'erreur améliorée
@@ -236,7 +240,7 @@ export const useBitcoinBalance = () => {
         setError('Could not load messages: ' + err.message);
       }
 
-      return [];
+      return { messages: [], hasMore: false, nextCursor: null };
     } finally {
       setLoading(false);
     }

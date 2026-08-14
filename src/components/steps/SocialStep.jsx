@@ -27,6 +27,63 @@ const PRIVATE_STANCES = [
   { id: 'learning', label: 'Still learning' }
 ];
 
+const FEED_PAGE_SIZE = 20;
+const CLASSIC_SORTS = ['for_you', 'recent', 'followed'];
+
+const createEmptyFeed = () => ({
+  messages: [],
+  hasMore: true,
+  nextCursor: null,
+  loadedCount: 0,
+  loaded: false,
+});
+
+const createFeedCollection = () => Object.fromEntries(
+  CLASSIC_SORTS.map((sortMode) => [sortMode, createEmptyFeed()])
+);
+
+const normalizeFeedPage = (loadedPage) => {
+  if (Array.isArray(loadedPage)) {
+    return {
+      messages: loadedPage,
+      hasMore: loadedPage.length === FEED_PAGE_SIZE,
+      nextCursor: null,
+    };
+  }
+
+  const pageMessages = Array.isArray(loadedPage?.messages) ? loadedPage.messages : [];
+  return {
+    messages: pageMessages,
+    hasMore: typeof loadedPage?.hasMore === 'boolean'
+      ? loadedPage.hasMore
+      : pageMessages.length === FEED_PAGE_SIZE,
+    nextCursor: loadedPage?.nextCursor || null,
+  };
+};
+
+const mergeUniqueMessages = (currentMessages, incomingMessages, prepend = false) => {
+  const merged = prepend
+    ? [...incomingMessages, ...currentMessages]
+    : [...currentMessages, ...incomingMessages];
+  const seen = new Set();
+
+  return merged.filter((message) => {
+    if (!message?.id || seen.has(message.id)) return false;
+    seen.add(message.id);
+    return !message.deleted_at;
+  });
+};
+
+const normalizePublishedMessage = (message, authorAddress) => message?.id ? {
+  ...message,
+  bitcoin_address: message.bitcoin_address || authorAddress,
+  useful_count: Number(message.useful_count) || 0,
+  comments_count: Number(message.comments_count) || 0,
+  reposts_count: Number(message.reposts_count) || 0,
+  user_has_marked_useful: false,
+  user_has_reposted: false,
+} : null;
+
 const trendWindowLabel = (windowMinutes) => ({
   60: '1h',
   360: '6h',
@@ -116,17 +173,24 @@ const SocialStep = ({
   const [activeMode, setActiveMode] = useState('classic');
   const [classicSort, setClassicSort] = useState(defaultFeed);
   const [messageContent, setMessageContent] = useState('');
-  const [messages, setMessages] = useState([]);
+  const [feedsBySort, setFeedsBySort] = useState(createFeedCollection);
   const [topics, setTopics] = useState([]);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
-  const [hasMore, setHasMore] = useState(true);
   const [isLoadingFeed, setIsLoadingFeed] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
   const [isLoadingOpinion, setIsLoadingOpinion] = useState(false);
   const [isSavingStance, setIsSavingStance] = useState(false);
   const [screenError, setScreenError] = useState('');
   const [editorialNotice, setEditorialNotice] = useState('');
   const loadedSessionRef = useRef('');
+  const feedRequestRef = useRef(0);
+  const loadMoreInFlightRef = useRef(false);
+  const loadMoreRequestRef = useRef(0);
+
+  const activeFeed = feedsBySort[classicSort] || createEmptyFeed();
+  const messages = activeFeed.messages;
+  const hasMore = activeFeed.hasMore;
 
   const selectedTopic = useMemo(
     () => topics.find((topic) => topic.id === selectedTopicId) || topics[0] || null,
@@ -139,18 +203,32 @@ const SocialStep = ({
   );
 
   const loadClassicFeed = async (sortMode = classicSort) => {
+    const requestNumber = ++feedRequestRef.current;
     setIsLoadingFeed(true);
     setScreenError('');
 
     try {
-      const loadedMessages = await onLoadMessages?.(20, 0, sortMode);
-      const activeMessages = (loadedMessages || []).filter((message) => !message.deleted_at);
-      setMessages(activeMessages);
-      setHasMore(activeMessages.length === 20);
+      const loadedPage = normalizeFeedPage(
+        await onLoadMessages?.(FEED_PAGE_SIZE, 0, sortMode, null)
+      );
+      if (feedRequestRef.current !== requestNumber) return;
+
+      const activeMessages = mergeUniqueMessages([], loadedPage.messages);
+      setFeedsBySort((current) => ({
+        ...current,
+        [sortMode]: {
+          messages: activeMessages,
+          hasMore: loadedPage.hasMore,
+          nextCursor: loadedPage.nextCursor,
+          loadedCount: loadedPage.messages.length,
+          loaded: true,
+        },
+      }));
     } catch (loadError) {
+      if (feedRequestRef.current !== requestNumber) return;
       setScreenError(loadError.message || 'The feed could not be loaded.');
     } finally {
-      setIsLoadingFeed(false);
+      if (feedRequestRef.current === requestNumber) setIsLoadingFeed(false);
     }
   };
 
@@ -178,6 +256,11 @@ const SocialStep = ({
     if (loadedSessionRef.current === sessionKey) return;
     loadedSessionRef.current = sessionKey;
 
+    feedRequestRef.current += 1;
+    loadMoreRequestRef.current += 1;
+    loadMoreInFlightRef.current = false;
+    setFeedsBySort(createFeedCollection());
+    setIsLoadingMore(false);
     setClassicSort(defaultFeed);
     loadClassicFeed(defaultFeed);
     loadOpinionFeed();
@@ -186,13 +269,14 @@ const SocialStep = ({
   }, [address]);
 
   const updateMessageEverywhere = (messageId, updater) => {
-    setMessages((current) => {
-      const updated = current.map((message) => (
-        message.id === messageId ? updater(message) : message
-      ));
-
-      return updated;
-    });
+    setFeedsBySort((current) => Object.fromEntries(
+      Object.entries(current).map(([sortMode, feed]) => [sortMode, {
+        ...feed,
+        messages: feed.messages.map((message) => (
+          message.id === messageId ? updater(message) : message
+        )),
+      }])
+    ));
     setTopics((current) => current.map((topic) => ({
       ...topic,
       posts: (topic.posts || []).map((post) => (
@@ -215,33 +299,88 @@ const SocialStep = ({
 
   const handlePublish = async () => {
     const content = messageContent.trim();
-    if (!content || !onPublishMessage) return;
+    if (!content || !onPublishMessage || isPublishing) return;
 
-    const result = await onPublishMessage(content);
-    if (!result || result.success === false) return;
+    setIsPublishing(true);
+    setScreenError('');
+    try {
+      const result = await onPublishMessage(content);
+      if (!result || result.success === false) return;
 
-    await loadClassicFeed(classicSort);
+      const publishedMessage = normalizePublishedMessage(result.message, address);
+      if (publishedMessage) {
+        setFeedsBySort((current) => {
+          const latestFeed = current.recent;
+          if (!latestFeed.loaded && classicSort !== 'recent') return current;
 
-    setMessageContent('');
+          return {
+            ...current,
+            recent: {
+              ...latestFeed,
+              messages: mergeUniqueMessages(latestFeed.messages, [publishedMessage], true),
+              loaded: true,
+            },
+          };
+        });
+      }
+      setMessageContent('');
+      setEditorialNotice(
+        classicSort === 'recent'
+          ? 'Your post is published and has been added without moving your feed.'
+          : 'Your post is published. Your current feed has stayed in place.'
+      );
+    } catch (publishError) {
+      setScreenError(publishError.message || 'The post could not be published.');
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   const handleLoadMore = async () => {
-    if (isLoadingMore || !hasMore) return;
+    if (loadMoreInFlightRef.current || isLoadingMore || !hasMore) return;
 
+    const requestedSort = classicSort;
+    const requestedFeed = feedsBySort[requestedSort] || createEmptyFeed();
+    const requestGeneration = feedRequestRef.current;
+    const loadMoreRequestNumber = ++loadMoreRequestRef.current;
+    loadMoreInFlightRef.current = true;
     setIsLoadingMore(true);
+    setScreenError('');
     try {
-      const loadedMessages = await onLoadMessages?.(20, messages.length, classicSort);
-      const activeMessages = (loadedMessages || []).filter((message) => !message.deleted_at);
-      const existingIds = new Set(messages.map((message) => message.id));
-      const newMessages = activeMessages.filter((message) => !existingIds.has(message.id));
-      setMessages((current) => [...current, ...newMessages]);
-      setHasMore(
-        classicSort === 'for_you'
-          ? newMessages.length === 20
-          : activeMessages.length === 20
-      );
+      const loadedPage = normalizeFeedPage(await onLoadMessages?.(
+        FEED_PAGE_SIZE,
+        requestedFeed.loadedCount,
+        requestedSort,
+        requestedFeed.nextCursor
+      ));
+      if (feedRequestRef.current !== requestGeneration) return;
+
+      setFeedsBySort((current) => {
+        const currentFeed = current[requestedSort] || createEmptyFeed();
+        const mergedMessages = mergeUniqueMessages(currentFeed.messages, loadedPage.messages);
+        const addedMessageCount = mergedMessages.length - currentFeed.messages.length;
+
+        return {
+          ...current,
+          [requestedSort]: {
+            ...currentFeed,
+            messages: mergedMessages,
+            hasMore: loadedPage.hasMore && addedMessageCount > 0,
+            nextCursor: loadedPage.nextCursor,
+            loadedCount: currentFeed.loadedCount + loadedPage.messages.length,
+            loaded: true,
+          },
+        };
+      });
+    } catch (loadError) {
+      if (feedRequestRef.current === requestGeneration) {
+        setScreenError(loadError.message || 'The next page could not be loaded.');
+      }
     } finally {
-      setIsLoadingMore(false);
+      if (loadMoreRequestRef.current === loadMoreRequestNumber) {
+        loadMoreInFlightRef.current = false;
+        setIsLoadingMore(false);
+      }
     }
   };
 
@@ -266,7 +405,12 @@ const SocialStep = ({
 
     await deleteMessage(address, messageId);
 
-    setMessages((current) => current.filter((message) => message.id !== messageId));
+    setFeedsBySort((current) => Object.fromEntries(
+      Object.entries(current).map(([sortMode, feed]) => [sortMode, {
+        ...feed,
+        messages: feed.messages.filter((message) => message.id !== messageId),
+      }])
+    ));
     setTopics((current) => current.map((topic) => ({
       ...topic,
       posts: (topic.posts || []).filter((post) => post.id !== messageId)
@@ -275,7 +419,14 @@ const SocialStep = ({
 
   const handleSortChange = async (sortMode) => {
     if (sortMode === classicSort) return;
+    feedRequestRef.current += 1;
+    loadMoreRequestRef.current += 1;
+    loadMoreInFlightRef.current = false;
+    setIsLoadingMore(false);
+    setIsLoadingFeed(false);
     setClassicSort(sortMode);
+    setScreenError('');
+    if (feedsBySort[sortMode]?.loaded) return;
     await loadClassicFeed(sortMode);
   };
 
@@ -303,24 +454,63 @@ const SocialStep = ({
 
   const handleRepost = async (messageId, quoteContent = '') => {
     const result = await onRepostMessage?.(messageId, quoteContent);
-    if (result) await loadClassicFeed(classicSort);
+    if (!result) return result;
+
+    updateMessageEverywhere(messageId, (message) => ({
+      ...message,
+      reposts_count: Number(result.reposts_count) || 0,
+      ...(!quoteContent.trim() ? { user_has_reposted: Boolean(result.active) } : {}),
+    }));
+
+    const sourceMessage = messages.find((message) => message.id === messageId);
+    const publishedRepost = normalizePublishedMessage(result.message, address);
+    if (publishedRepost) {
+      const locallyHydratedRepost = {
+        ...publishedRepost,
+        reposted_message: sourceMessage?.reposted_message || sourceMessage || null,
+      };
+      setFeedsBySort((current) => {
+        if (!current.recent.loaded) return current;
+        return {
+          ...current,
+          recent: {
+            ...current.recent,
+            messages: mergeUniqueMessages(
+              current.recent.messages,
+              [locallyHydratedRepost],
+              true
+            ),
+          },
+        };
+      });
+    }
+
+    setEditorialNotice('Your repost was saved without reloading the feed.');
     return result;
   };
 
   const handleForYouNotInterested = async (messageId) => {
     const hiddenMessage = messages.find((message) => message.id === messageId);
-    setMessages((current) => current.filter((message) => message.id !== messageId));
+    setFeedsBySort((current) => ({
+      ...current,
+      for_you: {
+        ...current.for_you,
+        messages: current.for_you.messages.filter((message) => message.id !== messageId),
+      },
+    }));
     setScreenError('');
 
     try {
       await onForYouNotInterested?.(messageId);
     } catch (feedbackError) {
       if (hiddenMessage) {
-        setMessages((current) => (
-          current.some((message) => message.id === messageId)
-            ? current
-            : [hiddenMessage, ...current]
-        ));
+        setFeedsBySort((current) => ({
+          ...current,
+          for_you: {
+            ...current.for_you,
+            messages: mergeUniqueMessages(current.for_you.messages, [hiddenMessage], true),
+          },
+        }));
       }
       setScreenError(feedbackError.message || 'Your recommendation could not be updated.');
     }
@@ -337,7 +527,12 @@ const SocialStep = ({
         message.bitcoin_address === authorAddress
         || message.reposted_message?.bitcoin_address === authorAddress
       );
-      setMessages((current) => current.filter((message) => !isFromAuthor(message)));
+      setFeedsBySort((current) => Object.fromEntries(
+        Object.entries(current).map(([sortMode, feed]) => [sortMode, {
+          ...feed,
+          messages: feed.messages.filter((message) => !isFromAuthor(message)),
+        }])
+      ));
       setTopics((current) => current.map((topic) => ({
         ...topic,
         posts: (topic.posts || []).filter((post) => !isFromAuthor(post)),
@@ -474,10 +669,10 @@ const SocialStep = ({
                 <button
                   type="button"
                   onClick={handlePublish}
-                  disabled={loading || !messageContent.trim()}
+                  disabled={isPublishing || loading || !messageContent.trim()}
                   className="inline-flex items-center gap-2 rounded-full bg-amber-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {loading ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  {isPublishing ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   Publish
                 </button>
               </div>
