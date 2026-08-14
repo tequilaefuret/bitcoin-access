@@ -345,6 +345,12 @@ Fields:
 - `for_you_feedback` conserve le signal privé `not_interested`
 - `rank_for_you_feed` combine réseau suivi, similarité sémantique, engagement,
   fraîcheur, historique de service et diversité d’auteurs
+- Useful, replies, reposts and legacy interaction signals use the same
+  exponential decay: 100% at creation, 10% after 5 days, 1% after 10 days,
+  then a 1% floor so one-month and one-year signals have equal residual weight
+- active follows remain structural and do not decay while the relationship exists
+- decayed engagement is normalized as `E / (max(E, decayed For-you exposures) + 20)`;
+  the conservative 20-impression prior prevents tiny samples from dominating
 - les tables et scores internes ne sont jamais lisibles directement par le navigateur
 
 ### Editorial safety

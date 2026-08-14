@@ -54,9 +54,68 @@ create table public.message_embeddings (
 );
 
 \ir ../supabase/migrations/202608130001_for_you_feed.sql
+\ir ../supabase/migrations/202608140002_for_you_exponential_decay.sql
+
+do $$
+declare
+  at_start double precision;
+  at_five_days double precision;
+  at_ten_days double precision;
+  at_one_month double precision;
+  at_one_year double precision;
+begin
+  select public.for_you_temporal_decay(now()) into at_start;
+  select public.for_you_temporal_decay(now() - interval '5 days') into at_five_days;
+  select public.for_you_temporal_decay(now() - interval '10 days') into at_ten_days;
+  select public.for_you_temporal_decay(now() - interval '30 days') into at_one_month;
+  select public.for_you_temporal_decay(now() - interval '365 days') into at_one_year;
+
+  if abs(at_start - 1.0) > 0.00001 then
+    raise exception 'A new interaction must have weight 1.0, got %', at_start;
+  end if;
+  if abs(at_five_days - 0.1) > 0.00001 then
+    raise exception 'A five-day interaction must have weight 0.1, got %', at_five_days;
+  end if;
+  if abs(at_ten_days - 0.01) > 0.00001 then
+    raise exception 'A ten-day interaction must reach the 0.01 floor, got %', at_ten_days;
+  end if;
+  if abs(at_one_month - at_one_year) > 0.0000001 then
+    raise exception 'One-month and one-year interactions must have the same residual weight';
+  end if;
+end;
+$$;
+
+do $$
+declare
+  no_engagement double precision;
+  isolated_useful double precision;
+  supported_rate double precision;
+  high_rate double precision;
+  same_engagement_low_reach double precision;
+begin
+  select public.for_you_normalized_engagement(0, 100, 20) into no_engagement;
+  select public.for_you_normalized_engagement(1.7, 0, 20) into isolated_useful;
+  select public.for_you_normalized_engagement(17, 100, 20) into supported_rate;
+  select public.for_you_normalized_engagement(170, 100, 20) into high_rate;
+  select public.for_you_normalized_engagement(17, 10, 20) into same_engagement_low_reach;
+
+  if no_engagement <> 0 then
+    raise exception 'A post without engagement must have a zero engagement score';
+  end if;
+  if isolated_useful >= supported_rate then
+    raise exception 'One isolated Useful must not outweigh a supported engagement rate';
+  end if;
+  if supported_rate >= high_rate or high_rate >= 1 then
+    raise exception 'Normalized engagement must grow monotonically and stay below one';
+  end if;
+  if same_engagement_low_reach <= supported_rate then
+    raise exception 'Equal engagement with fewer exposures must keep a higher normalized rate';
+  end if;
+end;
+$$;
 
 insert into public.user_balances (bitcoin_address)
-values ('reader'), ('followed-author'), ('discovery-author'), ('other-author');
+values ('reader'), ('followed-author'), ('discovery-author'), ('other-author'), ('engager');
 
 insert into public.follows (follower_address, following_address)
 values ('reader', 'followed-author'), ('reader', 'reader');
@@ -176,6 +235,50 @@ begin
     where ranked.message_id = '10000000-0000-4000-8000-000000000004'
   ) then
     raise exception 'Not-interested content must be removed from recommendations';
+  end if;
+end;
+$$;
+
+-- With every other ranking family disabled, one fresh Useful must carry more
+-- weight than an otherwise identical month-old Useful.
+insert into public.messages (
+  id, bitcoin_address, content, created_at, useful_count
+) values
+  ('10000000-0000-4000-8000-000000000007', 'discovery-author', 'Fresh engagement', now() - interval '1 hour', 1),
+  ('10000000-0000-4000-8000-000000000008', 'other-author', 'Old engagement', now() - interval '1 hour', 1);
+
+insert into public.message_useful_votes (message_id, bitcoin_address, created_at)
+values
+  ('10000000-0000-4000-8000-000000000007', 'engager', now()),
+  ('10000000-0000-4000-8000-000000000008', 'engager', now() - interval '30 days');
+
+update public.for_you_algorithm_settings
+set
+  semantic_weight = 0,
+  author_affinity_weight = 0,
+  engagement_weight = 1,
+  freshness_weight = 0,
+  in_network_weight = 0,
+  exploration_weight = 0;
+
+do $$
+declare
+  fresh_score double precision;
+  old_score double precision;
+begin
+  select rank_score into fresh_score
+  from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000007';
+
+  select rank_score into old_score
+  from public.rank_for_you_feed('reader', 20)
+  where message_id = '10000000-0000-4000-8000-000000000008';
+
+  if fresh_score is null or old_score is null then
+    raise exception 'Both decay comparison candidates must be ranked';
+  end if;
+  if fresh_score <= old_score * 10 then
+    raise exception 'Fresh engagement must substantially outweigh old engagement: % vs %', fresh_score, old_score;
   end if;
 end;
 $$;
