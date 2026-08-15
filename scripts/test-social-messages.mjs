@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { enrichSocialMessages } from '../supabase/functions/_shared/social-messages.mjs';
+import {
+  enrichSocialMessages,
+  loadMessageTopicIds,
+} from '../supabase/functions/_shared/social-messages.mjs';
 
 const requestedProfiles = [];
 const supabase = {
@@ -89,5 +92,31 @@ const [viewerMessage] = await enrichSocialMessages(viewerSupabase, [{
 });
 assert.equal(viewerMessage.user_has_marked_useful, true);
 assert.equal(viewerMessage.user_has_reposted, true);
+
+const thenableQuery = (data) => {
+  const builder = {
+    select() { return builder; },
+    in() { return builder; },
+    eq() { return builder; },
+    then(resolve, reject) {
+      return Promise.resolve({ data, error: null }).then(resolve, reject);
+    },
+  };
+  return builder;
+};
+const topicSupabase = {
+  from(table) {
+    if (table === 'opinion_message_topic_scores') {
+      return thenableQuery([{ message_id: 'parent-1', topic_id: 'topic-1' }]);
+    }
+    if (table === 'opinion_topic_messages') return thenableQuery([]);
+    throw new Error(`Unexpected topic table: ${table}`);
+  },
+};
+const topicIdsByMessage = await loadMessageTopicIds(topicSupabase, [{
+  id: 'comment-1',
+  parent_id: 'parent-1',
+}]);
+assert.deepEqual([...topicIdsByMessage.get('comment-1')], ['topic-1']);
 
 console.log('Social message enrichment contracts valid.');

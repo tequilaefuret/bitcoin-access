@@ -149,6 +149,38 @@ async function setEditorialAuthorPreference(
   };
 }
 
+async function setEditorialTopicPreference(
+  readerAddress: string,
+  messageId: string,
+  preference: string,
+) {
+  const { data, error } = await supabase.rpc(
+    'set_editorial_topic_preference_from_message',
+    {
+      p_reader_address: readerAddress,
+      p_message_id: messageId,
+      p_preference: preference,
+    },
+  );
+
+  if (error) {
+    if (error.message?.includes('Publication introuvable')) {
+      throw new OperationError('Publication introuvable', 404);
+    }
+    if (error.message?.includes('Sujet indisponible')) {
+      throw new OperationError('Aucun sujet fiable n’a été détecté pour cette publication', 409);
+    }
+    throw error;
+  }
+
+  return {
+    success: true,
+    message_id: messageId,
+    preference: data?.[0]?.preference || preference,
+    active: Boolean(data?.[0]?.active),
+  };
+}
+
 async function listEditorialAuthorPreferences(readerAddress: string) {
   const { data, error } = await supabase
     .from('editorial_author_preferences')
@@ -692,7 +724,7 @@ async function getOpinionTopics(address: string) {
         ...publicPost
       } = candidate;
 
-      return publicPost;
+      return { ...publicPost, topic_feedback_available: true };
     });
 
     return {
@@ -771,7 +803,9 @@ async function getUserMessages(address: string, limit: number = 20, offset: numb
       .range(offset, offset + limit - 1);
 
     if (error) throw error;
-    const enrichedMessages = await enrichSocialMessages(supabase, messages || []);
+    const enrichedMessages = await enrichSocialMessages(supabase, messages || [], {
+      includeTopicFeedback: true,
+    });
 
     console.log(`✅ [GET_USER_MESSAGES] ${messages?.length || 0} messages récupérés`);
 
@@ -1471,6 +1505,14 @@ serve(async (req) => {
           throw new OperationError('Choix éditorial invalide');
         }
         result = await setEditorialAuthorPreference(address, targetAddress, preference);
+        break;
+
+      case 'set_editorial_topic_preference':
+        if (!messageId) throw new OperationError('Paramètre "messageId" manquant');
+        if (!['none', 'reduce'].includes(preference)) {
+          throw new OperationError('Choix éditorial invalide');
+        }
+        result = await setEditorialTopicPreference(address, messageId, preference);
         break;
 
       case 'list_editorial_author_preferences':

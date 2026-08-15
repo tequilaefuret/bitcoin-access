@@ -64,7 +64,9 @@ serve(async (req) => {
       }
 
       return new Response(JSON.stringify({
-        messages: await enrichSocialMessages(supabase, messages),
+        messages: await enrichSocialMessages(supabase, messages, {
+          includeTopicFeedback: true,
+        }),
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       });

@@ -9,6 +9,7 @@ import {
   Sparkles,
   TrendingUp
 } from 'lucide-react';
+import { OpinionFeedSkeleton } from '../ui/ContentSkeletons';
 
 const PRIVATE_STANCES = [
   { id: 'for', label: 'For' },
@@ -88,7 +89,9 @@ const OpinionFeedPanel = ({
   renderMessage,
   isSavingStance,
   onPrivateStance
-}) => (
+}) => isLoading ? (
+  <OpinionFeedSkeleton />
+) : (
   <div className="mt-6 grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
     <aside>
       <div className="rounded-[1.75rem] border border-slate-200 bg-white p-4 shadow-lg shadow-slate-200/50 lg:sticky lg:top-4">
@@ -108,11 +111,7 @@ const OpinionFeedPanel = ({
     </aside>
 
     <main className="min-w-0 space-y-6">
-      {isLoading ? (
-        <div className="flex justify-center rounded-[1.75rem] border border-slate-200 bg-white py-20">
-          <Loader className="h-7 w-7 animate-spin text-amber-500" />
-        </div>
-      ) : !selectedTopic ? (
+      {!selectedTopic ? (
         <div className="rounded-[1.75rem] border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500">
           No Opinion topics are active yet.
         </div>

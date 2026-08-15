@@ -11,7 +11,8 @@ Le menu `…` d’une publication, d’un commentaire ou d’un profil propose :
 
 | Action | Effet |
 |---|---|
-| **Show fewer posts** | réduit à 45 % le score des publications de cet auteur dans **For you** ; |
+| **Show less from this author** | réduit à 45 % le score des publications de cet auteur dans **For you** ; |
+| **Show less from this topic** | réduit à 35 % le score des publications classées dans ce sujet dans **For you** ; un commentaire hérite du sujet de sa publication parente ; |
 | **Hide this author** | retire ses publications et ses commentaires de tous les feeds, y compris lorsqu’un autre compte reposte son contenu ; |
 | **Block this account** | applique le masquage, supprime les abonnements dans les deux sens et interdit les nouveaux abonnements, réponses, reposts et `Useful` entre les deux comptes ; |
 | **Report** | ajoute au maximum une unité au nombre de signalements de la publication ou du profil pour cet utilisateur. |
@@ -19,6 +20,11 @@ Le menu `…` d’une publication, d’un commentaire ou d’un profil propose :
 Les choix `reduce`, `mute` et `block` sont mutuellement exclusifs : choisir une
 nouvelle action remplace l’ancienne. Ils sont privés et ne sont lisibles que par
 le backend authentifié.
+
+Les sujets associés aux publications restent eux aussi internes. Le navigateur
+envoie uniquement l’identifiant du post ou du commentaire ; une fonction SQL
+protégée retrouve le sujet côté serveur et enregistre la préférence privée dans
+`editorial_topic_preferences`. Aucun score de classification n’est exposé.
 
 Un blocage n’est pas une fonctionnalité de confidentialité : le profil et ses
 publications restent publics lorsqu’on les ouvre directement. Il empêche les
@@ -88,7 +94,10 @@ score restent internes au serveur.
 ## Fichiers principaux
 
 - migration : `supabase/migrations/202608140001_editorial_safety.sql` ;
+- préférences de sujet :
+  `supabase/migrations/202608150001_editorial_topic_preferences.sql` ;
 - test SQL transactionnel : `scripts/test-editorial-safety-sql.sql` ;
+- test SQL des sujets : `scripts/test-editorial-topic-preferences-sql.sql` ;
 - règles serveur : `supabase/functions/user-operations/index.ts` et
   `supabase/functions/social-follow/index.ts` ;
 - interfaces : `MessageCard.jsx`, `SocialStep.jsx`, `ProfileStep.jsx` et
@@ -99,4 +108,3 @@ score restent internes au serveur.
 La migration et les Edge Functions seront appliquées automatiquement par le
 pipeline déjà documenté dans `docs/DEPLOYMENT_PIPELINE.md`. Il ne faut pas copier
 la migration manuellement dans le SQL Editor si le pipeline est utilisé.
-

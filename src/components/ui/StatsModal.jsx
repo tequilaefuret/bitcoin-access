@@ -1,6 +1,7 @@
 // src/components/ui/StatsModal.jsx
 import React from 'react';
 import { X, TrendingUp } from 'lucide-react';
+import { ListSkeleton } from './ContentSkeletons';
 
 const formatDate = (value) => {
   if (!value) return 'Unknown date';
@@ -43,8 +44,8 @@ const StatsModal = ({ stats, onClose }) => {
   if (!stats) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-        <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4">
-          <p className="text-center text-gray-600">Loading spending history...</p>
+        <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
+          <ListSkeleton label="Loading spending history" count={3} />
         </div>
       </div>
     );

@@ -8,7 +8,6 @@ import {
   Ellipsis,
   EyeOff,
   Flag,
-  Loader,
   KeyRound,
   Lightbulb,
   MessageSquare,
@@ -17,6 +16,7 @@ import {
   UserRound
 } from 'lucide-react';
 import MessageCard from '../social/MessageCard';
+import { FeedSkeleton, ProfileSkeleton } from '../ui/ContentSkeletons';
 import {
   getUserData,
   getPublicProfile,
@@ -75,6 +75,7 @@ const ProfileStep = ({
   onAddPassword,
   showFullAddress = false,
   onEditorialPreference,
+  onEditorialTopicPreference,
   onReportMessage,
   onReportProfile,
 }) => {
@@ -221,6 +222,13 @@ const ProfileStep = ({
     setEditorialNotice(result?.created
       ? 'Post report recorded. Thank you.'
       : 'You already reported this post.');
+    return result;
+  };
+
+  const handleEditorialTopicPreference = async (messageId, preference) => {
+    if (!onEditorialTopicPreference) return null;
+    const result = await onEditorialTopicPreference(messageId, preference);
+    setEditorialNotice('You will see fewer posts related to this topic.');
     return result;
   };
 
@@ -415,10 +423,7 @@ const ProfileStep = ({
 
         <div className="p-6 lg:p-8">
           {loading ? (
-            <div className="py-16 text-center">
-              <Loader className="w-8 h-8 animate-spin mx-auto text-orange-500" />
-              <p className="mt-3 text-gray-600">Loading profile...</p>
-            </div>
+            <ProfileSkeleton />
           ) : (
             <>
               {error && (
@@ -561,6 +566,9 @@ const ProfileStep = ({
                         currentAddress={currentAddress}
                         onUserClick={onOpenProfile}
                         onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null}
+                        onEditorialTopicPreference={onEditorialTopicPreference
+                          ? handleEditorialTopicPreference
+                          : null}
                         onReportMessage={onReportMessage ? handleReportMessage : null}
                         showActions={false}
                       />
@@ -569,30 +577,24 @@ const ProfileStep = ({
                 )}
               </div>
 
+              {loadingMore && currentMessages.length > 0 && (
+                <FeedSkeleton count={2} compact className="mt-4" />
+              )}
+
               <div className="mt-6 flex items-center justify-center">
-                {currentHasMore ? (
+                {currentHasMore && !loadingMore ? (
                   <button
                     onClick={loadMore}
-                    disabled={loadingMore}
-                    className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-gray-900 text-white font-semibold hover:bg-gray-800 disabled:opacity-50 transition"
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-gray-900 text-white font-semibold hover:bg-gray-800 transition"
                   >
-                    {loadingMore ? (
-                      <>
-                        <Loader className="w-4 h-4 animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      <>
-                        <Bitcoin className="w-4 h-4" />
-                        Load more
-                      </>
-                    )}
+                    <Bitcoin className="w-4 h-4" />
+                    Load more
                   </button>
-                ) : (
+                ) : !currentHasMore ? (
                   <p className="text-sm text-gray-500">
                     All messages loaded.
                   </p>
-                )}
+                ) : null}
               </div>
             </>
           )}

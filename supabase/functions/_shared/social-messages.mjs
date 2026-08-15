@@ -42,6 +42,43 @@ export async function loadRepostOriginals(supabase, messages) {
   return new Map((data || []).map((message) => [message.id, message]));
 }
 
+export async function loadMessageTopicIds(supabase, messages) {
+  const sourceIds = [...new Set((messages || []).flatMap((message) => [
+    message.id,
+    message.parent_id,
+    message.repost_of,
+  ]).filter(Boolean))];
+  if (sourceIds.length === 0) return new Map();
+
+  const [scoresResult, mappingsResult] = await Promise.all([
+    supabase
+      .from('opinion_message_topic_scores')
+      .select('message_id, topic_id')
+      .in('message_id', sourceIds)
+      .eq('accepted', true),
+    supabase
+      .from('opinion_topic_messages')
+      .select('message_id, topic_id')
+      .in('message_id', sourceIds),
+  ]);
+  if (scoresResult.error) throw scoresResult.error;
+  if (mappingsResult.error) throw mappingsResult.error;
+
+  const topicsBySource = new Map();
+  for (const row of [...(scoresResult.data || []), ...(mappingsResult.data || [])]) {
+    if (!topicsBySource.has(row.message_id)) topicsBySource.set(row.message_id, new Set());
+    topicsBySource.get(row.message_id).add(row.topic_id);
+  }
+
+  return new Map((messages || []).map((message) => {
+    const topicIds = new Set();
+    for (const sourceId of [message.id, message.parent_id, message.repost_of].filter(Boolean)) {
+      for (const topicId of topicsBySource.get(sourceId) || []) topicIds.add(topicId);
+    }
+    return [message.id, topicIds];
+  }));
+}
+
 export async function enrichSocialMessages(supabase, messages, options = {}) {
   const messageList = messages || [];
   const originalById = options.originalById
@@ -57,6 +94,10 @@ export async function enrichSocialMessages(supabase, messages, options = {}) {
   const repostTargetIds = messageList.map((message) => message.repost_of || message.id);
   let usefulMessageIds = new Set();
   let repostedTargetIds = new Set();
+  const topicIdsByMessage = options.topicIdsByMessage
+    || (options.includeTopicFeedback
+      ? await loadMessageTopicIds(supabase, messageList)
+      : null);
 
   if (options.readerAddress && messageIds.length > 0) {
     const [usefulVotesResult, repostsResult] = await Promise.all([
@@ -97,6 +138,9 @@ export async function enrichSocialMessages(supabase, messages, options = {}) {
       reposts_count: message.reposts?.[0]?.count || 0,
       user_has_marked_useful: usefulMessageIds.has(message.id),
       user_has_reposted: repostedTargetIds.has(message.repost_of || message.id),
+      ...(topicIdsByMessage
+        ? { topic_feedback_available: (topicIdsByMessage.get(message.id)?.size || 0) > 0 }
+        : {}),
       ...(options.recommendationAlgorithmVersion
         ? { recommendation_algorithm_version: options.recommendationAlgorithmVersion }
         : {}),

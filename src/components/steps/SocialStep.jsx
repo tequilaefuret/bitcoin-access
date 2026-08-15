@@ -12,10 +12,12 @@ import {
 import MessageCard from '../social/MessageCard';
 import ClassicFeedPanel from '../social/ClassicFeedPanel';
 import OpinionFeedPanel from '../social/OpinionFeedPanel';
+import TemporarilyHiddenPost from '../social/TemporarilyHiddenPost';
 import ErrorAlert from '../ui/ErrorAlert';
 import { deleteMessage } from '../../supabaseClient';
 import { normalizePublishedMessage } from '../../features/feed/classicFeedState';
 import { useClassicFeed } from '../../features/feed/useClassicFeed';
+import { useTemporaryMessageHides } from '../../features/feed/useTemporaryMessageHides';
 
 const SocialStep = ({
   address,
@@ -26,6 +28,7 @@ const SocialStep = ({
   onRepostMessage,
   onForYouNotInterested,
   onEditorialPreference,
+  onEditorialTopicPreference,
   onReportMessage,
   onLoadOpinionTopics,
   onSetPrivateStance,
@@ -65,8 +68,19 @@ const SocialStep = ({
     filterMessages: filterClassicMessages,
     prependLatest,
     removeForYouMessage,
+    temporarilyHideForYouMessage,
     restoreForYouMessage,
   } = useClassicFeed({ address, defaultFeed, onLoadMessages });
+  const {
+    hideTemporarily: hideForYouTemporarily,
+    undoHide: undoForYouHide,
+  } = useTemporaryMessageHides({
+    temporarilyHideMessage: temporarilyHideForYouMessage,
+    removeMessage: removeForYouMessage,
+    restoreMessage: restoreForYouMessage,
+    persistHide: onForYouNotInterested,
+    onError: setScreenError,
+  });
 
   const selectedTopic = useMemo(
     () => topics.find((topic) => topic.id === selectedTopicId) || topics[0] || null,
@@ -232,19 +246,11 @@ const SocialStep = ({
     return result;
   };
 
-  const handleForYouNotInterested = async (messageId) => {
+  const handleForYouNotInterested = (messageId) => {
     const hiddenMessage = messages.find((message) => message.id === messageId);
-    removeForYouMessage(messageId);
+    if (!hiddenMessage) return;
     setScreenError('');
-
-    try {
-      await onForYouNotInterested?.(messageId);
-    } catch (feedbackError) {
-      if (hiddenMessage) {
-        restoreForYouMessage(hiddenMessage);
-      }
-      setScreenError(feedbackError.message || 'Your recommendation could not be updated.');
-    }
+    hideForYouTemporarily(hiddenMessage, messages.indexOf(hiddenMessage));
   };
 
   const handleEditorialPreference = async (authorAddress, preference) => {
@@ -284,7 +290,22 @@ const SocialStep = ({
       : 'You already reported this post.');
     return result;
   };
+
+  const handleEditorialTopicPreference = async (messageId, preference) => {
+    if (!onEditorialTopicPreference) return null;
+    setScreenError('');
+    setEditorialNotice('');
+    const result = await onEditorialTopicPreference(messageId, preference);
+    setEditorialNotice('You will see fewer posts related to this topic.');
+    return result;
+  };
   const renderMessage = (message) => (
+    message.temporarily_hidden ? (
+      <TemporarilyHiddenPost
+        key={message.id}
+        onUndo={() => undoForYouHide(message.id)}
+      />
+    ) : (
     <MessageCard
       key={message.id}
       message={message}
@@ -299,9 +320,13 @@ const SocialStep = ({
         ? handleForYouNotInterested
         : null}
       onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null}
+      onEditorialTopicPreference={onEditorialTopicPreference
+        ? handleEditorialTopicPreference
+        : null}
       onReportMessage={onReportMessage ? handleReportMessage : null}
       isFollowed={followingAddresses.includes(message.bitcoin_address)}
     />
+    )
   );
 
   return (

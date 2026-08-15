@@ -503,6 +503,17 @@ export async function setEditorialAuthorPreference(address, targetAddress, prefe
   }, 'Could not update this author preference');
 }
 
+export async function setEditorialTopicPreference(address, messageId, preference = 'reduce') {
+  if (!['none', 'reduce'].includes(preference)) {
+    throw new Error('Invalid editorial topic preference');
+  }
+
+  return invokeUserOperation(address, 'set_editorial_topic_preference', {
+    messageId,
+    preference,
+  }, 'Could not update this topic preference');
+}
+
 export async function listEditorialAuthorPreferences(address) {
   const data = await invokeUserOperation(
     address,

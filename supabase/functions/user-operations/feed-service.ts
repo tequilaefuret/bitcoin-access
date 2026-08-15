@@ -7,6 +7,7 @@ import {
 } from '../_shared/feed-pagination.mjs';
 import {
   enrichSocialMessages,
+  loadMessageTopicIds,
   loadRepostOriginals,
   SOCIAL_MESSAGE_SELECT,
 } from '../_shared/social-messages.mjs';
@@ -14,10 +15,11 @@ import {
 type EditorialPolicy = {
   hiddenAuthors: Set<string>;
   reducedAuthors: Set<string>;
+  reducedTopics: Set<string>;
 };
 
 async function loadEditorialPolicy(supabase: any, readerAddress: string): Promise<EditorialPolicy> {
-  const [outboundResult, inboundBlocksResult] = await Promise.all([
+  const [outboundResult, inboundBlocksResult, topicPreferencesResult] = await Promise.all([
     supabase
       .from('editorial_author_preferences')
       .select('target_address, preference')
@@ -27,9 +29,15 @@ async function loadEditorialPolicy(supabase: any, readerAddress: string): Promis
       .select('reader_address')
       .eq('target_address', readerAddress)
       .eq('preference', 'block'),
+    supabase
+      .from('editorial_topic_preferences')
+      .select('topic_id')
+      .eq('reader_address', readerAddress)
+      .eq('preference', 'reduce'),
   ]);
   if (outboundResult.error) throw outboundResult.error;
   if (inboundBlocksResult.error) throw inboundBlocksResult.error;
+  if (topicPreferencesResult.error) throw topicPreferencesResult.error;
 
   const hiddenAuthors = new Set<string>();
   const reducedAuthors = new Set<string>();
@@ -43,7 +51,13 @@ async function loadEditorialPolicy(supabase: any, readerAddress: string): Promis
     hiddenAuthors.add(row.reader_address);
   }
 
-  return { hiddenAuthors, reducedAuthors };
+  return {
+    hiddenAuthors,
+    reducedAuthors,
+    reducedTopics: new Set(
+      (topicPreferencesResult.data || []).map((row: any) => row.topic_id).filter(Boolean),
+    ),
+  };
 }
 
 async function loadEditorialRiskScores(supabase: any, messageIds: string[]) {
@@ -92,7 +106,11 @@ export async function getMessages(
     let forYouAlgorithmVersion: string | null = null;
     const editorialPolicy = userAddress
       ? await loadEditorialPolicy(supabase, userAddress)
-      : { hiddenAuthors: new Set<string>(), reducedAuthors: new Set<string>() };
+      : {
+          hiddenAuthors: new Set<string>(),
+          reducedAuthors: new Set<string>(),
+          reducedTopics: new Set<string>(),
+        };
 
     if (safeSortMode === 'followed' && userAddress) {
       const { data: followed, error: followedError } = await supabase
@@ -205,12 +223,19 @@ export async function getMessages(
     const riskScoreByMessageId = safeSortMode === 'for_you'
       ? await loadEditorialRiskScores(supabase, messages.map((message: any) => message.id))
       : new Map<string, number>();
+    const topicIdsByMessage = await loadMessageTopicIds(supabase, messages);
     const sortedMessageList = safeSortMode === 'for_you'
       ? [...messages].sort((left: any, right: any) => {
           const adjustedScore = (message: any) => {
             const authorMultiplier = editorialPolicy.reducedAuthors.has(message.bitcoin_address) ? 0.45 : 1;
+            const topicMultiplier = [...(topicIdsByMessage.get(message.id) || [])].some(
+              (topicId) => editorialPolicy.reducedTopics.has(topicId),
+            ) ? 0.35 : 1;
             const riskMultiplier = 1 - Math.min(0.9, riskScoreByMessageId.get(message.id) || 0) * 0.60;
-            return (rankScoreByMessageId.get(message.id) || 0) * authorMultiplier * riskMultiplier;
+            return (rankScoreByMessageId.get(message.id) || 0)
+              * authorMultiplier
+              * topicMultiplier
+              * riskMultiplier;
           };
           return adjustedScore(right) - adjustedScore(left);
         })
@@ -223,11 +248,11 @@ export async function getMessages(
     const formatted = await enrichSocialMessages(supabase, messageList, {
       readerAddress: userAddress,
       originalById,
+      topicIdsByMessage,
       recommendationAlgorithmVersion: safeSortMode === 'for_you'
         ? forYouAlgorithmVersion
         : null,
     });
-
     console.log(`✅ [GET_MESSAGES] ${formatted.length} ${parentId ? 'commentaires' : 'messages'}`);
     return {
       success: true,

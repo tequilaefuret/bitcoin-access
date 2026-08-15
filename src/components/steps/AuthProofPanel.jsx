@@ -11,6 +11,7 @@ import {
   ScanLine,
   Upload,
 } from 'lucide-react';
+import { ListSkeleton } from '../ui/ContentSkeletons';
 import { psbtBase64ToBlob, psbtFileToBase64 } from '../../lib/psbtFiles';
 import { copyToClipboard } from '../../lib/clipboard';
 import ConnectionMethodHelp from './ConnectionMethodHelp';
@@ -41,9 +42,8 @@ const JadeMark = ({ className = 'h-5 w-5' }) => (
 );
 
 const QrLoading = () => (
-  <div className="flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white p-8 text-sm font-semibold text-slate-600">
-    <Loader className="h-4 w-4 animate-spin" />
-    Loading QR tools...
+  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <ListSkeleton label="Loading QR tools" count={1} />
   </div>
 );
 

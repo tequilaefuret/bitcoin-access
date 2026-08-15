@@ -1,5 +1,6 @@
 import React from 'react';
 import { Clock3, Loader, Send, Sparkles, Users } from 'lucide-react';
+import { FeedSkeleton } from '../ui/ContentSkeletons';
 
 const SORT_OPTIONS = [
   { id: 'for_you', label: 'For you', icon: Sparkles },
@@ -92,9 +93,7 @@ const ClassicFeedPanel = ({
           </div>
 
           {isLoadingFeed ? (
-            <div className="flex justify-center py-12">
-              <Loader className="h-6 w-6 animate-spin text-amber-500" />
-            </div>
+            <FeedSkeleton count={3} className="mt-5" />
           ) : messages.length > 0 ? (
             <div className="mt-5 space-y-5">{messages.map(renderMessage)}</div>
           ) : (
@@ -103,14 +102,16 @@ const ClassicFeedPanel = ({
             </p>
           )}
 
-          {hasMore && messages.length > 0 && (
+          {isLoadingMore && messages.length > 0 && (
+            <FeedSkeleton count={2} compact className="mt-5" />
+          )}
+
+          {hasMore && messages.length > 0 && !isLoadingMore && (
             <button
               type="button"
               onClick={onLoadMore}
-              disabled={isLoadingMore}
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-100 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-200"
             >
-              {isLoadingMore && <Loader className="h-4 w-4 animate-spin" />}
               Load more
             </button>
           )}

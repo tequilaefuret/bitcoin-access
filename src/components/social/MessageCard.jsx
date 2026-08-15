@@ -9,6 +9,7 @@ import {
 import ExpandableText from './ExpandableText';
 import PostOptionsMenu from './PostOptionsMenu';
 import RepostComposer from './RepostComposer';
+import { FeedSkeleton } from '../ui/ContentSkeletons';
 import {
   countBillableCharacters,
   formatMessageTimestamp,
@@ -25,6 +26,7 @@ const MessageCard = ({
   onUserClick,
   onNotInterested,
   onEditorialPreference,
+  onEditorialTopicPreference,
   onReportMessage,
   isFollowed = false,
   showActions = true
@@ -59,6 +61,7 @@ const MessageCard = ({
 
   const authorAddress = message.bitcoin_address || null;
   const isOwnMessage = authorAddress === currentAddress;
+  const optionsLabel = message.parent_id ? 'Comment options' : 'Post options';
 
   const displayAddress = message.display_name ? `@${message.display_name}` : '@anonymous';
 
@@ -203,6 +206,20 @@ const MessageCard = ({
     }
   };
 
+  const applyEditorialTopicPreference = async () => {
+    if (!onEditorialTopicPreference || editorialAction) return;
+    setEditorialAction('topic-reduce');
+    setEditorialError('');
+    try {
+      await onEditorialTopicPreference(message.id, 'reduce');
+      setShowEditorialMenu(false);
+    } catch (error) {
+      setEditorialError(error.message || 'This topic preference could not be saved.');
+    } finally {
+      setEditorialAction('');
+    }
+  };
+
   const originalMessage = message.reposted_message || null;
   const repostedText = originalMessage?.content || message.content || '';
   const repostedCharacterCount = countBillableCharacters(repostedText);
@@ -233,14 +250,19 @@ const MessageCard = ({
           <span className="text-xs text-gray-500">
             {formatMessageTimestamp(message.created_at || message.timestamp)}
           </span>
-          {!isOwnMessage && (onNotInterested || onEditorialPreference || onReportMessage) && (
+          {!isOwnMessage && (
+            onNotInterested
+            || onEditorialPreference
+            || onEditorialTopicPreference
+            || onReportMessage
+          ) && (
             <button
               type="button"
               onClick={() => setShowEditorialMenu((visible) => !visible)}
               disabled={feedbackLoading || Boolean(editorialAction)}
               className="rounded-full p-1 text-gray-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
-              title="Post options"
-              aria-label="Post options"
+              title={optionsLabel}
+              aria-label={optionsLabel}
               aria-expanded={showEditorialMenu}
             >
               <Ellipsis className="h-4 w-4" />
@@ -262,9 +284,15 @@ const MessageCard = ({
               visible={showEditorialMenu}
               onNotInterested={onNotInterested ? markNotInterested : null}
               onEditorialPreference={onEditorialPreference ? applyEditorialPreference : null}
+              onEditorialTopicPreference={
+                onEditorialTopicPreference && message.topic_feedback_available === true
+                  ? applyEditorialTopicPreference
+                  : null
+              }
               onReportMessage={onReportMessage ? reportMessage : null}
               feedbackLoading={feedbackLoading}
               editorialAction={editorialAction}
+              contentType={message.parent_id ? 'comment' : 'post'}
             />
           )}
         </div>
@@ -427,7 +455,7 @@ const MessageCard = ({
           )}
 
           {loadingComments ? (
-            <p className="text-sm text-gray-500">Loading comments...</p>
+            <FeedSkeleton count={2} compact />
           ) : comments.length > 0 ? (
             <div className="space-y-3 border-l-2 border-gray-200 pl-4">
               {comments.map((comment) => (
@@ -442,6 +470,7 @@ const MessageCard = ({
                   onDelete={onDelete}
                   onUserClick={onUserClick}
                   onEditorialPreference={onEditorialPreference}
+                  onEditorialTopicPreference={onEditorialTopicPreference}
                   onReportMessage={onReportMessage}
                   showActions
                 />

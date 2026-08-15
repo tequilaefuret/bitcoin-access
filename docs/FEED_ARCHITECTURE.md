@@ -68,6 +68,20 @@ Le hook partagé `usePendingActivity` compte les opérations asynchrones actives
 Il évite que l'indicateur global repasse à « terminé » lorsqu'une première
 opération finit alors qu'une seconde est encore en cours.
 
+### Continuité du parcours
+
+- `useTemporaryMessageHides` remplace immédiatement un post For-you marqué
+  **Not interested** par « Post hidden — Undo ». L’écriture définitive est
+  différée de cinq secondes ; **Undo** restaure exactement la même position.
+- Lorsqu’un profil est ouvert depuis le feed, `App.js` conserve le composant
+  `SocialStep` monté mais invisible. Les onglets, pages, curseurs et mises à jour
+  locales ne sont donc pas perdus. `useScrollRestoration` ouvre le profil en haut
+  de page, puis replace la fenêtre à la hauteur de lecture capturée au retour.
+- `ContentSkeletons.jsx` fournit les formes de chargement communes des cartes,
+  listes, profils et écrans. Les skeletons sont réservés aux contenus en cours
+  de chargement ; un indicateur compact reste pertinent dans un bouton qui
+  exécute une action.
+
 ## Backend
 
 ### `user-operations/index.ts`
@@ -104,6 +118,9 @@ doit donc être faite qu'à un seul endroit.
 5. Le résultat rejoué d'une facturation idempotente restitue son propre curseur.
 6. Un auteur masqué ou bloqué ne réapparaît pas à travers un repost.
 7. Les champs internes de classement ne sont jamais calculés dans le navigateur.
+8. Annuler un masquage temporaire ne doit envoyer aucun signal négatif au serveur.
+9. Ouvrir puis fermer un profil depuis le feed ne doit ni recharger une page
+   payée ni perdre la position de lecture.
 
 ## Vérifications automatisées
 
@@ -111,9 +128,14 @@ doit donc être faite qu'à un seul endroit.
 - `SocialStep.test.jsx` protège les parcours visibles et l'absence de rechargement ;
 - `messagePresentation.test.js` protège les règles communes d'affichage ;
 - `usePendingActivity.test.js` protège les opérations concurrentes ;
+- `useTemporaryMessageHides.test.js` protège le délai et l’annulation du masquage ;
+- `useScrollRestoration.test.js` protège la position de lecture ;
+- `ContentSkeletons.test.jsx` protège les annonces accessibles de chargement ;
 - `test-feed-pagination.mjs` teste le curseur et les snapshots idempotents ;
 - `test-social-messages.mjs` teste le contrat d'enrichissement commun ;
 - `npm run verify` exécute ces contrats, tous les tests React et le build de production.
 
-Cette refonte ne modifie pas le schéma de données : aucune migration SQL nouvelle
-n'est nécessaire pour la déployer.
+La continuité visuelle et la position de lecture ne modifient pas le schéma. En
+revanche, l’action **Show less from this topic** dépend de la migration privée
+`202608150001_editorial_topic_preferences.sql`, appliquée par le pipeline avant
+le déploiement des Edge Functions et du frontend.

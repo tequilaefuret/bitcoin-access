@@ -128,9 +128,13 @@ export const useClassicFeed = ({ address, defaultFeed, onLoadMessages }) => {
     dispatch({ type: 'remove-for-you', messageId });
   }, []);
 
-  const restoreForYouMessage = useCallback((message) => {
+  const temporarilyHideForYouMessage = useCallback((messageId) => {
+    dispatch({ type: 'temporarily-hide-for-you', messageId });
+  }, []);
+
+  const restoreForYouMessage = useCallback((message, index = 0) => {
     if (!message) return;
-    dispatch({ type: 'restore-for-you', message });
+    dispatch({ type: 'restore-for-you', message, index });
   }, []);
 
   const clearFeedError = useCallback(() => setFeedError(initialFeedError), []);
@@ -152,6 +156,7 @@ export const useClassicFeed = ({ address, defaultFeed, onLoadMessages }) => {
     filterMessages,
     prependLatest,
     removeForYouMessage,
+    temporarilyHideForYouMessage,
     restoreForYouMessage,
   };
 };

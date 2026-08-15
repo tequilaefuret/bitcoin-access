@@ -160,7 +160,7 @@ test('inserts a published comment without reloading the parent feed', async () =
   expect(onLoadMessages).toHaveBeenCalledTimes(1);
 });
 
-test('removes a not-interested recommendation and forwards the negative signal', async () => {
+test('temporarily hides a recommendation and lets the reader undo it', async () => {
   const onForYouNotInterested = jest.fn().mockResolvedValue({ success: true });
   renderSocialStep({ onForYouNotInterested });
 
@@ -168,10 +168,13 @@ test('removes a not-interested recommendation and forwards the negative signal',
   fireEvent.click(screen.getByRole('button', { name: /post options/i }));
   fireEvent.click(screen.getByRole('button', { name: /not interested/i }));
 
-  await waitFor(() => {
-    expect(onForYouNotInterested).toHaveBeenCalledWith('message-1');
-  });
+  expect(await screen.findByText(/post hidden/i)).toBeInTheDocument();
   expect(screen.queryByText('A post selected for this reader.')).not.toBeInTheDocument();
+  expect(onForYouNotInterested).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole('button', { name: /undo/i }));
+  expect(await screen.findByText('A post selected for this reader.')).toBeInTheDocument();
+  expect(onForYouNotInterested).not.toHaveBeenCalled();
 });
 
 test('hides an author from the visible feed after saving the preference', async () => {
@@ -187,6 +190,38 @@ test('hides an author from the visible feed after saving the preference', async 
     expect(screen.queryByText('A post selected for this reader.')).not.toBeInTheDocument();
   });
   expect(await screen.findByText(/author is now hidden/i)).toBeInTheDocument();
+});
+
+test('reduces an author without removing the current post', async () => {
+  const onEditorialPreference = jest.fn().mockResolvedValue({ success: true });
+  renderSocialStep({ onEditorialPreference });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /post options/i }));
+  fireEvent.click(screen.getByRole('button', { name: /show less from this author/i }));
+
+  await waitFor(() => {
+    expect(onEditorialPreference).toHaveBeenCalledWith('bc1q-author', 'reduce');
+  });
+  expect(screen.getByText(message.content)).toBeInTheDocument();
+  expect(await screen.findByText(/fewer posts from this author/i)).toBeInTheDocument();
+});
+
+test('records a private topic reduction from the post options menu', async () => {
+  const onEditorialTopicPreference = jest.fn().mockResolvedValue({ success: true });
+  renderSocialStep({
+    onEditorialTopicPreference,
+    onLoadMessages: jest.fn().mockResolvedValue([{ ...message, topic_feedback_available: true }]),
+  });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /post options/i }));
+  fireEvent.click(screen.getByRole('button', { name: /show less from this topic/i }));
+
+  await waitFor(() => {
+    expect(onEditorialTopicPreference).toHaveBeenCalledWith('message-1', 'reduce');
+  });
+  expect(await screen.findByText(/fewer posts related to this topic/i)).toBeInTheDocument();
 });
 
 test('records a post report once through the post options menu', async () => {

@@ -1,6 +1,7 @@
 // src/components/ui/HistoryModal.jsx
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { X, History, Loader } from 'lucide-react';
+import { X, History } from 'lucide-react';
+import { FeedSkeleton } from './ContentSkeletons';
 
 const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, hasMore }) => {
   const [messages, setMessages] = useState([]);
@@ -128,12 +129,8 @@ const HistoryModal = ({ show, onClose, messages: initialMessages, onLoadMore, ha
                 </div>
               ))}
 
-              {/* Loader pour chargement additionnel */}
               {isLoadingMore && (
-                <div className="text-center py-4">
-                  <Loader className="w-6 h-6 animate-spin inline-block text-orange-500" />
-                  <p className="text-sm text-gray-600 mt-2">Loading...</p>
-                </div>
+                <FeedSkeleton count={2} compact />
               )}
 
               {/* Message fin de liste */}

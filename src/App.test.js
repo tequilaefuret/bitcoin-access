@@ -113,3 +113,46 @@ test('renders the original post inside a quote', () => {
   expect(screen.getByText('The original post.')).toBeInTheDocument();
   expect(screen.getByText('@original-author')).toBeInTheDocument();
 });
+
+test('offers author and topic controls on comments', async () => {
+  const onEditorialPreference = jest.fn().mockResolvedValue({ success: true });
+  const onEditorialTopicPreference = jest.fn().mockResolvedValue({ success: true });
+  const comment = buildMessage({
+    id: 'comment-1',
+    bitcoin_address: 'bc1q-commenter',
+    display_name: 'commenter',
+    content: 'A classified reply.',
+    parent_id: 'message-1',
+    comments_count: 0,
+    topic_feedback_available: true,
+  });
+
+  render(
+    <MessageCard
+      message={buildMessage({ comments_count: 1 })}
+      currentAddress="bc1q-reader"
+      onLoadComments={jest.fn().mockResolvedValue([comment])}
+      onEditorialPreference={onEditorialPreference}
+      onEditorialTopicPreference={onEditorialTopicPreference}
+    />
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: /show comments/i }));
+  await screen.findByText('A classified reply.');
+
+  const commentOptions = screen.getByRole('button', { name: /comment options/i });
+  fireEvent.click(commentOptions);
+  fireEvent.click(screen.getByRole('button', { name: /show less from this author/i }));
+  await waitFor(() => {
+    expect(onEditorialPreference).toHaveBeenCalledWith('bc1q-commenter', 'reduce');
+  });
+
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: /comment options/i })).toBeEnabled();
+  });
+  fireEvent.click(screen.getByRole('button', { name: /comment options/i }));
+  fireEvent.click(screen.getByRole('button', { name: /show less from this topic/i }));
+  await waitFor(() => {
+    expect(onEditorialTopicPreference).toHaveBeenCalledWith('comment-1', 'reduce');
+  });
+});

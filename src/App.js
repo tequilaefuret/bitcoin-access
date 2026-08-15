@@ -5,10 +5,12 @@ import ConnectStep from './components/steps/ConnectStep';
 import ProfileSetupStep from './components/steps/ProfileSetupStep';
 import PasswordSetupStep from './components/steps/PasswordSetupStep';
 import EnvIndicator from './components/ui/EnvIndicator';
+import { ScreenSkeleton } from './components/ui/ContentSkeletons';
 import LandingPage from './components/landing/LandingPage';
 import { useBitcoinBalance } from './hooks/useBitcoinBalance';
 import useReownWallet from './hooks/useReownWallet';
 import useWalletAuthFlow from './hooks/useWalletAuthFlow';
+import { useScrollRestoration } from './hooks/useScrollRestoration';
 import {
   getUserData,
   loginWithPassword,
@@ -46,8 +48,8 @@ const safeParseArray = (value) => {
 };
 
 const ScreenFallback = () => (
-  <div className="flex min-h-48 items-center justify-center" aria-label="Loading">
-    <div className="h-10 w-10 animate-spin rounded-full border-4 border-orange-200 border-t-orange-500" />
+  <div className="min-h-48 px-4">
+    <ScreenSkeleton />
   </div>
 );
 
@@ -61,6 +63,7 @@ const BitcoinExclusiveAccess = () => {
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [profileAddress, setProfileAddress] = useState(null);
   const [profileReturnStep, setProfileReturnStep] = useState('social');
+  const [preserveSocialForProfile, setPreserveSocialForProfile] = useState(false);
   const [settingsReturnStep, setSettingsReturnStep] = useState('social');
   const [profileSetupAddress, setProfileSetupAddress] = useState(null);
   const [passwordConfigured, setPasswordConfigured] = useState(false);
@@ -95,6 +98,7 @@ const BitcoinExclusiveAccess = () => {
     repostMessage,
     hideForYouMessage,
     updateEditorialAuthorPreference,
+    updateEditorialTopicPreference,
     loadEditorialAuthorPreferences,
     reportMessage,
     reportProfile,
@@ -120,6 +124,7 @@ const BitcoinExclusiveAccess = () => {
     && !['connect', 'profile-setup', 'password-setup'].includes(step);
   const reduceMotion = userPreferences.motion === 'reduced'
     || (userPreferences.motion === 'system' && systemPrefersReducedMotion);
+  const { captureScroll, restoreScroll, scrollToTop } = useScrollRestoration();
 
   const routeToNetwork = useCallback(() => {
     setStep('social');
@@ -436,16 +441,28 @@ const BitcoinExclusiveAccess = () => {
     if (step === 'profile-setup') return;
 
     setError('');
+    if (['social', 'authorized'].includes(step) && returnStep === 'social') {
+      captureScroll('social-feed');
+      setPreserveSocialForProfile(true);
+    } else if (step !== 'profile') {
+      setPreserveSocialForProfile(false);
+    }
     setProfileAddress(bitcoinAddress);
     setProfileReturnStep(returnStep === 'profile' ? profileReturnStep : returnStep);
     setStep('profile');
-  }, [profileReturnStep, setError, step]);
+    scrollToTop();
+  }, [captureScroll, profileReturnStep, scrollToTop, setError, step]);
 
   // ===== HANDLER : RETOUR DU PROFIL =====
   const handleProfileBack = useCallback(() => {
     setError('');
-    setStep(profileReturnStep || 'social');
-  }, [profileReturnStep, setError]);
+    const returnStep = profileReturnStep || 'social';
+    setStep(returnStep);
+    if (returnStep === 'social' && preserveSocialForProfile) {
+      restoreScroll('social-feed');
+    }
+    setPreserveSocialForProfile(false);
+  }, [preserveSocialForProfile, profileReturnStep, restoreScroll, setError]);
 
   const handleOpenSettings = useCallback(() => {
     setError('');
@@ -513,11 +530,8 @@ const BitcoinExclusiveAccess = () => {
   // ===== ÉCRAN DE CHARGEMENT =====
   if (isCheckingSession) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 flex items-center justify-center">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-orange-500 mx-auto mb-4"></div>
-          <p className="text-gray-600 font-medium">Checking your session...</p>
-        </div>
+      <div className="min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 px-4 py-12">
+        <ScreenSkeleton label="Checking your session" />
       </div>
     );
   }
@@ -647,7 +661,11 @@ const BitcoinExclusiveAccess = () => {
             />
           )}
 
-          {(step === 'social' || step === 'authorized') && (
+          {(step === 'social' || step === 'authorized' || preserveSocialForProfile) && (
+            <div
+              className={step === 'profile' ? 'hidden' : ''}
+              aria-hidden={step === 'profile' ? 'true' : undefined}
+            >
             <SocialStep
               address={address}
               onPublishMessage={handlePublishMessage}
@@ -657,6 +675,7 @@ const BitcoinExclusiveAccess = () => {
               onRepostMessage={repostMessage}
               onForYouNotInterested={hideForYouMessage}
               onEditorialPreference={handleEditorialPreference}
+              onEditorialTopicPreference={updateEditorialTopicPreference}
               onReportMessage={reportMessage}
               onLoadOpinionTopics={loadOpinionTopics}
               onSetPrivateStance={savePrivateTopicStance}
@@ -674,6 +693,7 @@ const BitcoinExclusiveAccess = () => {
               isFollowing={isFollowing}
               defaultFeed={userPreferences.defaultFeed}
             />
+            </div>
           )}
 
           {step === 'profile' && profileAddress && (
@@ -689,6 +709,7 @@ const BitcoinExclusiveAccess = () => {
               onAddPassword={handleAddPassword}
               showFullAddress={userPreferences.showFullAddress}
               onEditorialPreference={handleEditorialPreference}
+              onEditorialTopicPreference={updateEditorialTopicPreference}
               onReportMessage={reportMessage}
               onReportProfile={reportProfile}
             />

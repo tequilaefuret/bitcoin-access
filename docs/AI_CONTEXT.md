@@ -373,6 +373,12 @@ Fields:
   frontend page is defensively deduplicated
 - Classic feed tabs cache messages/cursors independently; publishing a post,
   comment, or repost patches local state instead of reloading a paid feed page
+- opening a profile from the feed keeps `SocialStep` mounted and restores the
+  captured scroll position on return, preserving all paid pages and tab state
+- `not_interested` first renders a five-second temporary hidden-post placeholder;
+  Undo restores the same list position and prevents the server feedback write
+- structural loading uses accessible content skeletons; compact spinners are
+  reserved for actions such as publishing or signing
 - billing snapshots retain internal page metadata so an idempotent replay keeps
   the original `has_more` value and next cursor
 - feed state transitions live in the pure `classicFeedState` reducer;
@@ -387,12 +393,17 @@ Fields:
 
 - `editorial_author_preferences` stores one private `reduce`, `mute`, or `block`
   choice per reader/author pair
+- `editorial_topic_preferences` stores a private topic-level `reduce` choice;
+  the browser submits only a message id and the protected RPC resolves the
+  accepted topic, including the parent topic for comments
 - `editorial_reports` stores private idempotency receipts without a textual reason;
   only aggregate `report_count` values are maintained on posts and profiles
 - `editorial_message_risk` stores an internal manipulation-risk score derived
   from short engagement bursts, new-account concentration, and repeated actions
 - `reduce` lowers an author's For-you score; `mute` and bidirectional `block`
   remove direct posts and indirect reposts from feeds
+- reduced topics apply a conservative `0.35` For-you multiplier without exposing
+  topic identifiers, similarity scores, or classification candidates
 - block prevents follow, reply, repost, and Useful interactions in both directions
 - automatic detection downranks only and must never delete or hide content
 - users can remove every author restriction under Settings → Content controls
@@ -464,6 +475,7 @@ Supported operations:
 - `place_pixels`
 - `toggle_message_useful`
 - `for_you_not_interested`
+- `set_editorial_topic_preference`
 - `get_opinion_topics`
 - `set_private_topic_stance`
 

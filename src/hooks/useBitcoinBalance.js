@@ -16,6 +16,7 @@ import {
   createMessageRepost,
   markForYouNotInterested,
   setEditorialAuthorPreference as persistEditorialAuthorPreference,
+  setEditorialTopicPreference as persistEditorialTopicPreference,
   listEditorialAuthorPreferences as fetchEditorialAuthorPreferences,
   reportEditorialMessage as persistEditorialMessageReport,
   reportEditorialProfile as persistEditorialProfileReport,
@@ -427,6 +428,11 @@ export const useBitcoinBalance = () => {
     return persistEditorialAuthorPreference(address, targetAddress, preference);
   }, [address]);
 
+  const updateEditorialTopicPreference = useCallback(async (messageId, preference = 'reduce') => {
+    if (!address) throw new Error('Bitcoin address is not set');
+    return persistEditorialTopicPreference(address, messageId, preference);
+  }, [address]);
+
   const loadEditorialAuthorPreferences = useCallback(async () => {
     if (!address) return [];
     return fetchEditorialAuthorPreferences(address);
@@ -490,6 +496,7 @@ export const useBitcoinBalance = () => {
     repostMessage,
     hideForYouMessage,
     updateEditorialAuthorPreference,
+    updateEditorialTopicPreference,
     loadEditorialAuthorPreferences,
     reportMessage,
     reportProfile,

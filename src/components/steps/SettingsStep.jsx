@@ -14,6 +14,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import { changePassword, truncateAddress } from '../../supabaseClient';
+import { ListSkeleton } from '../ui/ContentSkeletons';
 
 const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 128;
@@ -294,9 +295,7 @@ const SettingsStep = ({
                 )}
 
                 {editorialLoading ? (
-                  <div className="mt-5 flex items-center gap-2 text-sm text-slate-500">
-                    <Loader className="h-4 w-4 animate-spin" /> Loading content controls...
-                  </div>
+                  <ListSkeleton label="Loading content controls" count={2} className="mt-5" />
                 ) : editorialPreferences.length === 0 ? (
                   <p className="mt-5 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-500">
                     No author restrictions.

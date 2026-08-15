@@ -1,13 +1,15 @@
 import React from 'react';
-import { Ban, EyeOff, Flag, UserMinus } from 'lucide-react';
+import { Ban, EyeOff, Flag, Tags, UserMinus } from 'lucide-react';
 
 const PostOptionsMenu = ({
   visible,
   onNotInterested,
   onEditorialPreference,
+  onEditorialTopicPreference,
   onReportMessage,
   feedbackLoading,
   editorialAction,
+  contentType = 'post',
 }) => {
   if (!visible) return null;
 
@@ -33,7 +35,7 @@ const PostOptionsMenu = ({
             className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
             <UserMinus className="h-4 w-4" />
-            Show fewer posts from this author
+            Show less from this author
           </button>
           <button
             type="button"
@@ -55,6 +57,17 @@ const PostOptionsMenu = ({
           </button>
         </>
       )}
+      {onEditorialTopicPreference && (
+        <button
+          type="button"
+          onClick={onEditorialTopicPreference}
+          disabled={Boolean(editorialAction)}
+          className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          <Tags className="h-4 w-4" />
+          Show less from this topic
+        </button>
+      )}
       {onReportMessage && (
         <button
           type="button"
@@ -63,7 +76,7 @@ const PostOptionsMenu = ({
           className="flex w-full items-center gap-3 border-t border-slate-100 px-4 py-3 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
         >
           <Flag className="h-4 w-4" />
-          Report this post
+          Report this {contentType}
         </button>
       )}
     </div>

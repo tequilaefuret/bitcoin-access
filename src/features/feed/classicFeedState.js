@@ -138,14 +138,40 @@ export const classicFeedReducer = (feeds, action) => {
         },
       };
 
-    case 'restore-for-you':
+    case 'temporarily-hide-for-you':
       return {
         ...feeds,
         for_you: {
           ...feeds.for_you,
-          messages: mergeUniqueMessages(feeds.for_you.messages, [action.message], true),
+          messages: feeds.for_you.messages.map((message) => (
+            message.id === action.messageId
+              ? { ...message, temporarily_hidden: true }
+              : message
+          )),
         },
       };
+
+    case 'restore-for-you': {
+      const currentMessages = feeds.for_you.messages;
+      const existingIndex = currentMessages.findIndex(
+        (message) => message.id === action.message.id
+      );
+      const withoutMessage = currentMessages.filter(
+        (message) => message.id !== action.message.id
+      );
+      const requestedIndex = existingIndex >= 0 ? existingIndex : Number(action.index) || 0;
+      const insertionIndex = Math.max(0, Math.min(requestedIndex, withoutMessage.length));
+      const restoredMessages = [...withoutMessage];
+      restoredMessages.splice(insertionIndex, 0, action.message);
+
+      return {
+        ...feeds,
+        for_you: {
+          ...feeds.for_you,
+          messages: restoredMessages,
+        },
+      };
+    }
 
     default:
       return feeds;

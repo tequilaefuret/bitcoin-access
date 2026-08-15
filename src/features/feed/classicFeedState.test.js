@@ -106,3 +106,23 @@ test('prepends a local post only to an initialized Latest cache', () => {
   expect(initialized.recent.messages).toEqual([second]);
   expect(initialized.recent.loaded).toBe(true);
 });
+
+test('temporarily hides and restores a For-you post at the same position', () => {
+  let feeds = classicFeedReducer(createFeedCollection(), {
+    type: 'replace-page',
+    sortMode: 'for_you',
+    page: { messages: [first, second], hasMore: false, nextCursor: null },
+  });
+  feeds = classicFeedReducer(feeds, {
+    type: 'temporarily-hide-for-you',
+    messageId: second.id,
+  });
+  expect(feeds.for_you.messages[1].temporarily_hidden).toBe(true);
+
+  feeds = classicFeedReducer(feeds, {
+    type: 'restore-for-you',
+    message: second,
+    index: 1,
+  });
+  expect(feeds.for_you.messages).toEqual([first, second]);
+});
