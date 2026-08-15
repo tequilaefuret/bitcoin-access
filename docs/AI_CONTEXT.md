@@ -375,6 +375,12 @@ Fields:
   comment, or repost patches local state instead of reloading a paid feed page
 - billing snapshots retain internal page metadata so an idempotent replay keeps
   the original `has_more` value and next cursor
+- feed state transitions live in the pure `classicFeedState` reducer;
+  `useClassicFeed` owns requests and per-tab caches, while `ClassicFeedPanel`
+  and `OpinionFeedPanel` contain presentation only
+- the authenticated feed query lives in `user-operations/feed-service.ts`;
+  pagination and message enrichment are shared with public profiles and history
+  through `_shared` modules
 - les tables et scores internes ne sont jamais lisibles directement par le navigateur
 
 ### Editorial safety
@@ -464,6 +470,8 @@ Supported operations:
 Important:
 - `get_history` powers the spending history modal.
 - this function is the main backend surface for economic and social mutations.
+- its entrypoint handles authentication, routing and atomic billing; feed
+  selection and ranking are delegated to `user-operations/feed-service.ts`.
 
 ### `social-follow`
 
@@ -541,7 +549,7 @@ Main exported helpers:
 
 Important steps:
 - `ConnectStep.jsx`: landing page and wallet connection
-- `SocialStep.jsx`: feed, writing, interactions
+- `SocialStep.jsx`: social-screen controller, writing and interactions
 - `ProfileSetupStep.jsx`: choose display name on first login
 - `ProfileStep.jsx`: user profile page
 - `GameStep.jsx`: paid game
@@ -560,6 +568,15 @@ Role:
 - fall back to truncated Bitcoin address
 - expose one `Useful` action instead of like/dislike
 - truncate content after 150 characters with `See more`
+
+### Feed-specific frontend modules
+
+- `src/features/feed/classicFeedState.js`: pure cache and pagination transitions
+- `src/features/feed/useClassicFeed.js`: requests, concurrency and per-tab cache
+- `src/components/social/ClassicFeedPanel.jsx`: Classic presentation
+- `src/components/social/OpinionFeedPanel.jsx`: Opinion presentation
+- `src/features/social/messagePresentation.js`: shared timestamp and character rules
+- `src/hooks/usePendingActivity.js`: reference-counted global async activity
 
 ## 11. Business Rules
 

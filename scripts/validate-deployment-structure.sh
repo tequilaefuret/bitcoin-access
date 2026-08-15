@@ -63,6 +63,8 @@ if search_frontend 'console\.(log|debug|info|warn|error)'; then
 fi
 
 node scripts/validate-server-logging.mjs
+node scripts/test-feed-pagination.mjs
+node scripts/test-social-messages.mjs
 
 printf 'Deployment structure valid: %s migrations, %s Edge Functions.\n' \
   "$migration_count" "$function_count"

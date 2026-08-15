@@ -73,6 +73,32 @@ test('loads the next page from its opaque cursor and removes duplicate posts', a
   expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
 });
 
+test('ignores a late response from a feed tab that is no longer active', async () => {
+  let resolveForYou;
+  const forYouRequest = new Promise((resolve) => {
+    resolveForYou = resolve;
+  });
+  const latestMessage = {
+    ...message,
+    id: 'latest-message',
+    content: 'The current Latest result.',
+  };
+  const onLoadMessages = jest.fn()
+    .mockReturnValueOnce(forYouRequest)
+    .mockResolvedValueOnce({ messages: [latestMessage], hasMore: false, nextCursor: null });
+
+  renderSocialStep({ onLoadMessages });
+  fireEvent.click(screen.getByRole('button', { name: /latest/i }));
+
+  expect(await screen.findByText(latestMessage.content)).toBeInTheDocument();
+  resolveForYou({ messages: [message], hasMore: false, nextCursor: null });
+
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: /latest/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText(message.content)).not.toBeInTheDocument();
+  });
+});
+
 test('adds a newly published post locally without loading the feed again', async () => {
   const publishedMessage = {
     ...message,

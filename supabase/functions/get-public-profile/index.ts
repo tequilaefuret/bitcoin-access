@@ -1,5 +1,9 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
+import {
+  enrichSocialMessages,
+  PUBLIC_MESSAGE_SELECT,
+} from '../_shared/social-messages.mjs';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
@@ -10,53 +14,6 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-
-const MESSAGE_SELECT = `
-  id, bitcoin_address, content, created_at, parent_id, repost_of, repost_kind, useful_count,
-  comments:messages!parent_id(count),
-  reposts:messages!repost_of(count)
-`;
-
-async function enrichMessages(messages: any[]) {
-  const originalIds = [...new Set((messages || []).map((message: any) => message.repost_of).filter(Boolean))];
-  let originalById = new Map<string, any>();
-  if (originalIds.length > 0) {
-    const { data: originals, error: originalsError } = await supabase
-      .from('messages')
-      .select('id, bitcoin_address, content, created_at, useful_count')
-      .in('id', originalIds)
-      .is('deleted_at', null);
-    if (originalsError) throw originalsError;
-    originalById = new Map((originals || []).map((original: any) => [original.id, original]));
-  }
-
-  const addresses = [...new Set((messages || []).flatMap((message: any) => [
-    message.bitcoin_address,
-    originalById.get(message.repost_of)?.bitcoin_address,
-  ]).filter(Boolean))];
-  const { data: profiles, error } = addresses.length > 0
-    ? await supabase
-      .from('user_profiles')
-      .select('bitcoin_address, display_name')
-      .in('bitcoin_address', addresses)
-    : { data: [], error: null };
-  if (error) throw error;
-  const profileMap = new Map((profiles || []).map((profile: any) => [
-    profile.bitcoin_address,
-    profile.display_name,
-  ]));
-
-  return (messages || []).map((message: any) => ({
-    ...message,
-    display_name: profileMap.get(message.bitcoin_address) || null,
-    reposted_message: originalById.has(message.repost_of) ? {
-      ...originalById.get(message.repost_of),
-      display_name: profileMap.get(originalById.get(message.repost_of).bitcoin_address) || null,
-    } : null,
-    comments_count: message.comments?.[0]?.count || 0,
-    reposts_count: message.reposts?.[0]?.count || 0,
-  }));
-}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -78,7 +35,7 @@ serve(async (req) => {
       if (action === 'messages') {
         const { data, error } = await supabase
           .from('messages')
-          .select(MESSAGE_SELECT)
+          .select(PUBLIC_MESSAGE_SELECT)
           .eq('bitcoin_address', address)
           .is('deleted_at', null)
           .order('created_at', { ascending: false })
@@ -97,7 +54,7 @@ serve(async (req) => {
         if (ids.length > 0) {
           const { data, error } = await supabase
             .from('messages')
-            .select(MESSAGE_SELECT)
+            .select(PUBLIC_MESSAGE_SELECT)
             .in('id', ids)
             .is('deleted_at', null);
           if (error) throw error;
@@ -107,7 +64,7 @@ serve(async (req) => {
       }
 
       return new Response(JSON.stringify({
-        messages: await enrichMessages(messages),
+        messages: await enrichSocialMessages(supabase, messages),
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       });

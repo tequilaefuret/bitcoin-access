@@ -1,43 +1,18 @@
 import React, { useState } from 'react';
 import {
-  Ban,
   Ellipsis,
-  EyeOff,
-  Flag,
   Lightbulb,
   MessageCircle,
-  Quote,
   Repeat2,
-  Trash2,
-  UserMinus,
-  X
+  Trash2
 } from 'lucide-react';
-
-const TEXT_PREVIEW_LENGTH = 150;
-
-const ExpandableText = ({ text }) => {
-  const [expanded, setExpanded] = useState(false);
-  const safeText = text || '';
-  const isLong = safeText.length > TEXT_PREVIEW_LENGTH;
-  const visibleText = expanded || !isLong
-    ? safeText
-    : `${safeText.slice(0, TEXT_PREVIEW_LENGTH).trim()}...`;
-
-  return (
-    <div className="mb-3 text-gray-700">
-      <p className="whitespace-pre-wrap">{visibleText}</p>
-      {isLong && (
-        <button
-          type="button"
-          onClick={() => setExpanded((current) => !current)}
-          className="mt-1 text-xs font-semibold text-orange-700 hover:text-orange-900"
-        >
-          {expanded ? 'See less' : 'See more'}
-        </button>
-      )}
-    </div>
-  );
-};
+import ExpandableText from './ExpandableText';
+import PostOptionsMenu from './PostOptionsMenu';
+import RepostComposer from './RepostComposer';
+import {
+  countBillableCharacters,
+  formatMessageTimestamp,
+} from '../../features/social/messagePresentation';
 
 const MessageCard = ({
   message,
@@ -84,22 +59,6 @@ const MessageCard = ({
 
   const authorAddress = message.bitcoin_address || null;
   const isOwnMessage = authorAddress === currentAddress;
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    const diffMs = Date.now() - date.getTime();
-    const diffMins = Math.max(0, Math.floor(diffMs / 60000));
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffMins < 1440) return `${Math.floor(diffMins / 60)}h ago`;
-
-    return date.toLocaleDateString('en-US', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric'
-    });
-  };
 
   const displayAddress = message.display_name ? `@${message.display_name}` : '@anonymous';
 
@@ -246,8 +205,7 @@ const MessageCard = ({
 
   const originalMessage = message.reposted_message || null;
   const repostedText = originalMessage?.content || message.content || '';
-  const repostedCharacterCount = repostedText.replace(/\n/g, '').length;
-  const quotedCharacterCount = quoteText.trim().replace(/\n/g, '').length;
+  const repostedCharacterCount = countBillableCharacters(repostedText);
 
   return (
     <article className="border-b border-gray-100 pb-4">
@@ -273,7 +231,7 @@ const MessageCard = ({
 
         <div className="relative flex items-center gap-3">
           <span className="text-xs text-gray-500">
-            {formatTimestamp(message.created_at || message.timestamp)}
+            {formatMessageTimestamp(message.created_at || message.timestamp)}
           </span>
           {!isOwnMessage && (onNotInterested || onEditorialPreference || onReportMessage) && (
             <button
@@ -299,62 +257,15 @@ const MessageCard = ({
             </button>
           )}
 
-          {showEditorialMenu && !isOwnMessage && (
-            <div className="absolute right-0 top-7 z-20 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1 text-left shadow-xl">
-              {onNotInterested && (
-                <button
-                  type="button"
-                  onClick={markNotInterested}
-                  disabled={feedbackLoading}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                >
-                  <EyeOff className="h-4 w-4" />
-                  Not interested in this post
-                </button>
-              )}
-              {onEditorialPreference && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => applyEditorialPreference('reduce')}
-                    disabled={Boolean(editorialAction)}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    <UserMinus className="h-4 w-4" />
-                    Show fewer posts from this author
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyEditorialPreference('mute')}
-                    disabled={Boolean(editorialAction)}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    <EyeOff className="h-4 w-4" />
-                    Hide this author
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => applyEditorialPreference('block')}
-                    disabled={Boolean(editorialAction)}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
-                  >
-                    <Ban className="h-4 w-4" />
-                    Block this account
-                  </button>
-                </>
-              )}
-              {onReportMessage && (
-                <button
-                  type="button"
-                  onClick={reportMessage}
-                  disabled={Boolean(editorialAction)}
-                  className="flex w-full items-center gap-3 border-t border-slate-100 px-4 py-3 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
-                >
-                  <Flag className="h-4 w-4" />
-                  Report this post
-                </button>
-              )}
-            </div>
+          {!isOwnMessage && (
+            <PostOptionsMenu
+              visible={showEditorialMenu}
+              onNotInterested={onNotInterested ? markNotInterested : null}
+              onEditorialPreference={onEditorialPreference ? applyEditorialPreference : null}
+              onReportMessage={onReportMessage ? reportMessage : null}
+              feedbackLoading={feedbackLoading}
+              editorialAction={editorialAction}
+            />
           )}
         </div>
       </div>
@@ -383,7 +294,7 @@ const MessageCard = ({
               {originalMessage.content}
             </p>
             <p className="mt-2 text-[11px] text-slate-400">
-              {formatTimestamp(originalMessage.created_at)}
+              {formatMessageTimestamp(originalMessage.created_at)}
             </p>
           </div>
         ) : (
@@ -449,67 +360,22 @@ const MessageCard = ({
       {feedbackError && <p className="mt-2 text-xs text-red-600">{feedbackError}</p>}
       {editorialError && <p className="mt-2 text-xs text-red-600">{editorialError}</p>}
 
-      {showActions && showRepostOptions && (
-        <div className="mt-3 flex w-fit overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
-          <button
-            type="button"
-            onClick={() => submitRepost('')}
-            disabled={repostLoading}
-            aria-label={localUserReposted ? 'Undo repost' : 'Repost'}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          >
-            <Repeat2 className="h-4 w-4" />
-            {localUserReposted ? 'Undo repost' : 'Repost'}
-            {!localUserReposted && (
-              <span aria-hidden="true" className="text-xs font-normal text-slate-400">
-                {repostedCharacterCount} sats
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setShowQuoteComposer(true);
-              setShowRepostOptions(false);
-            }}
-            className="inline-flex items-center gap-2 border-l border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <Quote className="h-4 w-4" />
-            Quote
-          </button>
-        </div>
-      )}
-
-      {showActions && showQuoteComposer && (
-        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Add a comment</span>
-            <button type="button" onClick={() => setShowQuoteComposer(false)} className="text-slate-400 hover:text-slate-700">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <textarea
-            value={quoteText}
-            onChange={(event) => setQuoteText(event.target.value)}
-            maxLength={1000}
-            rows={3}
-            placeholder="Why are you sharing this?"
-            className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-orange-400"
-          />
-          <div className="mt-2 flex items-center justify-between gap-3">
-            <span className="text-xs text-slate-400">
-              {quoteText.length} / 1000 · {repostedCharacterCount + quotedCharacterCount} sats
-            </span>
-            <button
-              type="button"
-              onClick={() => submitRepost(quoteText.trim())}
-              disabled={!quoteText.trim() || repostLoading}
-              className="rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
-            >
-              Publish quote
-            </button>
-          </div>
-        </div>
+      {showActions && (
+        <RepostComposer
+          showOptions={showRepostOptions}
+          showQuoteComposer={showQuoteComposer}
+          userHasReposted={localUserReposted}
+          repostedCharacterCount={repostedCharacterCount}
+          quoteText={quoteText}
+          onQuoteTextChange={setQuoteText}
+          repostLoading={repostLoading}
+          onSubmit={submitRepost}
+          onOpenQuote={() => {
+            setShowQuoteComposer(true);
+            setShowRepostOptions(false);
+          }}
+          onCloseQuote={() => setShowQuoteComposer(false)}
+        />
       )}
 
       {showComments && (

@@ -12,6 +12,22 @@ import {
   verifyAccessToken,
 } from '../_shared/auth.ts';
 import { safeErrorForLog } from '../_shared/logging.mjs';
+import { OperationError } from '../_shared/operation-error.mjs';
+import {
+  attachFeedPageContext,
+  extractFeedPageSnapshot,
+  FEED_BATCH_SIZE,
+} from '../_shared/feed-pagination.mjs';
+import {
+  enrichSocialMessages,
+  loadDisplayNames as loadSharedDisplayNames,
+  SOCIAL_MESSAGE_SELECT,
+} from '../_shared/social-messages.mjs';
+import {
+  getMessages,
+  recordForYouFeedback,
+  recordForYouImpressions,
+} from './feed-service.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -21,53 +37,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 // === CONSTANTES ===
 const MESSAGE_COST_PER_CHAR = 0.00000001; // 1 satoshi par caractère
 const GAME_COST = 0.000001;
-const FEED_BATCH_SIZE = 20;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-type ChronologicalFeedCursor = {
-  createdAt: string;
-  messageId: string;
-};
-
-function encodeFeedCursor(cursor: ChronologicalFeedCursor): string {
-  return btoa(JSON.stringify(cursor))
-    .replaceAll('+', '-')
-    .replaceAll('/', '_')
-    .replace(/=+$/u, '');
-}
-
-function decodeFeedCursor(value?: string): ChronologicalFeedCursor | null {
-  if (!value) return null;
-  if (typeof value !== 'string' || value.length > 256) {
-    throw new OperationError('Curseur de pagination invalide');
-  }
-
-  try {
-    const normalized = value.replaceAll('-', '+').replaceAll('_', '/');
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
-    const parsed = JSON.parse(atob(padded));
-    const createdAt = typeof parsed?.createdAt === 'string' ? parsed.createdAt : '';
-    const messageId = typeof parsed?.messageId === 'string' ? parsed.messageId : '';
-
-    if (!UUID_PATTERN.test(messageId) || !Number.isFinite(Date.parse(createdAt))) {
-      throw new Error('Invalid feed cursor payload');
-    }
-
-    return { createdAt: new Date(createdAt).toISOString(), messageId };
-  } catch {
-    throw new OperationError('Curseur de pagination invalide');
-  }
-}
-
-class OperationError extends Error {
-  status: number;
-
-  constructor(message: string, status = 400) {
-    super(message);
-    this.name = 'OperationError';
-    this.status = status;
-  }
-}
 
 // === VÉRIFICATION JWT ===
 async function verifyJWT(token: string): Promise<{ valid: boolean; address?: string }> {
@@ -101,78 +71,7 @@ async function fetchBitcoinBalance(address: string): Promise<number> {
 // PROFILS UTILISATEUR
 // ========================================
 async function loadDisplayNames(addresses: string[]) {
-  const uniqueAddresses = [...new Set(addresses.filter(Boolean))];
-
-  if (uniqueAddresses.length === 0) {
-    return new Map<string, string>();
-  }
-
-  const { data, error } = await supabase
-    .from('user_profiles')
-    .select('bitcoin_address, display_name')
-    .in('bitcoin_address', uniqueAddresses);
-
-  if (error) throw error;
-
-  return new Map<string, string>(
-    (data || []).map((row: any) => [row.bitcoin_address, row.display_name])
-  );
-}
-
-type EditorialPolicy = {
-  hiddenAuthors: Set<string>;
-  reducedAuthors: Set<string>;
-  blockedAuthors: Set<string>;
-};
-
-async function loadEditorialPolicy(readerAddress: string): Promise<EditorialPolicy> {
-  const [outboundResult, inboundBlocksResult] = await Promise.all([
-    supabase
-      .from('editorial_author_preferences')
-      .select('target_address, preference')
-      .eq('reader_address', readerAddress),
-    supabase
-      .from('editorial_author_preferences')
-      .select('reader_address')
-      .eq('target_address', readerAddress)
-      .eq('preference', 'block'),
-  ]);
-
-  if (outboundResult.error) throw outboundResult.error;
-  if (inboundBlocksResult.error) throw inboundBlocksResult.error;
-
-  const hiddenAuthors = new Set<string>();
-  const reducedAuthors = new Set<string>();
-  const blockedAuthors = new Set<string>();
-
-  for (const row of outboundResult.data || []) {
-    if (row.preference === 'reduce') reducedAuthors.add(row.target_address);
-    if (row.preference === 'mute' || row.preference === 'block') {
-      hiddenAuthors.add(row.target_address);
-    }
-    if (row.preference === 'block') blockedAuthors.add(row.target_address);
-  }
-
-  for (const row of inboundBlocksResult.data || []) {
-    hiddenAuthors.add(row.reader_address);
-    blockedAuthors.add(row.reader_address);
-  }
-
-  return { hiddenAuthors, reducedAuthors, blockedAuthors };
-}
-
-async function loadEditorialRiskScores(messageIds: string[]) {
-  if (messageIds.length === 0) return new Map<string, number>();
-
-  const { data, error } = await supabase
-    .from('editorial_message_risk')
-    .select('message_id, risk_score')
-    .in('message_id', messageIds);
-
-  if (error) throw error;
-  return new Map<string, number>(
-    (data || []).map((row: any) => [row.message_id, Number(row.risk_score) || 0])
-  );
+  return loadSharedDisplayNames(supabase, addresses);
 }
 
 async function assertEditorialInteractionAllowed(actorAddress: string, messageId: string) {
@@ -513,252 +412,6 @@ async function repostMessage(address: string, messageId: string, quoteContent?: 
   };
 }
 
-// ========================================
-// OPÉRATION 3 : GET_MESSAGES
-// ========================================
-async function getMessages(
-  limit: number = 20,
-  offset: number = 0,
-  userAddress?: string,
-  parentId?: string,
-  sortMode: string = 'recent',
-  cursor?: string,
-) {
-  console.log('📨 [GET_MESSAGES] Params reçus:', {
-    limit,
-    offset,
-    userAddress: userAddress?.slice(0, 8),
-    parentId,
-    sortMode,
-    hasCursor: Boolean(cursor),
-  });
-
-  try {
-    const boundedLimit = Math.max(1, Math.min(Number(limit) || FEED_BATCH_SIZE, FEED_BATCH_SIZE));
-    const boundedOffset = Math.max(0, Number(offset) || 0);
-    const safeSortMode = !parentId && ['followed', 'for_you'].includes(sortMode)
-      ? sortMode
-      : 'recent';
-    const chronologicalCursor = !parentId && safeSortMode !== 'for_you'
-      ? decodeFeedCursor(cursor)
-      : null;
-    let followedAddresses: string[] = [];
-    let rankedMessageIds: string[] = [];
-    let rankScoreByMessageId = new Map<string, number>();
-    let forYouAlgorithmVersion: string | null = null;
-    const editorialPolicy = userAddress
-      ? await loadEditorialPolicy(userAddress)
-      : { hiddenAuthors: new Set<string>(), reducedAuthors: new Set<string>(), blockedAuthors: new Set<string>() };
-
-    if (safeSortMode === 'followed' && userAddress) {
-      const { data: followed, error: followedError } = await supabase
-        .from('follows')
-        .select('following_address')
-        .eq('follower_address', userAddress);
-      if (followedError) throw followedError;
-      followedAddresses = (followed || [])
-        .map((row: any) => row.following_address)
-        .filter((followedAddress: string) => !editorialPolicy.hiddenAuthors.has(followedAddress));
-      if (followedAddresses.length === 0) {
-        return {
-          success: true,
-          messages: [],
-          count: 0,
-          algorithm_version: null,
-          has_more: false,
-          next_cursor: null,
-        };
-      }
-    }
-
-    if (safeSortMode === 'for_you' && userAddress) {
-      const { data: ranked, error: rankingError } = await supabase.rpc('rank_for_you_feed_versioned', {
-        p_bitcoin_address: userAddress,
-        p_limit: boundedLimit,
-      });
-      if (rankingError) throw rankingError;
-      forYouAlgorithmVersion = typeof ranked?.[0]?.algorithm_version === 'string'
-        ? ranked[0].algorithm_version
-        : null;
-      rankedMessageIds = (ranked || []).map((row: any) => row.message_id).filter(Boolean);
-      rankScoreByMessageId = new Map(
-        (ranked || []).map((row: any) => [row.message_id, Number(row.rank_score) || 0])
-      );
-      if (rankedMessageIds.length === 0) {
-        return {
-          success: true,
-          messages: [],
-          count: 0,
-          algorithm_version: forYouAlgorithmVersion,
-          has_more: false,
-          next_cursor: null,
-        };
-      }
-    }
-
-    let query = supabase
-      .from('messages')
-      .select(`
-        *,
-        comments:messages!parent_id(count),
-        reposts:messages!repost_of(count)
-      `)
-      .is('deleted_at', null);
-
-    query = parentId
-      ? query.eq('parent_id', parentId)
-      : query.is('parent_id', null);
-
-    if (safeSortMode === 'followed') query = query.in('bitcoin_address', followedAddresses);
-    if (safeSortMode === 'for_you') query = query.in('id', rankedMessageIds);
-    if (editorialPolicy.hiddenAuthors.size > 0) {
-      const hiddenList = [...editorialPolicy.hiddenAuthors].map((value) => `"${value}"`).join(',');
-      query = query.not('bitcoin_address', 'in', `(${hiddenList})`);
-    }
-
-    let messagesResult;
-    if (safeSortMode === 'for_you') {
-      messagesResult = await query;
-    } else if (!parentId) {
-      if (chronologicalCursor) {
-        query = query.or(
-          `created_at.lt.${chronologicalCursor.createdAt},and(created_at.eq.${chronologicalCursor.createdAt},id.lt.${chronologicalCursor.messageId})`
-        );
-      }
-      messagesResult = await query
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        // Fetch one extra row to know whether a next keyset page exists.
-        .range(
-          chronologicalCursor ? 0 : boundedOffset,
-          (chronologicalCursor ? 0 : boundedOffset) + boundedLimit
-        );
-    } else {
-      messagesResult = await query
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: false })
-        .range(boundedOffset, boundedOffset + boundedLimit - 1);
-    }
-
-    const { data: queriedMessages, error } = messagesResult;
-
-    if (error) throw error;
-
-    const chronologicalHasMore = !parentId
-      && safeSortMode !== 'for_you'
-      && (queriedMessages || []).length > boundedLimit;
-    const messages = !parentId && safeSortMode !== 'for_you'
-      ? (queriedMessages || []).slice(0, boundedLimit)
-      : queriedMessages || [];
-    const chronologicalBoundary = chronologicalHasMore && messages.length > 0
-      ? messages[messages.length - 1]
-      : null;
-    const nextCursor = safeSortMode === 'for_you'
-      ? ((rankedMessageIds.length === boundedLimit) ? 'for-you-served-history' : null)
-      : chronologicalBoundary
-        ? encodeFeedCursor({
-            createdAt: chronologicalBoundary.created_at,
-            messageId: chronologicalBoundary.id,
-          })
-        : null;
-    const pageHasMore = safeSortMode === 'for_you'
-      ? rankedMessageIds.length === boundedLimit
-      : chronologicalHasMore;
-
-    const riskScoreByMessageId = safeSortMode === 'for_you'
-      ? await loadEditorialRiskScores((messages || []).map((message: any) => message.id))
-      : new Map<string, number>();
-    const sortedMessageList = safeSortMode === 'for_you'
-      ? [...(messages || [])].sort((left: any, right: any) => {
-          const adjustedScore = (message: any) => {
-            const authorMultiplier = editorialPolicy.reducedAuthors.has(message.bitcoin_address) ? 0.45 : 1;
-            const riskMultiplier = 1 - Math.min(0.9, riskScoreByMessageId.get(message.id) || 0) * 0.60;
-            return (rankScoreByMessageId.get(message.id) || 0) * authorMultiplier * riskMultiplier;
-          };
-          return adjustedScore(right) - adjustedScore(left);
-        })
-      : messages || [];
-    const originalIds = [...new Set(sortedMessageList.map((message: any) => message.repost_of).filter(Boolean))];
-    let originalById = new Map<string, any>();
-    if (originalIds.length > 0) {
-      const { data: originals, error: originalsError } = await supabase
-        .from('messages')
-        .select('id, bitcoin_address, content, created_at, useful_count')
-        .in('id', originalIds)
-        .is('deleted_at', null);
-      if (originalsError) throw originalsError;
-      originalById = new Map((originals || []).map((original: any) => [original.id, original]));
-    }
-    // A hidden or blocked author must not reappear indirectly through somebody
-    // else's repost.
-    const messageList = sortedMessageList.filter((message: any) => {
-      const originalAuthor = originalById.get(message.repost_of)?.bitcoin_address;
-      return !originalAuthor || !editorialPolicy.hiddenAuthors.has(originalAuthor);
-    });
-    const messageIds = messageList.map((message: any) => message.id);
-    const repostTargetIds = messageList.map((message: any) => message.repost_of || message.id);
-    const profileMap = await loadDisplayNames(messageList.flatMap((message: any) => [
-      message.bitcoin_address,
-      originalById.get(message.repost_of)?.bitcoin_address,
-    ]));
-
-    let usefulMessageIds = new Set<string>();
-    let repostedTargetIds = new Set<string>();
-    if (userAddress && messageIds.length > 0) {
-      const [usefulVotesResult, repostsResult] = await Promise.all([
-        supabase
-          .from('message_useful_votes')
-          .select('message_id')
-          .eq('bitcoin_address', userAddress)
-          .in('message_id', messageIds),
-        supabase
-          .from('messages')
-          .select('repost_of')
-          .eq('bitcoin_address', userAddress)
-          .eq('repost_kind', 'simple')
-          .is('deleted_at', null)
-          .in('repost_of', repostTargetIds),
-      ]);
-
-      if (usefulVotesResult.error) throw usefulVotesResult.error;
-      if (repostsResult.error) throw repostsResult.error;
-      usefulMessageIds = new Set((usefulVotesResult.data || []).map((vote: any) => vote.message_id));
-      repostedTargetIds = new Set((repostsResult.data || []).map((repost: any) => repost.repost_of));
-    }
-
-    const formatted = messageList.map((message: any) => ({
-      ...message,
-      display_name: profileMap.get(message.bitcoin_address) || null,
-      reposted_message: originalById.has(message.repost_of) ? {
-        ...originalById.get(message.repost_of),
-        display_name: profileMap.get(originalById.get(message.repost_of).bitcoin_address) || null,
-      } : null,
-      useful_count: Number(message.useful_count) || 0,
-      comments_count: message.comments?.[0]?.count || 0,
-      reposts_count: message.reposts?.[0]?.count || 0,
-      user_has_marked_useful: usefulMessageIds.has(message.id),
-      user_has_reposted: repostedTargetIds.has(message.repost_of || message.id),
-      ...(safeSortMode === 'for_you' && forYouAlgorithmVersion
-        ? { recommendation_algorithm_version: forYouAlgorithmVersion }
-        : {}),
-    }));
-
-    console.log(`✅ [GET_MESSAGES] ${formatted.length} ${parentId ? 'commentaires' : 'messages'}`);
-
-    return {
-      success: true,
-      messages: formatted,
-      count: formatted.length,
-      algorithm_version: forYouAlgorithmVersion,
-      has_more: pageHasMore,
-      next_cursor: nextCursor,
-    };
-  } catch (error: any) {
-    console.error('❌ [GET_MESSAGES] Erreur:', safeErrorForLog(error));
-    throw error;
-  }
-}
-
 async function toggleMessageUseful(address: string, messageId: string) {
   await assertEditorialInteractionAllowed(address, messageId);
 
@@ -780,42 +433,6 @@ async function toggleMessageUseful(address: string, messageId: string) {
     shells_spent_total: Number(result.shells_spent_total) || 0,
     cost: Number(result.cost) || 0
   };
-}
-
-async function recordForYouFeedback(address: string, messageId: string) {
-  const { error } = await supabase.rpc('record_for_you_feedback', {
-    p_bitcoin_address: address,
-    p_message_id: messageId,
-    p_feedback_kind: 'not_interested'
-  });
-
-  if (error) {
-    if (error.message?.includes('Publication introuvable')) {
-      throw new OperationError('Publication introuvable', 404);
-    }
-    throw error;
-  }
-
-  return { success: true, message_id: messageId, feedback: 'not_interested' };
-}
-
-async function recordForYouImpressions(
-  address: string,
-  requestId: string,
-  messageIds: string[],
-  algorithmVersion: string
-) {
-  if (messageIds.length === 0) return;
-
-  const { error } = await supabase.rpc('record_for_you_impressions', {
-    p_bitcoin_address: address,
-    p_request_id: requestId,
-    p_message_ids: messageIds,
-    p_algorithm_version: algorithmVersion,
-  });
-
-  // Impression analytics must never hide content after the paid read succeeds.
-  if (error) console.error('❌ [FOR_YOU_IMPRESSIONS] Comptage impossible:', safeErrorForLog(error));
 }
 
 function shuffleItems<T>(items: T[]) {
@@ -1147,44 +764,14 @@ async function getUserMessages(address: string, limit: number = 20, offset: numb
   try {
     const { data: messages, error } = await supabase
       .from('messages')
-      .select(`
-        *,
-        comments:messages!parent_id(count),
-        reposts:messages!repost_of(count)
-      `)
+      .select(SOCIAL_MESSAGE_SELECT)
       .eq('bitcoin_address', address)
+      .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (error) throw error;
-
-    const originalIds = [...new Set((messages || []).map((msg: any) => msg.repost_of).filter(Boolean))];
-    let originalById = new Map<string, any>();
-    if (originalIds.length > 0) {
-      const { data: originals, error: originalsError } = await supabase
-        .from('messages')
-        .select('id, bitcoin_address, content, created_at, useful_count')
-        .in('id', originalIds)
-        .is('deleted_at', null);
-      if (originalsError) throw originalsError;
-      originalById = new Map((originals || []).map((original: any) => [original.id, original]));
-    }
-
-    const profileMap = await loadDisplayNames((messages || []).flatMap((msg: any) => [
-      msg.bitcoin_address,
-      originalById.get(msg.repost_of)?.bitcoin_address,
-    ]));
-
-    const enrichedMessages = (messages || []).map((msg: any) => ({
-      ...msg,
-      display_name: profileMap.get(msg.bitcoin_address) || null,
-      reposted_message: originalById.has(msg.repost_of) ? {
-        ...originalById.get(msg.repost_of),
-        display_name: profileMap.get(originalById.get(msg.repost_of).bitcoin_address) || null,
-      } : null,
-      comments_count: msg.comments?.[0]?.count || 0,
-      reposts_count: msg.reposts?.[0]?.count || 0
-    }));
+    const enrichedMessages = await enrichSocialMessages(supabase, messages || []);
 
     console.log(`✅ [GET_USER_MESSAGES] ${messages?.length || 0} messages récupérés`);
 
@@ -1763,6 +1350,7 @@ serve(async (req) => {
         
         // ÉTAPE 1 : Charger les messages d'abord pour connaître le nombre exact
         const messagesResult = await getMessages(
+          supabase,
           limit || 20,
           offset || 0,
           address,
@@ -1793,17 +1381,10 @@ serve(async (req) => {
                 : 'recent',
               ...(typeof cursor === 'string' ? { cursor } : {}),
             },
-            p_messages_snapshot: messagesResult.messages.map((message: any, index: number) => (
-              index === 0
-                ? {
-                    ...message,
-                    __danaus_feed_page: {
-                      has_more: Boolean(messagesResult.has_more),
-                      next_cursor: messagesResult.next_cursor || null,
-                    },
-                  }
-                : message
-            )),
+            p_messages_snapshot: attachFeedPageContext(messagesResult.messages, {
+              has_more: Boolean(messagesResult.has_more),
+              next_cursor: messagesResult.next_cursor || null,
+            }),
           },
         );
         if (chargeError) {
@@ -1824,20 +1405,16 @@ serve(async (req) => {
         const charged = chargedRows?.[0];
         if (!charged) throw new Error('Le lot de messages n’a pas pu être débité');
         const totalCost = Number(charged.cost) || 0;
-        const paidMessagesWithContext = Array.isArray(charged.messages_snapshot)
-          ? charged.messages_snapshot
-          : messagesResult.messages;
-        const paidPageContext = paidMessagesWithContext.find(
-          (message: any) => message?.__danaus_feed_page
-        )?.__danaus_feed_page || {
-          has_more: Boolean(messagesResult.has_more),
-          next_cursor: messagesResult.next_cursor || null,
-        };
-        const paidMessages = paidMessagesWithContext.map((message: any) => {
-          const cleanMessage = { ...message };
-          delete cleanMessage.__danaus_feed_page;
-          return cleanMessage;
-        });
+        const paidSnapshot = extractFeedPageSnapshot(
+          charged.messages_snapshot,
+          messagesResult.messages,
+          {
+            has_more: Boolean(messagesResult.has_more),
+            next_cursor: messagesResult.next_cursor || null,
+          },
+        );
+        const paidPageContext = paidSnapshot.context;
+        const paidMessages = paidSnapshot.messages;
 
         await recordMessageExposures(
           paidMessages.map((message: any) => message.id)
@@ -1850,6 +1427,7 @@ serve(async (req) => {
 
           if (typeof paidAlgorithmVersion === 'string') {
             await recordForYouImpressions(
+              supabase,
               address,
               requestId,
               paidMessages.map((message: any) => message.id),
@@ -1884,7 +1462,7 @@ serve(async (req) => {
 
       case 'for_you_not_interested':
         if (!messageId) throw new OperationError('Paramètre "messageId" manquant');
-        result = await recordForYouFeedback(address, messageId);
+        result = await recordForYouFeedback(supabase, address, messageId);
         break;
 
       case 'set_editorial_author_preference':

@@ -19,6 +19,12 @@ L'écran de connexion reste dans le bundle initial.
 wallet. `useBitcoinBalance` maintient l'état économique affiché et délègue toutes
 les opérations réseau au client Supabase.
 
+Le fil social suit une architecture dédiée et testable : `useClassicFeed`
+possède les caches et les requêtes, `SocialStep` coordonne les actions, puis
+`ClassicFeedPanel` et `OpinionFeedPanel` rendent les deux expériences. Les
+détails, invariants et points d'extension sont décrits dans
+[`FEED_ARCHITECTURE.md`](./FEED_ARCHITECTURE.md).
+
 ## Passerelle API
 
 Les appels privés partagent deux fonctions internes :
@@ -30,6 +36,11 @@ Les appels privés partagent deux fonctions internes :
 Publication et lecture ajoutent en plus leur UUID d'idempotence. La suppression
 de publication passe également par cette passerelle et n'est plus codée dans le
 composant social.
+
+Côté Edge Functions, `user-operations/index.ts` reste le routeur authentifié et
+la frontière de facturation. La lecture des fils vit dans `feed-service.ts` ; la
+pagination, les erreurs contrôlées et l'enrichissement des publications sont
+mutualisés sous `supabase/functions/_shared`.
 
 ## Code retiré
 

@@ -1,5 +1,6 @@
-// src/hooks/useBitcoinBalance.js - VERSION AVEC DEBUG BALANCE
+// Application facade for authenticated balance and paid product operations.
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { usePendingActivity } from './usePendingActivity';
 import {
   verifyAndRegister,
   syncUserBalance,
@@ -26,9 +27,9 @@ export const useBitcoinBalance = () => {
   const [address, setAddress] = useState('');
   const [btcBalance, setBtcBalance] = useState(0);
   const [shellsAvailable, setShellsAvailable] = useState(0);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const authenticatedAddressRef = useRef('');
+  const { loading, beginActivity, endActivity } = usePendingActivity();
 
   const applyBalance = useCallback((balance) => {
     if (!balance) return;
@@ -54,7 +55,7 @@ export const useBitcoinBalance = () => {
       return;
     }
 
-    setLoading(true);
+    beginActivity();
     setError('');
 
     try {
@@ -87,9 +88,9 @@ export const useBitcoinBalance = () => {
       setError(err.message || 'Verification failed');
       throw err;
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, []);
+  }, [beginActivity, endActivity]);
 
   // Reconcile the cached ledger in the background. Paid actions never wait for
   // this external call; a failure is retried later and does not block the UI.
@@ -127,10 +128,10 @@ export const useBitcoinBalance = () => {
    * 🎮 Démarrer une partie (coût : 0.000001 shells)
    */
   const startGame = useCallback(async () => {
-    setError(''); // ← AJOUT : Réinitialiser l'erreur
+    setError('');
 
     try {
-      setLoading(true); // ← AJOUT : Activer le loading
+      beginActivity();
       const result = await deductGameCost(address);
 
       if (!result.success) {
@@ -139,14 +140,13 @@ export const useBitcoinBalance = () => {
 
       if (result.user) {
         setShellsAvailable(result.user.shells_balance);
-        setBtcBalance(result.user.btc_balance); // ← AJOUT : Mise à jour BTC aussi
+        setBtcBalance(result.user.btc_balance);
 
       }
 
       return true;
 
     } catch (err) {
-      // ← AJOUT : Gestion d'erreur améliorée
       if (err.message.includes('insuffisant') || err.message.includes('Insufficient')) {
         setError(
           `Insufficient shells balance\n\n` +
@@ -160,9 +160,9 @@ export const useBitcoinBalance = () => {
 
       return false;
     } finally {
-      setLoading(false); // ← AJOUT : Désactiver le loading
+      endActivity();
     }
-  }, [address, shellsAvailable]); // ← AJOUT : dépendance shellsAvailable
+  }, [address, beginActivity, endActivity, shellsAvailable]);
 
   /**
    * 📝 Publier un message
@@ -171,7 +171,7 @@ export const useBitcoinBalance = () => {
     setError('');
 
     try {
-      setLoading(true);
+      beginActivity();
 
       const result = await publishMessage(address, content, parentId);
 
@@ -205,9 +205,9 @@ export const useBitcoinBalance = () => {
       return false;
 
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, [address, shellsAvailable]);
+  }, [address, beginActivity, endActivity, shellsAvailable]);
 
   /**
    * 📨 Charger les messages (tous) avec pagination
@@ -220,7 +220,7 @@ export const useBitcoinBalance = () => {
     cursor = null
   ) => {
     try {
-      setLoading(true);
+      beginActivity();
 
       // Passer l'adresse pour vérifier Useful et décompter la lecture.
       const result = await getMessages(limit, offset, address, null, sortMode, cursor);
@@ -242,16 +242,16 @@ export const useBitcoinBalance = () => {
 
       return { messages: [], hasMore: false, nextCursor: null };
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, [address]);
+  }, [address, beginActivity, endActivity]);
 
   /**
    * 💬 Charger les commentaires d'un message
    */
   const loadComments = useCallback(async (parentId, limit = 20, offset = 0) => {
     try {
-      setLoading(true);
+      beginActivity();
 
       const result = await getMessages(limit, offset, address, parentId);
 
@@ -266,9 +266,9 @@ export const useBitcoinBalance = () => {
       setError('Could not load comments: ' + err.message);
       return [];
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, [address]);
+  }, [address, beginActivity, endActivity]);
 
   /**
    * 📜 Charger l'historique des messages de l'utilisateur
@@ -277,7 +277,7 @@ export const useBitcoinBalance = () => {
     if (!address) return [];
 
     try {
-      setLoading(true);
+      beginActivity();
 
       const messages = await getUserMessages(address, limit, offset);
 
@@ -286,9 +286,9 @@ export const useBitcoinBalance = () => {
       setError('Could not load history: ' + err.message);
       return [];
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, [address, setError]);
+  }, [address, beginActivity, endActivity]);
 
   /**
    * 🔄 Synchroniser balance (authentifié uniquement)
@@ -297,7 +297,7 @@ export const useBitcoinBalance = () => {
     if (!address) return;
 
     try {
-      setLoading(true);
+      beginActivity();
       setError('');
 
 
@@ -331,25 +331,25 @@ export const useBitcoinBalance = () => {
     } catch (err) {
       setError('Could not sync balance: ' + err.message);
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, [address]);
+  }, [address, beginActivity, endActivity]);
 
   // ============================================
   // CANVAS - Charger tous les pixels
   // ============================================
   const loadCanvasPixels = useCallback(async () => {
     try {
-      setLoading(true);
+      beginActivity();
       const pixels = await getCanvasPixels();
       return pixels;
     } catch (err) {
       setError(err.message);
       return [];
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, []);
+  }, [beginActivity, endActivity]);
 
   // ============================================
   // CANVAS - Placer des pixels (validation groupée)
@@ -361,7 +361,7 @@ export const useBitcoinBalance = () => {
     }
 
     try {
-      setLoading(true);
+      beginActivity();
       setError('');
 
       const result = await placeCanvasPixels(address, pixels);
@@ -379,9 +379,9 @@ export const useBitcoinBalance = () => {
       setError(err.message);
       return { success: false, error: err.message };
     } finally {
-      setLoading(false);
+      endActivity();
     }
-  }, [address]);
+  }, [address, beginActivity, endActivity]);
 
   // ============================================
   // CANVAS - Compter les pixels d'un utilisateur
@@ -404,8 +404,6 @@ export const useBitcoinBalance = () => {
     if (result.new_balance !== null && result.new_balance !== undefined) {
       setShellsAvailable(Number(result.new_balance));
     }
-    if (result.shells_spent_total !== null && result.shells_spent_total !== undefined) {
-    }
 
     return result;
   }, [address]);
@@ -415,8 +413,6 @@ export const useBitcoinBalance = () => {
     const result = await createMessageRepost(address, messageId, quoteContent);
     if (result.new_balance !== null && result.new_balance !== undefined) {
       setShellsAvailable(Number(result.new_balance));
-    }
-    if (result.shells_spent_total !== null && result.shells_spent_total !== undefined) {
     }
     return result;
   }, [address]);
