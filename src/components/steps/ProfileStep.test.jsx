@@ -16,6 +16,9 @@ jest.mock('../../supabaseClient', () => ({
   getPublicUserUsefulMessages: jest.fn(),
   getUserMessages: jest.fn(),
   getUserStats: jest.fn(),
+  getPublicProfileConnections: jest.fn().mockResolvedValue({ accounts: [], total: 0 }),
+  uploadProfileMedia: jest.fn(),
+  upsertUserProfile: jest.fn(),
   truncateAddress: (address) => `${address.slice(0, 8)}...${address.slice(-6)}`,
 }));
 
@@ -45,6 +48,19 @@ test('shortens the address on the personal profile by default', async () => {
   expect(screen.getByText('bc1qabcd...123456')).toBeInTheDocument();
   expect(screen.queryByText(address)).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByText('screen-safe-user')).toBeInTheDocument());
+});
+
+test('does not show a placeholder username while the real profile is loading', () => {
+  getUserData.mockReturnValueOnce(new Promise(() => {}));
+  render(
+    <ProfileStep
+      profileAddress={address}
+      currentAddress={address}
+      onBack={jest.fn()}
+    />
+  );
+
+  expect(screen.queryByText(/anonymous/i)).not.toBeInTheDocument();
 });
 
 test('shows the complete profile address only when the preference is enabled', async () => {

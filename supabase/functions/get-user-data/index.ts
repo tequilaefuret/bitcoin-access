@@ -38,12 +38,22 @@ serve(async (req) => {
     if (error) throw error;
     if (!user) return jsonResponse(req, { exists: false });
 
-    const { data: profile, error: profileError } = await supabase
-      .from('user_profiles')
-      .select('bitcoin_address, display_name, bio, created_at, updated_at')
-      .eq('bitcoin_address', address)
-      .maybeSingle();
-    if (profileError) throw profileError;
+    const [
+      { data: profile, error: profileError },
+      { count: followersCount, error: followersError },
+      { count: followingCount, error: followingError },
+    ] = await Promise.all([
+      supabase
+        .from('user_profiles')
+        .select('bitcoin_address, display_name, bio, location, website_url, avatar_url, cover_url, created_at, updated_at')
+        .eq('bitcoin_address', address)
+        .maybeSingle(),
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_address', address),
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_address', address),
+    ]);
+    if (profileError || followersError || followingError) {
+      throw profileError || followersError || followingError;
+    }
 
     const { data: passwordCredential, error: passwordError } = await supabase
       .from('auth_password_credentials')
@@ -68,6 +78,8 @@ serve(async (req) => {
         has_profile: Boolean(profile),
         password_configured: Boolean(passwordCredential),
         password_setup_skipped: Boolean(accountPreferences?.password_prompt_skipped_at),
+        followers_count: followersCount || 0,
+        following_count: followingCount || 0,
       },
     });
   } catch (error) {

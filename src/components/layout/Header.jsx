@@ -1,6 +1,19 @@
-// src/components/layout/Header.jsx
 import React, { useState } from 'react';
-import { ArrowLeft, Wallet, LogOut, ChevronDown, Settings as SettingsIcon } from 'lucide-react';
+import {
+  ArrowLeft,
+  ChevronDown,
+  Clock3,
+  Flame,
+  Gamepad2,
+  Grid3X3,
+  LogOut,
+  MessageSquareText,
+  Plus,
+  Settings as SettingsIcon,
+  Sparkles,
+  UserRound,
+  Users,
+} from 'lucide-react';
 import DanausMark from './DanausMark';
 
 const shortenAddress = (address) => {
@@ -8,143 +21,124 @@ const shortenAddress = (address) => {
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 };
 
+const FeedControls = ({ networkMode, onNetworkModeChange, feedSort, onFeedSortChange }) => (
+  <div className="flex w-full items-center gap-2 overflow-x-auto px-4 pb-2 md:w-auto md:gap-3 md:overflow-visible md:px-0 md:pb-0">
+    <div className="flex shrink-0 rounded-full border border-white/[0.08] bg-white/[0.035] p-1">
+      {[
+        { id: 'classic', label: 'Classic', icon: MessageSquareText },
+        { id: 'opinion', label: 'Opinion', icon: Flame },
+      ].map(({ id, label, icon: Icon }) => (
+        <button key={id} type="button" onClick={() => onNetworkModeChange?.(id)} aria-pressed={networkMode === id} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition ${networkMode === id ? 'bg-amber-300 text-slate-950' : 'text-white/40 hover:text-white'}`}>
+          <Icon className="h-3.5 w-3.5" /> {label}
+        </button>
+      ))}
+    </div>
+
+    {networkMode === 'classic' && (
+      <div className="flex shrink-0 rounded-full border border-white/[0.08] bg-white/[0.035] p-1">
+        {[
+          { id: 'for_you', label: 'For you', icon: Sparkles },
+          { id: 'recent', label: 'Latest', icon: Clock3 },
+          { id: 'followed', label: 'Followed', icon: Users },
+        ].map(({ id, label, icon: Icon }) => (
+          <button key={id} type="button" onClick={() => onFeedSortChange?.(id)} aria-pressed={feedSort === id} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${feedSort === id ? 'bg-white text-slate-950' : 'text-white/40 hover:text-white'}`}>
+            <Icon className="h-3.5 w-3.5" /> {label}
+          </button>
+        ))}
+      </div>
+    )}
+  </div>
+);
+
 const Header = ({
   connectedAddress,
-  connectedWallet,
+  displayName,
   onDisconnect,
   onViewProfile,
   onSettings,
   onHome,
+  onOpenGame,
+  onOpenCanvas,
+  showNetworkNavigation = false,
+  networkMode = 'classic',
+  onNetworkModeChange,
+  feedSort = 'for_you',
+  onFeedSortChange,
   showFullAddress = false,
   minimal = false,
 }) => {
-  const [showDropdown, setShowDropdown] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const userName = displayName || 'Danaus member';
 
-  return (
-    <div className={minimal
-      ? 'relative mb-2 flex items-center justify-between px-2 py-4'
-      : 'relative mb-6 rounded-2xl bg-white p-6 shadow-2xl'
-    }>
-      {connectedAddress && (
-        <div className="absolute top-4 right-4">
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowDropdown(!showDropdown)}
-              onMouseEnter={() => setShowDropdown(true)}
-              aria-expanded={showDropdown}
-              aria-haspopup="menu"
-              className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-full hover:border-slate-300 transition-all duration-200 group"
-            >
-              <Wallet className="w-4 h-4 text-slate-600" />
-              <span className="text-sm font-medium text-gray-700">
-                Private session
-              </span>
-              <ChevronDown 
-                className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${
-                  showDropdown ? 'rotate-180' : ''
-                }`} 
-              />
-            </button>
-
-            {showDropdown && (
-              <div
-                role="menu"
-                className="absolute right-0 mt-2 w-64 bg-white rounded-lg shadow-2xl border-2 border-gray-100 z-50 overflow-hidden"
-                onMouseLeave={() => setShowDropdown(false)}
-              >
-                <div className="p-4 bg-gradient-to-r from-orange-50 to-yellow-50 border-b border-gray-200">
-                  <p className="text-xs text-gray-500 mb-1 font-medium">Signed in as</p>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Wallet className="w-4 h-4 text-orange-600" />
-                    <p className="text-sm font-semibold text-gray-800">
-                      {connectedWallet || 'Bitcoin account'}
-                    </p>
-                  </div>
-                  <p className="font-mono text-xs text-gray-600 bg-white px-2 py-1 rounded border border-gray-200 break-all">
-                    {showFullAddress ? connectedAddress : shortenAddress(connectedAddress)}
-                  </p>
-                </div>
-
-                {onViewProfile && (
-                  <button
-                    onClick={() => {
-                      setShowDropdown(false);
-                      onViewProfile();
-                    }}
-                    className="w-full px-4 py-3 text-left flex items-center gap-3 text-gray-700 hover:bg-gray-50 transition-colors duration-150 group border-b border-gray-100"
-                  >
-                    <span className="text-base">👤</span>
-                    <span className="font-medium text-sm">
-                      View my profile
-                    </span>
-                  </button>
-                )}
-
-                {onSettings && (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setShowDropdown(false);
-                      onSettings();
-                    }}
-                    className="w-full px-4 py-3 text-left flex items-center gap-3 text-gray-700 hover:bg-gray-50 transition-colors duration-150 group border-b border-gray-100"
-                  >
-                    <SettingsIcon className="h-4 w-4 text-slate-500 transition-transform duration-300 group-hover:rotate-45" />
-                    <span className="font-medium text-sm">Settings</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowDropdown(false);
-                    onDisconnect();
-                  }}
-                  className="w-full px-4 py-3 text-left flex items-center gap-3 text-red-600 hover:bg-red-50 transition-colors duration-150 group"
-                  >
-                  <LogOut className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-150" />
-                  <span className="font-medium text-sm">
-                    Log out
-                  </span>
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {minimal ? (
+  if (minimal) {
+    return (
+      <header className="relative z-30 mb-2 flex items-center justify-between px-1 py-4 sm:px-2">
         <button type="button" onClick={onHome} className="group flex items-center gap-2.5" aria-label="Back to Danaus introduction">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-300 text-black shadow-[0_0_32px_rgba(252,211,77,0.22)]">
-            <DanausMark className="h-6 w-6 transition-transform duration-500 group-hover:-translate-y-0.5" />
-          </span>
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-300 text-black shadow-[0_0_32px_rgba(252,211,77,0.22)]"><DanausMark className="h-6 w-6 transition-transform duration-500 group-hover:-translate-y-0.5" /></span>
           <span className="text-xl font-black tracking-[-0.07em] text-white">danaus</span>
         </button>
-      ) : (
-        <div className="mb-2 flex items-center justify-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-amber-300 text-black">
-            <DanausMark className="h-6 w-6" />
-          </span>
-          <h1 className="text-4xl font-bold tracking-tight text-slate-900">Danaus</h1>
-        </div>
-      )}
-      
-      {!minimal && (
-        <p className="text-center text-gray-600">
-          The bitcoin social network
-        </p>
-      )}
-
-      {minimal && (
         <button type="button" onClick={onHome} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/55 transition hover:border-white/20 hover:bg-white/[0.07] hover:text-white sm:px-4">
-          <ArrowLeft className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Back to introduction</span>
-          <span className="sm:hidden">Back</span>
+          <ArrowLeft className="h-3.5 w-3.5" /><span className="hidden sm:inline">Back to introduction</span><span className="sm:hidden">Back</span>
         </button>
-      )}
-    </div>
+      </header>
+    );
+  }
+
+  return (
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.08] bg-[#07080c]/90 backdrop-blur-2xl">
+      <div className="mx-auto flex h-[68px] max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+        <button type="button" onClick={onHome} className="group flex shrink-0 items-center gap-2.5" aria-label="Danaus home">
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-300 text-black shadow-[0_0_28px_rgba(252,211,77,0.2)]"><DanausMark className="h-6 w-6 transition-transform duration-500 group-hover:-translate-y-0.5" /></span>
+          <span className="hidden text-xl font-black tracking-[-0.07em] text-white sm:block">danaus</span>
+        </button>
+
+        {showNetworkNavigation && (
+          <div className="absolute inset-x-0 top-[68px] min-w-0 border-t border-white/[0.06] bg-[#07080c]/95 md:static md:border-0 md:bg-transparent">
+            <FeedControls networkMode={networkMode} onNetworkModeChange={onNetworkModeChange} feedSort={feedSort} onFeedSortChange={onFeedSortChange} />
+          </div>
+        )}
+
+        {connectedAddress && (
+          <div className="flex shrink-0 items-center gap-2">
+            {(onOpenGame || onOpenCanvas) && (
+              <div className="relative">
+                <button type="button" onClick={() => { setShowCreateMenu((visible) => !visible); setShowProfileMenu(false); }} aria-label="Open Danaus apps" aria-expanded={showCreateMenu} className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/[0.045] text-white/55 transition hover:border-amber-300/30 hover:bg-amber-300/10 hover:text-amber-300">
+                  <Plus className={`h-5 w-5 transition-transform ${showCreateMenu ? 'rotate-45' : ''}`} />
+                </button>
+                {showCreateMenu && (
+                  <div className="absolute right-0 mt-2 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[#15171e] p-1.5 text-white shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
+                    {onOpenGame && <button type="button" onClick={() => { setShowCreateMenu(false); onOpenGame(); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-white/65 transition hover:bg-white/[0.06] hover:text-white"><Gamepad2 className="h-4 w-4 text-amber-300" /> Game</button>}
+                    {onOpenCanvas && <button type="button" onClick={() => { setShowCreateMenu(false); onOpenCanvas(); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-sm font-semibold text-white/65 transition hover:bg-white/[0.06] hover:text-white"><Grid3X3 className="h-4 w-4 text-amber-300" /> Canvas</button>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="relative">
+              <button type="button" onClick={() => { setShowProfileMenu((visible) => !visible); setShowCreateMenu(false); }} aria-expanded={showProfileMenu} aria-haspopup="menu" aria-label="Private session" className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.055] p-1.5 pr-2.5 text-white transition hover:border-white/20 hover:bg-white/[0.09]">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-slate-950"><UserRound className="h-4 w-4" /></span>
+                <span className="hidden max-w-32 truncate text-sm font-bold text-white/75 sm:block">{userName}</span>
+                <ChevronDown className={`h-4 w-4 text-white/35 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showProfileMenu && (
+                <div role="menu" className="absolute right-0 mt-2 w-72 overflow-hidden rounded-2xl border border-white/10 bg-[#15171e] text-white shadow-[0_24px_70px_rgba(0,0,0,0.5)]">
+                  <div className="border-b border-white/[0.08] bg-white/[0.035] p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">Signed in as</p>
+                    <p className="mt-2 truncate text-base font-black text-white">{userName}</p>
+                    <p className="mt-2 break-all rounded-xl border border-white/[0.08] bg-black/20 px-3 py-2 font-mono text-xs text-white/55">{showFullAddress ? connectedAddress : shortenAddress(connectedAddress)}</p>
+                  </div>
+                  {onViewProfile && <button type="button" role="menuitem" onClick={() => { setShowProfileMenu(false); onViewProfile(); }} className="flex w-full items-center gap-3 border-b border-white/[0.06] px-4 py-3 text-left text-sm font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"><UserRound className="h-4 w-4 text-white/45" /> View my profile</button>}
+                  {onSettings && <button type="button" role="menuitem" onClick={() => { setShowProfileMenu(false); onSettings(); }} className="group flex w-full items-center gap-3 border-b border-white/[0.06] px-4 py-3 text-left text-sm font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"><SettingsIcon className="h-4 w-4 text-white/45 transition-transform duration-300 group-hover:rotate-45" /> Settings</button>}
+                  <button type="button" role="menuitem" onClick={() => { setShowProfileMenu(false); onDisconnect(); }} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-red-300 transition hover:bg-red-400/10"><LogOut className="h-4 w-4" /> Log out</button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </header>
   );
 };
 

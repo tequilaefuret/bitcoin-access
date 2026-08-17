@@ -570,7 +570,6 @@ Important steps:
 ### Modals
 
 - `src/components/ui/StatsModal.jsx`: spending history modal
-- `src/components/ui/HistoryModal.jsx`: message history modal
 
 ### `src/components/social/MessageCard.jsx`
 

@@ -1,6 +1,5 @@
 import React, { Suspense, lazy, useState, useEffect, useCallback } from 'react';
 import Header from './components/layout/Header';
-import Footer from './components/layout/Footer';
 import ConnectStep from './components/steps/ConnectStep';
 import ProfileSetupStep from './components/steps/ProfileSetupStep';
 import PasswordSetupStep from './components/steps/PasswordSetupStep';
@@ -32,11 +31,20 @@ const SocialStep = lazy(() => import('./components/steps/SocialStep'));
 const GameStep = lazy(() => import('./components/steps/GameStep'));
 const ProfileStep = lazy(() => import('./components/steps/ProfileStep'));
 const CanvasStep = lazy(() => import('./components/steps/CanvasStep'));
-const HistoryModal = lazy(() => import('./components/ui/HistoryModal'));
 const StatsModal = lazy(() => import('./components/ui/StatsModal'));
 const SettingsStep = lazy(() => import('./components/steps/SettingsStep'));
 
 const FOLLOWING_KEY = 'danaus_following_addresses';
+
+const getDisplayName = (user) => (
+  user?.profile?.display_name
+  || user?.profile_display_name
+  || user?.display_name
+  || user?.username
+  || user?.handle
+  || user?.nickname
+  || ''
+);
 
 const safeParseArray = (value) => {
   try {
@@ -55,9 +63,6 @@ const ScreenFallback = () => (
 
 const BitcoinExclusiveAccess = () => {
   const [step, setStep] = useState('landing');
-  const [showHistory, setShowHistory] = useState(false);
-  const [userMessages, setUserMessages] = useState([]);
-  const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
@@ -70,6 +75,9 @@ const BitcoinExclusiveAccess = () => {
   const [passwordSetupSkipped, setPasswordSetupSkipped] = useState(false);
   const [passwordSetupMode, setPasswordSetupMode] = useState('set');
   const [passwordRecoveryRequested, setPasswordRecoveryRequested] = useState(false);
+  const [sessionDisplayName, setSessionDisplayName] = useState('');
+  const [networkMode, setNetworkMode] = useState('classic');
+  const [socialFeedSort, setSocialFeedSort] = useState(DEFAULT_USER_PREFERENCES.defaultFeed);
   const [userPreferences, setUserPreferences] = useState({ ...DEFAULT_USER_PREFERENCES });
   const [systemPrefersReducedMotion, setSystemPrefersReducedMotion] = useState(() => shouldReduceMotion('system'));
   const [followingAddresses, setFollowingAddresses] = useState(() => safeParseArray(localStorage.getItem(FOLLOWING_KEY)));
@@ -88,8 +96,6 @@ const BitcoinExclusiveAccess = () => {
     publishMessage,
     loadMessages,
     loadComments,
-    loadUserMessages,
-    manualSync,
     loadSpendingHistory,
     submitCanvasPixels,
     loadCanvasPixels,
@@ -131,7 +137,9 @@ const BitcoinExclusiveAccess = () => {
   }, []);
 
   useEffect(() => {
-    setUserPreferences(loadUserPreferences(address));
+    const preferences = loadUserPreferences(address);
+    setUserPreferences(preferences);
+    setSocialFeedSort(preferences.defaultFeed);
   }, [address]);
 
   useEffect(() => {
@@ -299,6 +307,7 @@ const BitcoinExclusiveAccess = () => {
     const hasSkippedPassword = Boolean(user?.password_setup_skipped);
     setPasswordConfigured(hasPassword);
     setPasswordSetupSkipped(hasSkippedPassword);
+    setSessionDisplayName(getDisplayName(user));
 
     if (!hasUserProfile(user)) {
       setProfileSetupAddress(sessionAddress);
@@ -357,6 +366,7 @@ const BitcoinExclusiveAccess = () => {
       setPasswordSetupSkipped(false);
       setPasswordSetupMode('set');
       setPasswordRecoveryRequested(false);
+      setSessionDisplayName('');
       setStep('landing');
     } catch (err) {
       setError('Unable to close the session. Please try again.');
@@ -413,21 +423,6 @@ const BitcoinExclusiveAccess = () => {
     setStep('social');
   }, [setError]);
 
-  // ===== HANDLER : HISTORIQUE =====
-  const handleShowHistory = useCallback(async () => {
-    setUserMessages([]); // Reset
-    const messages = await loadUserMessages(20, 0);
-    setUserMessages(messages);
-    setHasMoreMessages(messages.length === 20);
-    setShowHistory(true);
-  }, [loadUserMessages]);
-
-  const handleLoadMoreHistory = useCallback(async (currentOffset) => {
-  const newMessages = await loadUserMessages(20, currentOffset);
-  setHasMoreMessages(newMessages.length === 20);
-  return newMessages;
-}, [loadUserMessages]);
-
   // ===== HANDLER : STATISTIQUES =====
   const handleShowStats = useCallback(async () => {
     const history = await loadSpendingHistory(20);
@@ -480,8 +475,9 @@ const BitcoinExclusiveAccess = () => {
   }, [address]);
 
   // ===== HANDLER : PSEUDO CRÉÉ =====
-  const handleProfileSetupComplete = useCallback(() => {
+  const handleProfileSetupComplete = useCallback((profile) => {
     setError('');
+    setSessionDisplayName(getDisplayName(profile));
     setProfileSetupAddress(null);
     if ((!passwordConfigured && !passwordSetupSkipped) || passwordRecoveryRequested) {
       setPasswordSetupMode(passwordRecoveryRequested && passwordConfigured ? 'reset' : 'set');
@@ -530,7 +526,11 @@ const BitcoinExclusiveAccess = () => {
   // ===== ÉCRAN DE CHARGEMENT =====
   if (isCheckingSession) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 px-4 py-12">
+      <div className="relative isolate grid min-h-screen place-items-center overflow-hidden bg-[#07080c] px-4 py-12 text-white selection:bg-amber-300 selection:text-slate-950">
+        <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
+          <div className="absolute left-1/2 top-[-24rem] h-[52rem] w-[60rem] -translate-x-1/2 rounded-full bg-amber-500/20 blur-[140px]" />
+          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.028)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.028)_1px,transparent_1px)] bg-[size:52px_52px] [mask-image:linear-gradient(to_bottom,black,transparent_78%)]" />
+        </div>
         <ScreenSkeleton label="Checking your session" />
       </div>
     );
@@ -542,11 +542,11 @@ const BitcoinExclusiveAccess = () => {
       ? 'min-h-screen'
       : step === 'connect'
         ? 'relative isolate min-h-screen overflow-x-hidden bg-[#07080c] px-4 pb-8 text-white selection:bg-amber-300 selection:text-slate-950 sm:px-6'
-        : 'min-h-screen bg-gradient-to-br from-orange-500 via-yellow-500 to-orange-600 p-4'
+        : 'relative isolate min-h-screen overflow-x-hidden bg-[#07080c] px-4 pb-8 text-white selection:bg-amber-300 selection:text-slate-950 sm:px-6'
     } ${reduceMotion ? 'danaus-reduce-motion' : ''}`}>
       {step !== 'landing' && <EnvIndicator />}
 
-      {step === 'connect' && (
+      {step !== 'landing' && (
         <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
           <div className="absolute left-1/2 top-[-26rem] h-[54rem] w-[64rem] -translate-x-1/2 rounded-full bg-amber-500/20 blur-[140px]" />
           <div className="absolute bottom-[-18rem] right-[-12rem] h-[38rem] w-[38rem] rounded-full bg-orange-600/10 blur-[130px]" />
@@ -557,14 +557,21 @@ const BitcoinExclusiveAccess = () => {
       {step === 'landing' ? (
         <LandingPage onStart={() => setStep('connect')} onSignIn={() => setStep('connect')} />
       ) : (
-      <div className={`${step === 'connect' ? 'max-w-6xl' : 'max-w-4xl'} mx-auto`}>
+      <div className={`${step === 'connect' ? 'max-w-6xl' : 'max-w-7xl'} mx-auto`}>
           <Header 
           connectedAddress={showPrivateSession ? authenticatedAddress : null}
-          connectedWallet={connectedWallet}
+          displayName={sessionDisplayName}
           minimal={step === 'connect'}
           onHome={() => setStep('landing')}
           onDisconnect={handleManualDisconnect}
           onSettings={showPrivateSession ? handleOpenSettings : null}
+          onOpenGame={showPrivateSession ? handleGameToPlay : null}
+          onOpenCanvas={showPrivateSession ? handleStartCanvas : null}
+          showNetworkNavigation={['social', 'authorized'].includes(step)}
+          networkMode={networkMode}
+          onNetworkModeChange={setNetworkMode}
+          feedSort={socialFeedSort}
+          onFeedSortChange={setSocialFeedSort}
           showFullAddress={userPreferences.showFullAddress}
           onViewProfile={
             !showPrivateSession
@@ -573,7 +580,7 @@ const BitcoinExclusiveAccess = () => {
           }
         />
 
-        <div className={step === 'connect' ? 'mb-6' : 'mb-6 rounded-2xl bg-white p-8 shadow-2xl'}>
+        <div className={`${step === 'connect' ? '' : ['social', 'authorized'].includes(step) ? 'pt-[128px] md:pt-[92px]' : 'pt-[92px]'} mb-6`}>
           {step === 'connect' && (
             <ConnectStep 
               onConnect={handleConnect}
@@ -682,12 +689,8 @@ const BitcoinExclusiveAccess = () => {
               loading={loading}
               error={error}
               onUserClick={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'social')}
-              onOpenOwnProfile={() => handleOpenProfile(authenticatedAddress, 'social')}
-              onOpenGame={handleGameToPlay}
-              onOpenCanvas={handleStartCanvas}
-              onShowHistory={handleShowHistory}
-              onShowStats={handleShowStats}
-              onSync={manualSync}
+              activeMode={networkMode}
+              feedSort={socialFeedSort}
               followingAddresses={followingAddresses}
               onFollowToggle={handleToggleFollow}
               isFollowing={isFollowing}
@@ -712,6 +715,7 @@ const BitcoinExclusiveAccess = () => {
               onEditorialTopicPreference={updateEditorialTopicPreference}
               onReportMessage={reportMessage}
               onReportProfile={reportProfile}
+              onProfileUpdated={(profile) => setSessionDisplayName(profile.display_name || '')}
             />
           )}
 
@@ -763,16 +767,6 @@ const BitcoinExclusiveAccess = () => {
         </div>
 
         <Suspense fallback={null}>
-          {showHistory && (
-            <HistoryModal
-              show={showHistory}
-              onClose={() => setShowHistory(false)}
-              messages={userMessages}
-              onLoadMore={handleLoadMoreHistory}
-              hasMore={hasMoreMessages}
-            />
-          )}
-
           {showStats && (
             <StatsModal
               stats={stats}
@@ -781,7 +775,6 @@ const BitcoinExclusiveAccess = () => {
           )}
         </Suspense>
 
-        {step !== 'connect' && <Footer />}
       </div>
       )}
     </div>

@@ -15,18 +15,18 @@ const RepostComposer = ({
 }) => (
   <>
     {showOptions && (
-      <div className="mt-3 flex w-fit overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+      <div className="mt-3 flex w-fit overflow-hidden rounded-xl border border-white/10 bg-[#191b22] shadow-lg">
         <button
           type="button"
           onClick={() => onSubmit('')}
           disabled={repostLoading}
           aria-label={userHasReposted ? 'Undo repost' : 'Repost'}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white/65 hover:bg-white/[0.06] disabled:opacity-50"
         >
           <Repeat2 className="h-4 w-4" />
           {userHasReposted ? 'Undo repost' : 'Repost'}
           {!userHasReposted && (
-            <span aria-hidden="true" className="text-xs font-normal text-slate-400">
+            <span aria-hidden="true" className="text-xs font-normal text-white/30">
               {repostedCharacterCount} sats
             </span>
           )}
@@ -34,7 +34,7 @@ const RepostComposer = ({
         <button
           type="button"
           onClick={onOpenQuote}
-          className="inline-flex items-center gap-2 border-l border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          className="inline-flex items-center gap-2 border-l border-white/10 px-4 py-2 text-sm font-semibold text-white/65 hover:bg-white/[0.06]"
         >
           <Quote className="h-4 w-4" />
           Quote
@@ -43,10 +43,10 @@ const RepostComposer = ({
     )}
 
     {showQuoteComposer && (
-      <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.035] p-3">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-bold uppercase tracking-wide text-slate-500">Add a comment</span>
-          <button type="button" onClick={onCloseQuote} className="text-slate-400 hover:text-slate-700">
+          <span className="text-xs font-bold uppercase tracking-wide text-white/35">Add a comment</span>
+          <button type="button" onClick={onCloseQuote} className="text-white/30 hover:text-white">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -56,17 +56,17 @@ const RepostComposer = ({
           maxLength={1000}
           rows={3}
           placeholder="Why are you sharing this?"
-          className="mt-2 w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-orange-400"
+          className="mt-2 w-full resize-none rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-300/50"
         />
         <div className="mt-2 flex items-center justify-between gap-3">
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-white/30">
             {quoteText.length} / 1000 · {repostedCharacterCount + quoteText.trim().replace(/\n/g, '').length} sats
           </span>
           <button
             type="button"
             onClick={() => onSubmit(quoteText.trim())}
             disabled={!quoteText.trim() || repostLoading}
-            className="rounded-full bg-slate-950 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+            className="rounded-full bg-amber-300 px-4 py-2 text-xs font-bold text-slate-950 disabled:opacity-50"
           >
             Publish quote
           </button>

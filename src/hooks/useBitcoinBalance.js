@@ -6,7 +6,6 @@ import {
   syncUserBalance,
   publishMessage,
   getMessages,
-  getUserMessages,
   getSpendingHistory,
   deductGameCost,
   getCanvasPixels,
@@ -153,7 +152,7 @@ export const useBitcoinBalance = () => {
           `Insufficient shells balance\n\n` +
           `Required: ${0.000001.toFixed(8)} shells\n` +
           `Available: ${shellsAvailable.toFixed(8)} shells\n\n` +
-          `Sync your Bitcoin balance to continue.`
+          `Add bitcoin to your verified address and wait for the automatic balance refresh.`
         );
       } else {
         setError(err.message);
@@ -197,7 +196,7 @@ export const useBitcoinBalance = () => {
           `Insufficient shells balance\n\n` +
           `Required: ${cost.toFixed(8)} shells\n` +
           `Available: ${shellsAvailable.toFixed(8)} shells\n\n` +
-          `Sync your Bitcoin balance to continue.`
+          `Add bitcoin to your verified address and wait for the automatic balance refresh.`
         );
       } else {
         setError('Error: ' + err.message);
@@ -266,71 +265,6 @@ export const useBitcoinBalance = () => {
     } catch (err) {
       setError('Could not load comments: ' + err.message);
       return [];
-    } finally {
-      endActivity();
-    }
-  }, [address, beginActivity, endActivity]);
-
-  /**
-   * 📜 Charger l'historique des messages de l'utilisateur
-   */
-  const loadUserMessages = useCallback(async (limit = 20, offset = 0) => {
-    if (!address) return [];
-
-    try {
-      beginActivity();
-
-      const messages = await getUserMessages(address, limit, offset);
-
-      return messages;
-    } catch (err) {
-      setError('Could not load history: ' + err.message);
-      return [];
-    } finally {
-      endActivity();
-    }
-  }, [address, beginActivity, endActivity]);
-
-  /**
-   * 🔄 Synchroniser balance (authentifié uniquement)
-   */
-  const manualSync = useCallback(async () => {
-    if (!address) return;
-
-    try {
-      beginActivity();
-      setError('');
-
-
-      const network = 'mainnet';
-
-      const result = await syncUserBalance(address, network);
-
-      if (result.success && result.user) {
-        const newBTC = result.user.btc_balance;
-        const unconfirmedBTC = result.delta || 0;
-
-        setBtcBalance(newBTC);
-        setShellsAvailable(result.user.shells_balance);
-
-        let message = '✅ Balance synced successfully!\n\n';
-        message += `BTC: ${newBTC.toFixed(8)}\n`;
-        message += `Shells: ${result.user.shells_balance.toFixed(8)}`;
-
-        if (result.delta !== 0) {
-          const syncType = result.delta > 0 ? 'Added' : 'Removed';
-          message += `\n\n${syncType} : ${Math.abs(result.delta).toFixed(8)} BTC`;
-        }
-
-        if (unconfirmedBTC > 0) {
-          message += `\n\nPending: ${unconfirmedBTC.toFixed(8)} BTC`;
-        }
-
-        alert(message);
-      }
-
-    } catch (err) {
-      setError('Could not sync balance: ' + err.message);
     } finally {
       endActivity();
     }
@@ -485,8 +419,6 @@ export const useBitcoinBalance = () => {
     startGame,
     publishMessage: publishMessageCallback,
     loadMessages,
-    loadUserMessages,
-    manualSync,
     loadSpendingHistory,
     loadCanvasPixels,
     submitCanvasPixels,

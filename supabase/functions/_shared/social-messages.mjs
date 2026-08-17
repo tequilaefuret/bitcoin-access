@@ -26,6 +26,19 @@ export async function loadDisplayNames(supabase, addresses) {
   );
 }
 
+async function loadProfileSummaries(supabase, addresses) {
+  const uniqueAddresses = [...new Set(addresses.filter(Boolean))];
+  if (uniqueAddresses.length === 0) return new Map();
+
+  const { data, error } = await supabase
+    .from('user_profiles')
+    .select('bitcoin_address, display_name, avatar_url')
+    .in('bitcoin_address', uniqueAddresses);
+  if (error) throw error;
+
+  return new Map((data || []).map((profile) => [profile.bitcoin_address, profile]));
+}
+
 export async function loadRepostOriginals(supabase, messages) {
   const originalIds = [...new Set(
     (messages || []).map((message) => message.repost_of).filter(Boolean),
@@ -83,7 +96,7 @@ export async function enrichSocialMessages(supabase, messages, options = {}) {
   const messageList = messages || [];
   const originalById = options.originalById
     || await loadRepostOriginals(supabase, messageList);
-  const profileMap = await loadDisplayNames(
+  const profileMap = await loadProfileSummaries(
     supabase,
     messageList.flatMap((message) => [
       message.bitcoin_address,
@@ -126,12 +139,16 @@ export async function enrichSocialMessages(supabase, messages, options = {}) {
 
   return messageList.map((message) => {
     const original = originalById.get(message.repost_of);
+    const authorProfile = profileMap.get(message.bitcoin_address);
+    const originalProfile = original ? profileMap.get(original.bitcoin_address) : null;
     return {
       ...message,
-      display_name: profileMap.get(message.bitcoin_address) || null,
+      display_name: authorProfile?.display_name || null,
+      avatar_url: authorProfile?.avatar_url || null,
       reposted_message: original ? {
         ...original,
-        display_name: profileMap.get(original.bitcoin_address) || null,
+        display_name: originalProfile?.display_name || null,
+        avatar_url: originalProfile?.avatar_url || null,
       } : null,
       useful_count: Number(message.useful_count) || 0,
       comments_count: message.comments?.[0]?.count || 0,

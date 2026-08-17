@@ -14,6 +14,7 @@ The main functional and technical reference is:
 
 - [AI Context](docs/AI_CONTEXT.md)
 - [Automated DEV → production deployments](docs/DEPLOYMENT_PIPELINE.md)
+- [Cloudflare R2 profile photos setup](docs/CLOUDFLARE_R2_PROFILE_MEDIA.md)
 - [Opinion Stage 1](docs/OPINION_MODE_STAGE_1.md)
 - [Opinion Stage 2: automatic grouping](docs/OPINION_MODE_STAGE_2.md)
 - [Opinion quality, cycles and validation](docs/OPINION_MODE_QUALITY_CYCLES.md)

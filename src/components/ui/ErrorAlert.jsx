@@ -7,10 +7,10 @@ const ErrorAlert = ({ error, success, className = '' }) => {
 
   return (
     <div
-      className={`border-l-4 p-4 mb-4 flex items-start gap-2 ${
+      className={`mb-4 flex items-start gap-2 rounded-2xl border p-4 text-sm ${
         success
-          ? 'bg-green-50 border-green-500'
-          : 'bg-red-50 border-red-500'
+          ? 'border-emerald-400/20 bg-emerald-400/10'
+          : 'border-red-400/20 bg-red-400/10'
       } ${className}`}
     >
       {success ? (
@@ -21,13 +21,13 @@ const ErrorAlert = ({ error, success, className = '' }) => {
       <div>
         {success ? (
           <div>
-            <p className="text-green-800 font-semibold">{success.title}</p>
+            <p className="font-semibold text-emerald-200">{success.title}</p>
             {success.message && (
-              <p className="text-green-700">{success.message}</p>
+              <p className="text-emerald-300/70">{success.message}</p>
             )}
           </div>
         ) : (
-          <p className="text-red-800 whitespace-pre-line">{error}</p>
+          <p className="whitespace-pre-line text-red-200">{error}</p>
         )}
       </div>
     </div>

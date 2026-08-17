@@ -64,6 +64,7 @@ const MessageCard = ({
   const optionsLabel = message.parent_id ? 'Comment options' : 'Post options';
 
   const displayAddress = message.display_name ? `@${message.display_name}` : '@anonymous';
+  const avatarLetter = (message.display_name || 'A').trim().charAt(0).toUpperCase();
 
   const handleUseful = async () => {
     if (!onUseful || isOwnMessage || usefulLoading) return;
@@ -225,29 +226,38 @@ const MessageCard = ({
   const repostedCharacterCount = countBillableCharacters(repostedText);
 
   return (
-    <article className="border-b border-gray-100 pb-4">
-      <div className="mb-2 flex items-start justify-between gap-4">
-        <div className="flex items-center gap-2">
+    <article className="rounded-[1.5rem] border border-white/[0.085] bg-[#11131a] p-4 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.9)] transition hover:border-white/[0.14] sm:p-5">
+      <div className="mb-3 flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          {message.avatar_url ? (
+            <img src={message.avatar_url} alt="" className="h-10 w-10 shrink-0 rounded-full object-cover shadow-[0_0_22px_rgba(251,191,36,0.12)]" />
+          ) : (
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-sm font-black text-slate-950 shadow-[0_0_22px_rgba(251,191,36,0.12)]">
+              {avatarLetter}
+            </span>
+          )}
+          <div className="min-w-0">
           <button
             type="button"
             onClick={() => onUserClick?.(authorAddress)}
             disabled={!authorAddress || !onUserClick}
             title={displayAddress}
-            className={`text-sm font-semibold text-gray-800 hover:underline ${
+            className={`block max-w-[180px] truncate text-sm font-bold text-white hover:underline ${
               !authorAddress || !onUserClick ? 'cursor-default hover:no-underline' : ''
             }`}
           >
             {displayAddress}
           </button>
           {isFollowed && (
-            <span className="rounded-full bg-orange-100 px-2 py-1 text-[11px] font-semibold text-orange-700">
+            <span className="mt-0.5 inline-block rounded-full bg-amber-300/10 px-2 py-0.5 text-[10px] font-bold text-amber-300">
               Following
             </span>
           )}
+          </div>
         </div>
 
         <div className="relative flex items-center gap-3">
-          <span className="text-xs text-gray-500">
+          <span className="whitespace-nowrap text-xs text-white/30">
             {formatMessageTimestamp(message.created_at || message.timestamp)}
           </span>
           {!isOwnMessage && (
@@ -260,7 +270,7 @@ const MessageCard = ({
               type="button"
               onClick={() => setShowEditorialMenu((visible) => !visible)}
               disabled={feedbackLoading || Boolean(editorialAction)}
-              className="rounded-full p-1 text-gray-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+              className="rounded-full p-1 text-white/30 transition hover:bg-white/[0.07] hover:text-white disabled:opacity-50"
               title={optionsLabel}
               aria-label={optionsLabel}
               aria-expanded={showEditorialMenu}
@@ -299,7 +309,7 @@ const MessageCard = ({
       </div>
 
       {message.repost_of && (
-        <div className="mb-1 flex items-center gap-1 text-xs text-gray-500">
+        <div className="mb-2 flex items-center gap-1 text-xs text-white/35">
           <Repeat2 className="h-3 w-3" />
           {message.repost_kind === 'quote' ? 'Quoted' : 'Reposted'}
         </div>
@@ -309,31 +319,31 @@ const MessageCard = ({
 
       {message.repost_of && (
         originalMessage ? (
-          <div className="mb-3 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="mb-3 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4">
             <button
               type="button"
               onClick={() => onUserClick?.(originalMessage.bitcoin_address)}
               disabled={!originalMessage.bitcoin_address || !onUserClick}
-              className="text-xs font-bold text-slate-700 hover:underline disabled:no-underline"
+              className="text-xs font-bold text-white/70 hover:underline disabled:no-underline"
             >
               {originalMessage.display_name ? `@${originalMessage.display_name}` : '@anonymous'}
             </button>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/60">
               {originalMessage.content}
             </p>
-            <p className="mt-2 text-[11px] text-slate-400">
+            <p className="mt-2 text-[11px] text-white/25">
               {formatMessageTimestamp(originalMessage.created_at)}
             </p>
           </div>
         ) : (
-          <div className="mb-3 rounded-2xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+          <div className="mb-3 rounded-2xl border border-dashed border-white/10 p-4 text-sm text-white/35">
             Original post unavailable.
           </div>
         )
       )}
 
       {showActions && (
-        <div className="flex flex-wrap items-center gap-4 text-sm">
+        <div className="flex flex-wrap items-center gap-2 border-t border-white/[0.065] pt-3 text-sm">
           <button
             type="button"
             onClick={handleUseful}
@@ -345,8 +355,8 @@ const MessageCard = ({
                 : 'Mark as useful (costs 1 satoshi)'}
             className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
               localUserMarkedUseful
-                ? 'bg-amber-100 font-semibold text-amber-800'
-                : 'text-gray-500 hover:bg-amber-50 hover:text-amber-700'
+                ? 'bg-amber-300/15 font-semibold text-amber-300'
+                : 'text-white/40 hover:bg-amber-300/10 hover:text-amber-300'
             } disabled:cursor-not-allowed disabled:opacity-50`}
           >
             <Lightbulb className={`h-4 w-4 ${localUserMarkedUseful ? 'fill-current' : ''}`} />
@@ -361,7 +371,7 @@ const MessageCard = ({
               setShowComments((current) => !current);
               if (!showComments && !commentsLoaded) loadComments();
             }}
-            className="flex items-center gap-1 text-gray-500 transition hover:text-orange-600"
+            className="flex items-center gap-1 rounded-full px-2.5 py-1 text-white/40 transition hover:bg-sky-400/10 hover:text-sky-300"
           >
             <MessageCircle className="h-4 w-4" />
             <span>{localCommentsCount}</span>
@@ -372,7 +382,7 @@ const MessageCard = ({
             onClick={() => setShowRepostOptions((current) => !current)}
             disabled={!onRepost || isOwnMessage}
             className={`flex items-center gap-1 transition disabled:cursor-not-allowed disabled:opacity-50 ${
-              localUserReposted ? 'font-semibold text-green-700' : 'text-gray-500 hover:text-green-600'
+              localUserReposted ? 'font-semibold text-emerald-300' : 'text-white/40 hover:text-emerald-300'
             }`}
             title={isOwnMessage ? 'You cannot repost your own message' : 'Repost'}
           >
@@ -407,29 +417,29 @@ const MessageCard = ({
       )}
 
       {showComments && (
-        <div className="mt-4 border-t border-gray-200 pt-4">
+        <div className="mt-4 border-t border-white/[0.08] pt-4">
           {!showCommentForm && (
             <button
               type="button"
               onClick={() => setShowCommentForm(true)}
-              className="mb-3 text-sm font-semibold text-orange-700 hover:text-orange-900"
+              className="mb-3 text-sm font-semibold text-amber-300 hover:text-amber-200"
             >
               + Add a comment
             </button>
           )}
 
           {showCommentForm && (
-            <div className="mb-4 rounded-lg bg-gray-50 p-3">
+            <div className="mb-4 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3">
               <textarea
                 value={commentText}
                 onChange={(event) => setCommentText(event.target.value)}
                 placeholder="Write your comment..."
                 maxLength={1000}
-                className="w-full resize-none rounded border p-2 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                className="w-full resize-none rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-300/50 focus:ring-2 focus:ring-amber-300/10"
                 rows={3}
               />
               <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-xs text-gray-500">{commentText.length} / 1000</span>
+                <span className="text-xs text-white/30">{commentText.length} / 1000</span>
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -437,7 +447,7 @@ const MessageCard = ({
                       setShowCommentForm(false);
                       setCommentText('');
                     }}
-                    className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
+                    className="px-3 py-1 text-sm text-white/40 hover:text-white"
                   >
                     Cancel
                   </button>
@@ -445,7 +455,7 @@ const MessageCard = ({
                     type="button"
                     onClick={submitComment}
                     disabled={!commentText.trim() || commentLoading}
-                    className="rounded bg-orange-600 px-3 py-1 text-sm text-white hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-full bg-amber-300 px-4 py-1.5 text-sm font-bold text-slate-950 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {commentLoading ? 'Publishing...' : 'Publish'}
                   </button>
@@ -457,7 +467,7 @@ const MessageCard = ({
           {loadingComments ? (
             <FeedSkeleton count={2} compact />
           ) : comments.length > 0 ? (
-            <div className="space-y-3 border-l-2 border-gray-200 pl-4">
+            <div className="space-y-3 border-l-2 border-white/[0.08] pl-4">
               {comments.map((comment) => (
                 <MessageCard
                   key={comment.id}
@@ -477,7 +487,7 @@ const MessageCard = ({
               ))}
             </div>
           ) : (
-            <p className="text-sm italic text-gray-500">No comments yet</p>
+            <p className="text-sm italic text-white/30">No comments yet</p>
           )}
         </div>
       )}

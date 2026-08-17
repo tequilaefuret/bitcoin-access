@@ -664,7 +664,7 @@ serve(async (req) => {
 
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('bitcoin_address, display_name, bio, created_at, updated_at')
+      .select('bitcoin_address, display_name, bio, location, website_url, avatar_url, cover_url, created_at, updated_at')
       .eq('bitcoin_address', address)
       .maybeSingle();
     if (profileError && profileError.code !== 'PGRST116') throw profileError;

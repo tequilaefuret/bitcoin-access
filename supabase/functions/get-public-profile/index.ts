@@ -19,7 +19,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
-    const { address, action = 'profile', limit = 25, offset = 0 } = await req.json();
+    const { address, action = 'profile', relation, limit = 25, offset = 0 } = await req.json();
     if (!address) {
       return new Response(JSON.stringify({ exists: false }), {
         status: 400,
@@ -72,10 +72,60 @@ serve(async (req) => {
       });
     }
 
-    const [{ data: profile, error: profileError }, { data: account, error: accountError }] = await Promise.all([
+    if (action === 'connections') {
+      if (!['followers', 'following'].includes(relation)) {
+        return new Response(JSON.stringify({ error: 'Invalid connection type' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const safeLimit = Math.min(Math.max(Number(limit) || 25, 1), 50);
+      const safeOffset = Math.max(Number(offset) || 0, 0);
+      const addressColumn = relation === 'followers' ? 'follower_address' : 'following_address';
+      const filterColumn = relation === 'followers' ? 'following_address' : 'follower_address';
+      const { data: rows, error: followsError, count } = await supabase
+        .from('follows')
+        .select(`${addressColumn}, created_at`, { count: 'exact' })
+        .eq(filterColumn, address)
+        .order('created_at', { ascending: false })
+        .range(safeOffset, safeOffset + safeLimit - 1);
+      if (followsError) throw followsError;
+
+      const addresses = (rows || []).map((row: any) => row[addressColumn]).filter(Boolean);
+      let profiles: any[] = [];
+      if (addresses.length > 0) {
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('bitcoin_address, display_name, bio, avatar_url')
+          .in('bitcoin_address', addresses);
+        if (error) throw error;
+        profiles = data || [];
+      }
+      const byAddress = new Map(profiles.map((profile: any) => [profile.bitcoin_address, profile]));
+
+      return new Response(JSON.stringify({
+        accounts: addresses.map((bitcoinAddress: string) => ({
+          bitcoin_address: bitcoinAddress,
+          display_name: byAddress.get(bitcoinAddress)?.display_name || null,
+          bio: byAddress.get(bitcoinAddress)?.bio || null,
+          avatar_url: byAddress.get(bitcoinAddress)?.avatar_url || null,
+        })),
+        total: count || 0,
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      });
+    }
+
+    const [
+      { data: profile, error: profileError },
+      { data: account, error: accountError },
+      { count: followersCount, error: followersError },
+      { count: followingCount, error: followingError },
+    ] = await Promise.all([
       supabase
         .from('user_profiles')
-        .select('display_name, bio, created_at, updated_at')
+        .select('display_name, bio, location, website_url, avatar_url, cover_url, created_at, updated_at')
         .eq('bitcoin_address', address)
         .maybeSingle(),
       supabase
@@ -83,8 +133,12 @@ serve(async (req) => {
         .select('created_at, ownership_verified_at')
         .eq('bitcoin_address', address)
         .maybeSingle(),
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_address', address),
+      supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_address', address),
     ]);
-    if (profileError || accountError) throw profileError || accountError;
+    if (profileError || accountError || followersError || followingError) {
+      throw profileError || accountError || followersError || followingError;
+    }
     if (!profile || !account) {
       return new Response(JSON.stringify({ exists: false }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
@@ -96,6 +150,12 @@ serve(async (req) => {
       profile: {
         display_name: profile.display_name,
         bio: profile.bio,
+        location: profile.location,
+        website_url: profile.website_url,
+        avatar_url: profile.avatar_url,
+        cover_url: profile.cover_url,
+        followers_count: followersCount || 0,
+        following_count: followingCount || 0,
         created_at: profile.created_at || account.created_at,
         updated_at: profile.updated_at,
         ownership_verified: Boolean(account.ownership_verified_at),

@@ -330,7 +330,20 @@ export async function getPublicProfile(address) {
     display_name: data.profile?.display_name || null,
     has_profile: Boolean(data.profile),
     ownership_verified: Boolean(data.profile?.ownership_verified),
+    followers_count: Number(data.profile?.followers_count) || 0,
+    following_count: Number(data.profile?.following_count) || 0,
     created_at: data.profile?.created_at || null,
+  };
+}
+
+export async function getPublicProfileConnections(address, relation, limit = 50, offset = 0) {
+  const { data, error } = await supabase.functions.invoke('get-public-profile', {
+    body: { address, action: 'connections', relation, limit, offset },
+  });
+  if (error) throw new Error(error.message || 'Unable to load profile connections');
+  return {
+    accounts: Array.isArray(data?.accounts) ? data.accounts : [],
+    total: Number(data?.total) || 0,
   };
 }
 
@@ -377,12 +390,41 @@ async function invokeUserOperation(address, operation, payload = {}, fallbackMes
  * @param {string} bio - Bio optionnelle
  * @returns {Promise<object>} Profil sauvegardé
  */
-export async function upsertUserProfile(address, displayName, bio = '') {
+export async function upsertUserProfile(address, displayName, details = {}) {
+  const normalizedDetails = typeof details === 'string' ? { bio: details } : (details || {});
   const data = await invokeUserOperation(address, 'upsert_profile', {
     displayName: typeof displayName === 'string' ? displayName.trim() : '',
-    bio: typeof bio === 'string' ? bio.trim() : '',
+    bio: typeof normalizedDetails.bio === 'string' ? normalizedDetails.bio.trim() : '',
+    location: typeof normalizedDetails.location === 'string' ? normalizedDetails.location.trim() : '',
+    websiteUrl: typeof normalizedDetails.websiteUrl === 'string' ? normalizedDetails.websiteUrl.trim() : '',
+    avatarUrl: typeof normalizedDetails.avatarUrl === 'string' ? normalizedDetails.avatarUrl.trim() : '',
+    coverUrl: typeof normalizedDetails.coverUrl === 'string' ? normalizedDetails.coverUrl.trim() : '',
   }, 'Could not save profile');
   return data.profile || data;
+}
+
+export async function uploadProfileMedia(address, file, mediaKind) {
+  if (!(file instanceof File)) throw new Error('Choose an image first');
+  const prepared = await invokeUserOperation(address, 'create_profile_media_upload', {
+    mediaKind,
+    contentType: file.type,
+    fileSize: file.size,
+  }, 'Could not prepare image upload');
+
+  const uploadResponse = await fetch(prepared.upload_url, {
+    method: 'PUT',
+    headers: { 'Content-Type': file.type },
+    body: file,
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(`Image upload failed (${uploadResponse.status})`);
+  }
+
+  const confirmed = await invokeUserOperation(address, 'confirm_profile_media_upload', {
+    mediaKind,
+    objectKey: prepared.object_key,
+  }, 'Could not confirm image upload');
+  return confirmed.public_url;
 }
 
 /**

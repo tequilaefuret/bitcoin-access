@@ -1,14 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  BarChart3,
-  BookOpen,
-  Flame,
-  MessageSquareText,
-  PenSquare,
-  RefreshCw,
-  Sparkles,
-  UserRound
-} from 'lucide-react';
 import MessageCard from '../social/MessageCard';
 import ClassicFeedPanel from '../social/ClassicFeedPanel';
 import OpinionFeedPanel from '../social/OpinionFeedPanel';
@@ -35,16 +25,11 @@ const SocialStep = ({
   loading,
   error,
   onUserClick,
-  onOpenOwnProfile,
-  onOpenGame,
-  onOpenCanvas,
-  onShowHistory,
-  onShowStats,
-  onSync,
+  activeMode = 'classic',
+  feedSort,
   followingAddresses = [],
   defaultFeed = 'for_you'
 }) => {
-  const [activeMode, setActiveMode] = useState('classic');
   const [messageContent, setMessageContent] = useState('');
   const [topics, setTopics] = useState([]);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
@@ -71,6 +56,10 @@ const SocialStep = ({
     temporarilyHideForYouMessage,
     restoreForYouMessage,
   } = useClassicFeed({ address, defaultFeed, onLoadMessages });
+
+  useEffect(() => {
+    if (feedSort && feedSort !== classicSort) changeSort(feedSort);
+  }, [changeSort, classicSort, feedSort]);
   const {
     hideTemporarily: hideForYouTemporarily,
     undoHide: undoForYouHide,
@@ -193,11 +182,6 @@ const SocialStep = ({
       ...topic,
       posts: (topic.posts || []).filter((post) => post.id !== messageId)
     })));
-  };
-
-  const handleSortChange = async (sortMode) => {
-    setScreenError('');
-    await changeSort(sortMode);
   };
 
   const handlePrivateStance = async (stance) => {
@@ -330,76 +314,13 @@ const SocialStep = ({
   );
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-6xl">
       <ErrorAlert error={screenError || feedError || error} />
       {editorialNotice && (
-        <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
+        <div className="mb-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm font-medium text-emerald-200">
           {editorialNotice}
         </div>
       )}
-
-      <section className="overflow-hidden rounded-[2rem] border border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.28),_transparent_38%),linear-gradient(135deg,_#ffffff_0%,_#f8fafc_100%)] p-6 shadow-xl shadow-slate-900/10">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-amber-700">Danaus network</p>
-            <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950 md:text-4xl">
-              Scroll freely. Pause when it matters.
-            </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-              Classic keeps the open feed. Opinion selects a small set of useful posts around a shared question.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {[
-              { label: 'Profile', icon: UserRound, action: onOpenOwnProfile },
-              { label: 'Insights', icon: BarChart3, action: onShowStats },
-              { label: 'Game', icon: Sparkles, action: onOpenGame },
-              { label: 'Canvas', icon: PenSquare, action: onOpenCanvas },
-              { label: 'History', icon: BookOpen, action: onShowHistory },
-              { label: 'Sync', icon: RefreshCw, action: onSync }
-            ].map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.label}
-                  type="button"
-                  onClick={() => item.action?.()}
-                  disabled={!item.action}
-                  title={item.label}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-amber-300 hover:text-slate-950 disabled:opacity-40"
-                >
-                  <Icon className="h-4 w-4" />
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="mt-6 inline-flex rounded-2xl bg-slate-100 p-1">
-          {[
-            { id: 'classic', label: 'Classic', icon: MessageSquareText },
-            { id: 'opinion', label: 'Opinion', icon: Flame }
-          ].map((mode) => {
-            const Icon = mode.icon;
-            return (
-              <button
-                key={mode.id}
-                type="button"
-                onClick={() => setActiveMode(mode.id)}
-                className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold transition ${
-                  activeMode === mode.id
-                    ? 'bg-slate-950 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-950'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {mode.label}
-              </button>
-            );
-          })}
-        </div>
-      </section>
 
       {activeMode === 'classic' ? (
         <ClassicFeedPanel
@@ -409,7 +330,6 @@ const SocialStep = ({
           isPublishing={isPublishing}
           actionLoading={loading}
           classicSort={classicSort}
-          onSortChange={handleSortChange}
           isLoadingFeed={isLoadingFeed}
           messages={messages}
           renderMessage={renderMessage}

@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import SocialStep from './SocialStep';
+import Header from '../layout/Header';
 
 jest.mock('../../supabaseClient', () => ({
   deleteMessage: jest.fn(),
@@ -16,6 +18,25 @@ const message = {
   reposts_count: 0,
 };
 
+const SocialHarness = (props) => {
+  const [feedSort, setFeedSort] = useState(props.defaultFeed || 'for_you');
+  return (
+    <>
+      <Header
+        connectedAddress={props.address}
+        displayName="reader"
+        onDisconnect={jest.fn()}
+        onHome={jest.fn()}
+        showNetworkNavigation
+        networkMode="classic"
+        feedSort={feedSort}
+        onFeedSortChange={setFeedSort}
+      />
+      <SocialStep {...props} activeMode="classic" feedSort={feedSort} />
+    </>
+  );
+};
+
 const renderSocialStep = (overrides = {}) => {
   const onLoadMessages = jest.fn().mockResolvedValue([message]);
   const props = {
@@ -29,7 +50,7 @@ const renderSocialStep = (overrides = {}) => {
     ...overrides,
   };
 
-  return { ...render(<SocialStep {...props} />), onLoadMessages: props.onLoadMessages };
+  return { ...render(<SocialHarness {...props} />), onLoadMessages: props.onLoadMessages };
 };
 
 test('opens the personalized feed by default and keeps Latest and Followed available', async () => {

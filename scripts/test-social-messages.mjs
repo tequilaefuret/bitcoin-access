@@ -10,15 +10,15 @@ const supabase = {
     assert.equal(table, 'user_profiles');
     return {
       select(columns) {
-        assert.equal(columns, 'bitcoin_address, display_name');
+        assert.equal(columns, 'bitcoin_address, display_name, avatar_url');
         return {
           async in(column, addresses) {
             assert.equal(column, 'bitcoin_address');
             requestedProfiles.push(...addresses);
             return {
               data: [
-                { bitcoin_address: 'author-a', display_name: 'Alice' },
-                { bitcoin_address: 'author-b', display_name: 'Bob' },
+                { bitcoin_address: 'author-a', display_name: 'Alice', avatar_url: 'https://media.example/alice' },
+                { bitcoin_address: 'author-b', display_name: 'Bob', avatar_url: 'https://media.example/bob' },
               ],
               error: null,
             };
@@ -52,7 +52,9 @@ const [message] = await enrichSocialMessages(supabase, [{
 
 assert.deepEqual(requestedProfiles.sort(), ['author-a', 'author-b']);
 assert.equal(message.display_name, 'Alice');
+assert.equal(message.avatar_url, 'https://media.example/alice');
 assert.equal(message.reposted_message.display_name, 'Bob');
+assert.equal(message.reposted_message.avatar_url, 'https://media.example/bob');
 assert.equal(message.useful_count, 3);
 assert.equal(message.comments_count, 2);
 assert.equal(message.reposts_count, 4);

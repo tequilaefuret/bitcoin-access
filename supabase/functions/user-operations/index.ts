@@ -6,6 +6,13 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
 import {
+  DeleteObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from 'npm:@aws-sdk/client-s3@3.750.0';
+import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.750.0';
+import {
   assertAllowedOrigin,
   corsHeaders as buildCorsHeaders,
   jsonResponse,
@@ -31,6 +38,11 @@ import {
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
+const R2_ACCESS_KEY_ID = Deno.env.get('R2_ACCESS_KEY_ID') ?? '';
+const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
+const R2_BUCKET_NAME = Deno.env.get('R2_BUCKET_NAME') ?? '';
+const R2_PUBLIC_BASE_URL = (Deno.env.get('R2_PUBLIC_BASE_URL') ?? '').replace(/\/$/, '');
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -38,6 +50,19 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const MESSAGE_COST_PER_CHAR = 0.00000001; // 1 satoshi par caractère
 const GAME_COST = 0.000001;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PROFILE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_PROFILE_MEDIA_BYTES = 5 * 1024 * 1024;
+
+const r2 = R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY
+  ? new S3Client({
+      region: 'auto',
+      endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: R2_ACCESS_KEY_ID,
+        secretAccessKey: R2_SECRET_ACCESS_KEY,
+      },
+    })
+  : null;
 
 // === VÉRIFICATION JWT ===
 async function verifyJWT(token: string): Promise<{ valid: boolean; address?: string }> {
@@ -230,13 +255,108 @@ async function recordEditorialReport(
   };
 }
 
-async function upsertProfile(address: string, displayName: string, bio: string = '') {
+function normalizeProfileWebsite(value: string = ''): string | null {
+  const cleaned = value.trim();
+  if (!cleaned) return null;
+  const withProtocol = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(withProtocol);
+  } catch {
+    throw new OperationError('Le lien du profil est invalide');
+  }
+  if (parsed.protocol !== 'https:') throw new OperationError('Le lien du profil doit utiliser HTTPS');
+  return parsed.toString();
+}
+
+function normalizeProfileMediaUrl(value: string = ''): string | null {
+  const cleaned = value.trim();
+  if (!cleaned) return null;
+  if (!R2_PUBLIC_BASE_URL || !cleaned.startsWith(`${R2_PUBLIC_BASE_URL}/profiles/`)) {
+    throw new OperationError('URL de média de profil invalide');
+  }
+  return cleaned;
+}
+
+async function profileMediaPrefix(address: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(address));
+  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `profiles/${hash.slice(0, 32)}`;
+}
+
+async function createProfileMediaUpload(
+  address: string,
+  mediaKind: string,
+  contentType: string,
+  fileSize: number,
+) {
+  if (!r2 || !R2_BUCKET_NAME || !R2_PUBLIC_BASE_URL) {
+    throw new OperationError('Le stockage des images de profil n’est pas encore configuré', 503);
+  }
+  if (!['avatar', 'cover'].includes(mediaKind)) throw new OperationError('Type de média invalide');
+  if (!PROFILE_MEDIA_TYPES.has(contentType)) throw new OperationError('Format accepté : JPG, PNG ou WebP');
+  if (!Number.isFinite(fileSize) || fileSize <= 0 || fileSize > MAX_PROFILE_MEDIA_BYTES) {
+    throw new OperationError('L’image doit peser moins de 5 Mo');
+  }
+
+  const objectKey = `${await profileMediaPrefix(address)}/${mediaKind}`;
+  const uploadUrl = await getSignedUrl(
+    r2,
+    new PutObjectCommand({
+      Bucket: R2_BUCKET_NAME,
+      Key: objectKey,
+      ContentType: contentType,
+    }),
+    { expiresIn: 300 },
+  );
+
+  return { success: true, upload_url: uploadUrl, object_key: objectKey, expires_in: 300 };
+}
+
+async function confirmProfileMediaUpload(address: string, mediaKind: string, objectKey: string) {
+  if (!r2 || !R2_BUCKET_NAME || !R2_PUBLIC_BASE_URL) {
+    throw new OperationError('Le stockage des images de profil n’est pas encore configuré', 503);
+  }
+  const expectedKey = `${await profileMediaPrefix(address)}/${mediaKind}`;
+  if (!['avatar', 'cover'].includes(mediaKind) || objectKey !== expectedKey) {
+    throw new OperationError('Média de profil invalide');
+  }
+
+  const uploaded = await r2.send(new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey }));
+  const size = Number(uploaded.ContentLength) || 0;
+  const contentType = uploaded.ContentType || '';
+  if (size <= 0 || size > MAX_PROFILE_MEDIA_BYTES || !PROFILE_MEDIA_TYPES.has(contentType)) {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey })).catch(() => null);
+    throw new OperationError('Le fichier envoyé ne respecte pas les limites du profil');
+  }
+
+  return {
+    success: true,
+    public_url: `${R2_PUBLIC_BASE_URL}/${objectKey}?v=${Date.now()}`,
+  };
+}
+
+async function upsertProfile(
+  address: string,
+  displayName: string,
+  bio: string = '',
+  location: string = '',
+  websiteUrl: string = '',
+  avatarUrl: string = '',
+  coverUrl: string = '',
+) {
   const cleanedDisplayName = displayName.trim();
   const cleanedBio = bio.trim();
+  const cleanedLocation = location.trim();
+  const cleanedWebsiteUrl = normalizeProfileWebsite(websiteUrl);
+  const cleanedAvatarUrl = normalizeProfileMediaUrl(avatarUrl);
+  const cleanedCoverUrl = normalizeProfileMediaUrl(coverUrl);
 
   if (cleanedDisplayName.length < 3 || cleanedDisplayName.length > 50) {
     throw new OperationError('Le pseudo doit contenir entre 3 et 50 caractères');
   }
+  if (cleanedBio.length > 300) throw new OperationError('La bio ne doit pas dépasser 300 caractères');
+  if (cleanedLocation.length > 80) throw new OperationError('La localisation ne doit pas dépasser 80 caractères');
 
   const now = new Date().toISOString();
 
@@ -267,6 +387,10 @@ async function upsertProfile(address: string, displayName: string, bio: string =
         .update({
           display_name: cleanedDisplayName,
           bio: cleanedBio,
+          location: cleanedLocation || null,
+          website_url: cleanedWebsiteUrl,
+          avatar_url: cleanedAvatarUrl,
+          cover_url: cleanedCoverUrl,
           updated_at: now
         })
         .eq('bitcoin_address', address)
@@ -287,6 +411,10 @@ async function upsertProfile(address: string, displayName: string, bio: string =
         bitcoin_address: address,
         display_name: cleanedDisplayName,
         bio: cleanedBio,
+        location: cleanedLocation || null,
+        website_url: cleanedWebsiteUrl,
+        avatar_url: cleanedAvatarUrl,
+        cover_url: cleanedCoverUrl,
         created_at: now,
         updated_at: now
       })
@@ -1309,6 +1437,14 @@ serve(async (req) => {
       parentId,
       displayName,
       bio,
+      location,
+      websiteUrl,
+      avatarUrl,
+      coverUrl,
+      mediaKind,
+      contentType,
+      fileSize,
+      objectKey,
       messageId,
       quoteContent,
       topicId,
@@ -1562,7 +1698,23 @@ serve(async (req) => {
 
       case 'upsert_profile':
         if (!displayName) throw new Error('Paramètre "displayName" manquant');
-        result = await upsertProfile(address, displayName, bio || '');
+        result = await upsertProfile(
+          address,
+          displayName,
+          bio || '',
+          location || '',
+          websiteUrl || '',
+          avatarUrl || '',
+          coverUrl || '',
+        );
+        break;
+
+      case 'create_profile_media_upload':
+        result = await createProfileMediaUpload(address, mediaKind, contentType, Number(fileSize));
+        break;
+
+      case 'confirm_profile_media_upload':
+        result = await confirmProfileMediaUpload(address, mediaKind, objectKey);
         break;
 
       case 'place_pixels':
