@@ -370,14 +370,14 @@ export const useBitcoinBalance = () => {
   /**
    * 📜 Charger l'historique des dépenses
    */
-  const loadSpendingHistory = useCallback(async (limit = 20) => {
-    if (!address) return [];
+  const loadSpendingHistory = useCallback(async (limit = 20, offset = 0) => {
+    if (!address) return { history: [], hasMore: false, nextOffset: 0 };
 
     try {
-      return await getSpendingHistory(address, limit);
+      return await getSpendingHistory(address, limit, offset);
     } catch (err) {
       setError('Could not load history: ' + err.message);
-      return [];
+      return { history: [], hasMore: false, nextOffset: offset };
     }
   }, [address]);
 

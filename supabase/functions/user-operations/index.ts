@@ -452,18 +452,6 @@ async function upsertProfile(
 
   const now = new Date().toISOString();
 
-  const { data: duplicateProfile, error: duplicateError } = await supabase
-    .from('user_profiles')
-    .select('bitcoin_address')
-    .ilike('display_name', cleanedDisplayName)
-    .neq('bitcoin_address', address)
-    .maybeSingle();
-
-  if (duplicateError) throw duplicateError;
-  if (duplicateProfile) {
-    throw new OperationError('Ce pseudo est déjà pris', 409);
-  }
-
   const { data: existingProfile, error: fetchError } = await supabase
     .from('user_profiles')
     .select('*')
@@ -516,9 +504,6 @@ async function upsertProfile(
       profile: createdProfile
     };
   } catch (error: any) {
-    if (error?.code === '23505') {
-      throw new OperationError('Ce pseudo est déjà pris', 409);
-    }
     throw error;
   }
 }
@@ -960,7 +945,7 @@ async function getOpinionTopics(address: string, requestId: string) {
   });
 
   const opinionMessageIds = formattedTopics.flatMap((topic: any) =>
-    topic.posts.flatMap((post: any) => [post.id, post.reposted_message?.id].filter(Boolean))
+    topic.posts.map((post: any) => post.id)
   );
   const { data: chargedRows, error: chargeError } = await supabase.rpc('charge_message_batch_idempotent', {
     p_request_id: requestId,
@@ -1171,8 +1156,8 @@ async function getProfileMessages(
       : {}),
   }));
   const billableIds = [
-    ...snapshot.flatMap((message: any) => [message.id, message.reposted_message?.id].filter(Boolean)),
-    ...parents.flatMap((message: any) => [message.id, message.reposted_message?.id].filter(Boolean)),
+    ...snapshot.map((message: any) => message.id),
+    ...parents.map((message: any) => message.id),
   ];
   const { data: chargedRows, error: chargeError } = await supabase.rpc('charge_message_batch_idempotent', {
     p_request_id: requestId,
@@ -1230,7 +1215,7 @@ async function getMessageThread(viewerAddress: string, messageId: string, reques
   const { data: chargedRows, error: chargeError } = await supabase.rpc('charge_message_batch_idempotent', {
     p_request_id: requestId,
     p_bitcoin_address: viewerAddress,
-    p_message_ids: snapshot.flatMap((message: any) => [message.id, message.reposted_message?.id].filter(Boolean)),
+    p_message_ids: snapshot.map((message: any) => message.id),
     p_request_context: { message_id: messageId, view: 'thread' },
     p_messages_snapshot: snapshot,
   });
@@ -1265,11 +1250,13 @@ function toShellAmount(value: number | string | null | undefined) {
 // ========================================
 // OPÉRATION 6 : GET_HISTORY
 // ========================================
-async function getHistory(address: string, limit: number = 20) {
-  console.log('🧾 [GET_HISTORY] Récupération | Limit:', limit);
+async function getHistory(address: string, limit: number = 20, offset: number = 0) {
+  console.log('🧾 [GET_HISTORY] Récupération | Limit:', limit, '| Offset:', offset);
 
   try {
     const boundedLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
+    const boundedOffset = Math.max(0, Math.min(Number(offset) || 0, 5000));
+    const sourceLimit = boundedOffset + boundedLimit + 1;
 
     const [
       { data: messages, error: messagesError },
@@ -1282,26 +1269,36 @@ async function getHistory(address: string, limit: number = 20) {
         .select('id, content, char_count, cost_shells, created_at, parent_id, repost_of, repost_kind')
         .eq('bitcoin_address', address)
         .order('created_at', { ascending: false })
-        .limit(boundedLimit),
+        .limit(sourceLimit),
       supabase
         .from('message_likes')
         .select('id, message_id, created_at')
         .eq('bitcoin_address', address)
         .order('created_at', { ascending: false })
-        .limit(boundedLimit),
+        .limit(sourceLimit),
       supabase
         .from('message_dislikes')
         .select('id, message_id, created_at')
         .eq('bitcoin_address', address)
         .order('created_at', { ascending: false })
-        .limit(boundedLimit),
+        .limit(sourceLimit),
       supabase
         .from('transactions')
         .select('id, amount, type, game_score, created_at')
         .eq('bitcoin_address', address)
-        .in('type', ['game', 'canvas', 'read_messages', 'social_useful'])
+        .in('type', [
+          'game',
+          'canvas',
+          'read_messages',
+          'social_useful',
+          'profile_media_lock',
+          'profile_avatar_lock',
+          'profile_avatar_unlock',
+          'profile_cover_lock',
+          'profile_cover_unlock',
+        ])
         .order('created_at', { ascending: false })
-        .limit(boundedLimit)
+        .limit(sourceLimit)
     ]);
 
     if (messagesError) throw messagesError;
@@ -1325,6 +1322,8 @@ async function getHistory(address: string, limit: number = 20) {
         amount: -amount,
         created_at: message.created_at,
         title: isComment ? 'Comment' : isQuote ? 'Quoted repost' : isRepost ? 'Repost' : 'Message',
+        event_key: isComment ? 'comment' : isQuote ? 'quote' : isRepost ? 'repost' : 'message',
+        action_count: 1,
         description: isRepost && !isQuote
           ? 'Reposted a publication'
           : summarizeContent(message.content),
@@ -1359,6 +1358,8 @@ async function getHistory(address: string, limit: number = 20) {
         amount: -1,
         created_at: like.created_at,
         title: 'Like',
+        event_key: 'like',
+        action_count: 1,
         description: target
           ? `On ${targetType}: ${summarizeContent(target.content)}`
           : 'On a deleted post',
@@ -1376,6 +1377,8 @@ async function getHistory(address: string, limit: number = 20) {
         amount: -1,
         created_at: dislike.created_at,
         title: 'Dislike',
+        event_key: 'dislike',
+        action_count: 1,
         description: target
           ? `On ${targetType}: ${summarizeContent(target.content)}`
           : 'On a deleted post',
@@ -1384,8 +1387,9 @@ async function getHistory(address: string, limit: number = 20) {
     });
 
     (actions || []).forEach((action: any) => {
-      const amount = toShellAmount(action.amount);
-      if (amount === 0) return;
+      const signedAmount = Number(action.amount || 0);
+      const amount = toShellAmount(signedAmount);
+      if (!Number.isFinite(signedAmount) || amount === 0) return;
 
       const actionType = action.type === 'game'
         ? 'game'
@@ -1393,7 +1397,9 @@ async function getHistory(address: string, limit: number = 20) {
           ? 'canvas'
           : action.type === 'social_useful'
             ? 'useful'
-            : 'read_messages';
+            : action.type.startsWith('profile_')
+              ? action.type
+              : 'read_messages';
 
       const labels: Record<string, { title: string; description: string; detail: string }> = {
         game: {
@@ -1417,6 +1423,31 @@ async function getHistory(address: string, limit: number = 20) {
           title: 'Useful',
           description: 'Marked a post or comment as useful',
           detail: `${Math.round(amount)} shells spent`
+        },
+        profile_media_lock: {
+          title: 'Profile media',
+          description: signedAmount > 0 ? 'Profile media removed' : 'Profile media added',
+          detail: `${Math.round(amount)} shells ${signedAmount > 0 ? 'unlocked' : 'locked'}`
+        },
+        profile_avatar_lock: {
+          title: 'Profile photo',
+          description: 'Profile photo added',
+          detail: `${Math.round(amount)} shells locked`
+        },
+        profile_avatar_unlock: {
+          title: 'Profile photo',
+          description: 'Profile photo removed',
+          detail: `${Math.round(amount)} shells unlocked`
+        },
+        profile_cover_lock: {
+          title: 'Cover photo',
+          description: 'Cover photo added',
+          detail: `${Math.round(amount)} shells locked`
+        },
+        profile_cover_unlock: {
+          title: 'Cover photo',
+          description: 'Cover photo removed',
+          detail: `${Math.round(amount)} shells unlocked`
         }
       };
 
@@ -1425,28 +1456,34 @@ async function getHistory(address: string, limit: number = 20) {
       history.push({
         id: `${actionType}:${action.id}`,
         type: actionType,
-        amount: -amount,
+        amount: actionType.startsWith('profile_') ? signedAmount : -amount,
         created_at: action.created_at,
         title: label.title,
         description: label.description,
-        detail: label.detail
+        detail: label.detail,
+        event_key: actionType,
+        action_count: actionType === 'read_messages' || actionType === 'canvas'
+          ? Math.round(amount)
+          : 1,
       });
     });
 
-    const sortedHistory = history
-      .sort((left, right) => {
+    const allHistory = history.sort((left, right) => {
         const leftTime = new Date(left.created_at).getTime() || 0;
         const rightTime = new Date(right.created_at).getTime() || 0;
         return rightTime - leftTime;
-      })
-      .slice(0, boundedLimit);
+      });
+    const sortedHistory = allHistory.slice(boundedOffset, boundedOffset + boundedLimit);
+    const hasMore = allHistory.length > boundedOffset + sortedHistory.length;
 
     console.log(`✅ [GET_HISTORY] ${sortedHistory.length} événements récupérés`);
 
     return {
       success: true,
       history: sortedHistory,
-      count: sortedHistory.length
+      count: sortedHistory.length,
+      has_more: hasMore,
+      next_offset: boundedOffset + sortedHistory.length,
     };
 
   } catch (error: any) {
@@ -1752,7 +1789,7 @@ serve(async (req) => {
         break;
 
       case 'get_history':
-        result = await getHistory(address, limit || 20);
+        result = await getHistory(address, limit || 20, offset || 0);
         break;
       
       case 'publish_message':
@@ -1793,9 +1830,7 @@ serve(async (req) => {
           {
             p_request_id: requestId,
             p_bitcoin_address: address,
-            p_message_ids: messagesResult.messages.flatMap((message: any) =>
-              [message.id, message.reposted_message?.id].filter(Boolean)
-            ),
+            p_message_ids: messagesResult.messages.map((message: any) => message.id),
             p_request_context: {
               limit: Math.max(1, Math.min(Number(limit) || FEED_BATCH_SIZE, FEED_BATCH_SIZE)),
               offset: Math.max(0, Number(offset) || 0),

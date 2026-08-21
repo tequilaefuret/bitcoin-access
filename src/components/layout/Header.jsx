@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
-  ChevronDown,
   Clock3,
   Flame,
   Gamepad2,
@@ -135,16 +134,14 @@ const Header = ({
             )}
 
             <div className="relative">
-              <button type="button" onClick={() => { setShowProfileMenu((visible) => !visible); setShowCreateMenu(false); }} aria-expanded={showProfileMenu} aria-haspopup="menu" aria-label="Private session" className="flex aspect-square items-center gap-2 rounded-xl border border-white/10 bg-white/[0.055] p-1.5 text-white transition hover:border-white/20 hover:bg-white/[0.09] sm:aspect-auto sm:rounded-full sm:pr-2.5">
-                <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-slate-950">
+              <button type="button" onClick={() => { setShowProfileMenu((visible) => !visible); setShowCreateMenu(false); }} aria-expanded={showProfileMenu} aria-haspopup="menu" aria-label="Private session" className="grid h-10 w-10 place-items-center rounded-full text-white transition hover:-translate-y-0.5 hover:brightness-110">
+                <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-slate-950 shadow-[0_0_22px_rgba(251,191,36,0.14)]">
                   {avatarUrl ? (
                     <img src={avatarUrl} alt={`${userName}'s profile`} className="h-full w-full object-cover" />
                   ) : (
                     <UserRound className="h-4 w-4" />
                   )}
                 </span>
-                <span className="hidden max-w-32 truncate text-sm font-bold text-white/75 sm:block">{userName}</span>
-                <ChevronDown className={`hidden h-4 w-4 text-white/35 transition-transform sm:block ${showProfileMenu ? 'rotate-180' : ''}`} />
               </button>
 
               {showProfileMenu && (

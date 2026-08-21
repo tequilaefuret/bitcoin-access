@@ -1,11 +1,30 @@
 import { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import SocialStep from './SocialStep';
 import Header from '../layout/Header';
 
 jest.mock('../../supabaseClient', () => ({
   deleteMessage: jest.fn(),
 }));
+
+let triggerIntersection;
+
+beforeEach(() => {
+  triggerIntersection = null;
+  global.IntersectionObserver = class IntersectionObserver {
+    constructor(callback) {
+      triggerIntersection = callback;
+    }
+
+    observe() {}
+
+    disconnect() {}
+  };
+});
+
+afterEach(() => {
+  delete global.IntersectionObserver;
+});
 
 const message = {
   id: 'message-1',
@@ -91,14 +110,15 @@ test('loads the next page from its opaque cursor and removes duplicate posts', a
   renderSocialStep({ onLoadMessages });
   expect(await screen.findByText(message.content)).toBeInTheDocument();
 
-  fireEvent.click(screen.getByRole('button', { name: /load more/i }));
+  await waitFor(() => expect(triggerIntersection).toEqual(expect.any(Function)));
+  act(() => triggerIntersection([{ isIntersecting: true }]));
 
   await waitFor(() => {
     expect(onLoadMessages).toHaveBeenLastCalledWith(20, 1, 'for_you', 'cursor-1');
   });
   expect(await screen.findByText(secondMessage.content)).toBeInTheDocument();
   expect(screen.getAllByText(message.content)).toHaveLength(1);
-  expect(screen.queryByRole('button', { name: /load more/i })).not.toBeInTheDocument();
+  expect(screen.queryByTestId('feed-load-sentinel')).not.toBeInTheDocument();
 });
 
 test('ignores a late response from a feed tab that is no longer active', async () => {
@@ -157,7 +177,36 @@ test('adds a newly published post locally without loading the feed again', async
   expect(await screen.findByText(/^your post is published$/i)).toBeInTheDocument();
 });
 
-test('inserts a published comment without reloading the parent feed', async () => {
+test('hydrates a locally added repost with the signed-in name and profile photo', async () => {
+  const publishedRepost = {
+    id: 'repost-published',
+    content: '',
+    created_at: new Date().toISOString(),
+    repost_of: message.id,
+    repost_kind: 'repost',
+  };
+  const onRepostMessage = jest.fn().mockResolvedValue({
+    active: true,
+    reposts_count: 1,
+    message: publishedRepost,
+  });
+  const { container } = renderSocialStep({
+    defaultFeed: 'recent',
+    displayName: 'reader',
+    avatarUrl: 'https://media.example/reader.webp',
+    onRepostMessage,
+  });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  fireEvent.click(screen.getByTitle(/^repost$/i));
+  fireEvent.click(await screen.findByRole('button', { name: /^repost$/i }));
+
+  expect(await screen.findByText('@reader')).toBeInTheDocument();
+  expect(container.querySelector('img[src="https://media.example/reader.webp"]')).toBeInTheDocument();
+  expect(onRepostMessage).toHaveBeenCalledWith(message.id, '');
+});
+
+test('opens and focuses the comment composer without loading comments inline', async () => {
   const publishedComment = {
     ...message,
     id: 'comment-published',
@@ -172,9 +221,10 @@ test('inserts a published comment without reloading the parent feed', async () =
   const { onLoadMessages } = renderSocialStep({ onPublishMessage });
 
   expect(await screen.findByText(message.content)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: /show comments/i }));
-  fireEvent.click(await screen.findByRole('button', { name: /add a comment/i }));
-  fireEvent.change(screen.getByPlaceholderText(/write your comment/i), {
+  fireEvent.click(screen.getByRole('button', { name: /write a comment/i }));
+  const commentInput = await screen.findByPlaceholderText(/write your comment/i);
+  expect(commentInput).toHaveFocus();
+  fireEvent.change(commentInput, {
     target: { value: publishedComment.content },
   });
   const commentPublishButton = screen.getAllByRole('button', { name: /^publish$/i })
@@ -184,7 +234,10 @@ test('inserts a published comment without reloading the parent feed', async () =
   await waitFor(() => {
     expect(onPublishMessage).toHaveBeenCalledWith(publishedComment.content, message.id);
   });
-  expect(await screen.findByText(publishedComment.content)).toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.queryByPlaceholderText(/write your comment/i)).not.toBeInTheDocument();
+  });
+  expect(screen.queryByRole('article', { name: publishedComment.content })).not.toBeInTheDocument();
   expect(onLoadMessages).toHaveBeenCalledTimes(1);
 });
 

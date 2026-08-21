@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Compass, Loader, Send } from 'lucide-react';
 import { FeedSkeleton } from '../ui/ContentSkeletons';
 
@@ -24,6 +24,18 @@ const ClassicFeedPanel = ({
   avatarUrl = '',
 }) => {
   const charCount = messageContent.replace(/\n/g, '').length;
+  const loadMoreSentinelRef = useRef(null);
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || !hasMore || isLoadingFeed || isLoadingMore || typeof IntersectionObserver === 'undefined') return undefined;
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) onLoadMore?.();
+    }, { rootMargin: '1200px 0px' });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, isLoadingFeed, isLoadingMore, onLoadMore]);
 
   return (
     <div className="mx-auto max-w-[720px]">
@@ -67,9 +79,7 @@ const ClassicFeedPanel = ({
           )}
 
           {isLoadingMore && messages.length > 0 && <FeedSkeleton count={2} compact className="mt-3" />}
-          {hasMore && messages.length > 0 && !isLoadingMore && (
-            <button type="button" onClick={onLoadMore} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.035] py-3 text-sm font-semibold text-white/55 transition hover:border-white/15 hover:bg-white/[0.06] hover:text-white">Load more</button>
-          )}
+          {hasMore && messages.length > 0 && <div ref={loadMoreSentinelRef} data-testid="feed-load-sentinel" className="h-px" aria-hidden="true" />}
         </section>
       </main>
 

@@ -387,7 +387,7 @@ const SettingsStep = ({
               <select id="balance-display" value={preferences.balanceDisplay} onChange={(event) => updatePreference('balanceDisplay', event.target.value)} className="mt-4 w-full rounded-2xl border border-stone-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 sm:max-w-sm">
                 <option value="show_all">Show bitcoin and shell balances</option>
                 <option value="hide_all">Hide bitcoin and shell balances</option>
-                <option value="hide_bitcoin">Hide bitcoin balances</option>
+                <option value="hide_bitcoin">Hide bitcoin balance</option>
                 <option value="hide_shells">Hide shell balances</option>
               </select>
             </div>

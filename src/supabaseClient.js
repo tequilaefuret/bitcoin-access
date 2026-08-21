@@ -330,6 +330,7 @@ export async function getPublicProfile(address) {
     ownership_verified: Boolean(data.profile?.ownership_verified),
     followers_count: Number(data.profile?.followers_count) || 0,
     following_count: Number(data.profile?.following_count) || 0,
+    profile_counts: data.profile?.profile_counts || { posts: 0, replies: 0, reposts: 0, useful: 0 },
     created_at: data.profile?.created_at || null,
   };
 }
@@ -650,9 +651,13 @@ export async function getUserStats(address) {
  * @param {number} limit - Nombre d'éléments (défaut: 20)
  * @returns {Promise<array>} Liste des événements de dépense
  */
-export async function getSpendingHistory(address, limit = 20) {
-  const data = await invokeUserOperation(address, 'get_history', { limit }, 'Could not load history');
-  return data?.history || [];
+export async function getSpendingHistory(address, limit = 20, offset = 0) {
+  const data = await invokeUserOperation(address, 'get_history', { limit, offset }, 'Could not load history');
+  return {
+    history: Array.isArray(data?.history) ? data.history : [],
+    hasMore: Boolean(data?.has_more),
+    nextOffset: Number(data?.next_offset) || 0,
+  };
 }
 
 export async function deleteMessage(address, messageId) {

@@ -76,6 +76,22 @@ test('does not show a placeholder username while the real profile is loading', (
   expect(screen.queryByText(/anonymous/i)).not.toBeInTheDocument();
 });
 
+test('shows profile totals without loading every tab', async () => {
+  getUserData.mockResolvedValueOnce({
+    profile: { display_name: 'screen-safe-user' },
+    profile_counts: { posts: 12, replies: 8, reposts: 4, useful: 17 },
+    ownership_verified: true,
+  });
+
+  render(<ProfileStep profileAddress={address} currentAddress={address} onBack={jest.fn()} />);
+
+  expect(await screen.findByRole('button', { name: /posts 12/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /replies 8/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /reposts 4/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /useful 17/i })).toBeInTheDocument();
+  expect(getProfileMessages.mock.calls.some((call) => call[2] === 'replies')).toBe(false);
+});
+
 test('shows the complete profile address only when the preference is enabled', async () => {
   render(
     <ProfileStep

@@ -12,6 +12,7 @@ import { useTemporaryMessageHides } from '../../features/feed/useTemporaryMessag
 const SocialStep = ({
   address,
   avatarUrl = '',
+  displayName = '',
   onPublishMessage,
   onLoadMessages,
   onLoadComments,
@@ -78,6 +79,15 @@ const SocialStep = ({
     [selectedTopicId, topics]
   );
 
+  const hydrateOwnMessage = (message) => {
+    const normalized = normalizePublishedMessage(message, address);
+    return normalized ? {
+      ...normalized,
+      display_name: normalized.display_name || displayName || null,
+      avatar_url: normalized.avatar_url || avatarUrl || null,
+    } : null;
+  };
+
   const nextTopics = useMemo(
     () => topics.filter((topic) => topic.id !== selectedTopic?.id).slice(0, 3),
     [selectedTopic, topics]
@@ -143,7 +153,7 @@ const SocialStep = ({
       const result = await onPublishMessage(content);
       if (!result || result.success === false) return;
 
-      const publishedMessage = normalizePublishedMessage(result.message, address);
+      const publishedMessage = hydrateOwnMessage(result.message);
       prependLatest(publishedMessage, classicSort === 'recent');
       setMessageContent('');
       setEditorialNotice('Your post is published');
@@ -215,7 +225,7 @@ const SocialStep = ({
     }));
 
     const sourceMessage = messages.find((message) => message.id === messageId);
-    const publishedRepost = normalizePublishedMessage(result.message, address);
+    const publishedRepost = hydrateOwnMessage(result.message);
     if (publishedRepost) {
       const locallyHydratedRepost = {
         ...publishedRepost,
@@ -224,7 +234,7 @@ const SocialStep = ({
       prependLatest(locallyHydratedRepost);
     }
 
-    setEditorialNotice('Your repost was saved without reloading the feed.');
+    setEditorialNotice('Your post is published');
     return result;
   };
 

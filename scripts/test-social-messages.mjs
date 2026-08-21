@@ -95,6 +95,28 @@ const [viewerMessage] = await enrichSocialMessages(viewerSupabase, [{
 assert.equal(viewerMessage.user_has_marked_useful, true);
 assert.equal(viewerMessage.user_has_reposted, true);
 
+const repostWrapperSupabase = {
+  from(table) {
+    if (table === 'user_profiles') {
+      return queryResult([{ bitcoin_address: 'reader-address', display_name: 'Reader' }]);
+    }
+    if (table === 'message_useful_votes') return queryResult([]);
+    if (table === 'messages') {
+      return queryResult([{ repost_of: 'original-1' }]);
+    }
+    throw new Error(`Unexpected table: ${table}`);
+  },
+};
+const [ownRepostWrapper] = await enrichSocialMessages(repostWrapperSupabase, [{
+  id: 'repost-wrapper-1',
+  bitcoin_address: 'reader-address',
+  repost_of: 'original-1',
+}], {
+  readerAddress: 'reader-address',
+  originalById,
+});
+assert.equal(ownRepostWrapper.user_has_reposted, false);
+
 const thenableQuery = (data) => {
   const builder = {
     select() { return builder; },

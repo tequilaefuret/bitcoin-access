@@ -104,7 +104,6 @@ export async function enrichSocialMessages(supabase, messages, options = {}) {
     ]),
   );
   const messageIds = messageList.map((message) => message.id);
-  const repostTargetIds = messageList.map((message) => message.repost_of || message.id);
   let usefulMessageIds = new Set();
   let repostedTargetIds = new Set();
   const topicIdsByMessage = options.topicIdsByMessage
@@ -125,7 +124,7 @@ export async function enrichSocialMessages(supabase, messages, options = {}) {
         .eq('bitcoin_address', options.readerAddress)
         .eq('repost_kind', 'simple')
         .is('deleted_at', null)
-        .in('repost_of', repostTargetIds),
+        .in('repost_of', messageIds),
     ]);
     if (usefulVotesResult.error) throw usefulVotesResult.error;
     if (repostsResult.error) throw repostsResult.error;
@@ -154,7 +153,7 @@ export async function enrichSocialMessages(supabase, messages, options = {}) {
       comments_count: message.comments?.[0]?.count || 0,
       reposts_count: message.reposts?.[0]?.count || 0,
       user_has_marked_useful: usefulMessageIds.has(message.id),
-      user_has_reposted: repostedTargetIds.has(message.repost_of || message.id),
+      user_has_reposted: repostedTargetIds.has(message.id),
       ...(topicIdsByMessage
         ? { topic_feedback_available: (topicIdsByMessage.get(message.id)?.size || 0) > 0 }
         : {}),

@@ -13,7 +13,7 @@ const RepostComposer = ({
   onOpenQuote,
   onCloseQuote,
 }) => (
-  <>
+  <div onClick={(event) => event.stopPropagation()}>
     {showOptions && (
       <div className="mt-3 flex w-fit overflow-hidden rounded-xl border border-white/10 bg-[#191b22] shadow-lg">
         <button
@@ -27,7 +27,7 @@ const RepostComposer = ({
           {userHasReposted ? 'Undo repost' : 'Repost'}
           {!userHasReposted && (
             <span aria-hidden="true" className="text-xs font-normal text-white/30">
-              {repostedCharacterCount} sats
+              {repostedCharacterCount} shells
             </span>
           )}
         </button>
@@ -60,7 +60,7 @@ const RepostComposer = ({
         />
         <div className="mt-2 flex items-center justify-between gap-3">
           <span className="text-xs text-white/30">
-            {quoteText.length} / 1000 · {repostedCharacterCount + quoteText.trim().replace(/\n/g, '').length} sats
+            {quoteText.length} / 1000 · {repostedCharacterCount + quoteText.trim().replace(/\n/g, '').length} shells
           </span>
           <button
             type="button"
@@ -73,7 +73,7 @@ const RepostComposer = ({
         </div>
       </div>
     )}
-  </>
+  </div>
 );
 
 export default RepostComposer;

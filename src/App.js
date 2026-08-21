@@ -73,6 +73,7 @@ const BitcoinExclusiveAccess = () => {
   const [step, setStep] = useState('landing');
   const [showStats, setShowStats] = useState(false);
   const [stats, setStats] = useState(null);
+  const [isLoadingMoreStats, setIsLoadingMoreStats] = useState(false);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const [profileAddress, setProfileAddress] = useState(null);
   const [profileReturnStep, setProfileReturnStep] = useState('social');
@@ -446,10 +447,26 @@ const BitcoinExclusiveAccess = () => {
 
   // ===== HANDLER : STATISTIQUES =====
   const handleShowStats = useCallback(async () => {
-    const history = await loadSpendingHistory(20);
-    setStats({ history });
     setShowStats(true);
+    setStats(null);
+    const historyPage = await loadSpendingHistory(20, 0);
+    setStats(historyPage);
   }, [loadSpendingHistory]);
+
+  const handleLoadOlderStats = useCallback(async () => {
+    if (!stats?.hasMore || isLoadingMoreStats) return;
+    setIsLoadingMoreStats(true);
+    try {
+      const historyPage = await loadSpendingHistory(20, stats.nextOffset);
+      setStats((current) => ({
+        history: [...(current?.history || []), ...historyPage.history],
+        hasMore: historyPage.hasMore,
+        nextOffset: historyPage.nextOffset,
+      }));
+    } finally {
+      setIsLoadingMoreStats(false);
+    }
+  }, [isLoadingMoreStats, loadSpendingHistory, stats]);
 
   // ===== HANDLER : OUVRIR UN PROFIL =====
   const handleOpenProfile = useCallback((bitcoinAddress, returnStep = 'social') => {
@@ -722,6 +739,7 @@ const BitcoinExclusiveAccess = () => {
             <SocialStep
               address={address}
               avatarUrl={sessionAvatarUrl}
+              displayName={sessionDisplayName}
               onPublishMessage={handlePublishMessage}
               onLoadMessages={loadMessages}
               onLoadComments={loadComments}
@@ -850,6 +868,8 @@ const BitcoinExclusiveAccess = () => {
             <StatsModal
               stats={stats}
               onClose={() => setShowStats(false)}
+              onLoadMore={handleLoadOlderStats}
+              loadingMore={isLoadingMoreStats}
               balanceDisplay={userPreferences.balanceDisplay}
             />
           )}

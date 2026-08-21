@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
   BadgeCheck,
@@ -101,6 +101,25 @@ const ProfileStep = ({
   const [followersAdjustment, setFollowersAdjustment] = useState(0);
   const [showSpent, setShowSpent] = useState(false);
 
+  const handleProfileBalanceUpdated = useCallback((balance) => {
+    onBalanceUpdated?.(balance);
+    if (!balance) return;
+    const nextShellBalance = balance.new_balance ?? balance.shells_balance ?? balance.user?.shells_balance;
+    const nextSpentTotal = balance.shells_spent_total ?? balance.user?.shells_spent_total;
+    if (nextShellBalance !== undefined) {
+      setProfileStats((current) => ({
+        ...(current || {}),
+        shells_available: Number(nextShellBalance) || 0,
+        ...(nextSpentTotal !== undefined ? { shells_spent_total: Number(nextSpentTotal) || 0 } : {}),
+      }));
+      setProfileUser((current) => current ? {
+        ...current,
+        shells_balance: Number(nextShellBalance) || 0,
+        ...(nextSpentTotal !== undefined ? { shells_spent_total: Number(nextSpentTotal) || 0 } : {}),
+      } : current);
+    }
+  }, [onBalanceUpdated]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -134,7 +153,7 @@ const ProfileStep = ({
         setTabMessages((current) => ({ ...current, posts: initialPosts }));
         setLoadedTabs((current) => ({ ...current, posts: true }));
         setHasMoreByTab((current) => ({ ...current, posts: initialPosts.length === PAGE_SIZE }));
-        onBalanceUpdated?.(initialMessages);
+        handleProfileBalanceUpdated(initialMessages);
       } catch (err) {
         if (cancelled) return;
         setError(err.message || 'Unable to load this profile');
@@ -150,7 +169,7 @@ const ProfileStep = ({
     return () => {
       cancelled = true;
     };
-  }, [currentAddress, onBalanceUpdated, profileAddress]);
+  }, [currentAddress, handleProfileBalanceUpdated, profileAddress]);
 
   useEffect(() => {
     if (loading || loadedTabs[activeTab] || !profileAddress || !currentAddress) return undefined;
@@ -164,12 +183,12 @@ const ProfileStep = ({
         setTabMessages((current) => ({ ...current, [activeTab]: nextMessages }));
         setLoadedTabs((current) => ({ ...current, [activeTab]: true }));
         setHasMoreByTab((current) => ({ ...current, [activeTab]: nextMessages.length === PAGE_SIZE }));
-        onBalanceUpdated?.(result);
+        handleProfileBalanceUpdated(result);
       })
       .catch((loadError) => !cancelled && setError(loadError.message || 'Unable to load this profile section'))
       .finally(() => !cancelled && setLoadingTab(false));
     return () => { cancelled = true; };
-  }, [activeTab, currentAddress, loadedTabs, loading, onBalanceUpdated, profileAddress]);
+  }, [activeTab, currentAddress, handleProfileBalanceUpdated, loadedTabs, loading, profileAddress]);
 
   const isOwnProfile = profileAddress && currentAddress && profileAddress === currentAddress;
   const handleProfileFollow = async () => {
@@ -188,6 +207,7 @@ const ProfileStep = ({
     setShowEditProfile(false);
     onProfileUpdated?.(savedProfile);
   };
+
   const handleCopyAddress = async () => {
     try {
       await navigator.clipboard.writeText(profileAddress);
@@ -279,7 +299,7 @@ const ProfileStep = ({
         tabMessages[activeTab].length,
       );
       const nextMessages = Array.isArray(result?.messages) ? result.messages : [];
-      onBalanceUpdated?.(result);
+      handleProfileBalanceUpdated(result);
       setTabMessages((current) => ({
         ...current,
         [activeTab]: [...current[activeTab], ...nextMessages],
@@ -339,6 +359,7 @@ const ProfileStep = ({
   const followingProfile = isFollowing ? isFollowing(profileAddress) : false;
   const followersCount = Math.max(0, (Number(profileUser?.followers_count ?? profile.followers_count) || 0) + followersAdjustment);
   const followingCount = Number(profileUser?.following_count ?? profile.following_count) || 0;
+  const profileCounts = profileUser?.profile_counts || profile.profile_counts || {};
 
   if (!profileAddress) {
     return null;
@@ -427,24 +448,24 @@ const ProfileStep = ({
 
             {isOwnProfile && (
               <div className="border-t border-white/[0.08] p-5 sm:p-8">
-                <div className="relative overflow-hidden rounded-[1.75rem] border border-amber-200/20 bg-[#f7f5ef] p-5 text-slate-950 shadow-[0_20px_60px_-38px_rgba(252,211,77,0.65)] sm:p-6">
-                  <div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-amber-300/25 blur-3xl" aria-hidden="true" />
-                  <p className="relative text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-700">Your spending power</p>
-                  {showShellBalance ? <p className="relative mt-2 text-3xl font-black tracking-[-0.04em]">{formatShellAmount(shellsAvailable)} <span className="text-base text-slate-500">shells</span></p> : <p className="relative mt-2 text-lg font-bold text-slate-500">Shell balance hidden</p>}
+                <div className="relative overflow-hidden rounded-[1.75rem] border border-amber-200/15 bg-[linear-gradient(135deg,rgba(252,211,77,0.09),rgba(255,255,255,0.035)_52%,rgba(249,115,22,0.06))] p-5 text-white shadow-[0_20px_60px_-42px_rgba(252,211,77,0.38)] sm:p-6">
+                  <div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-amber-300/10 blur-3xl" aria-hidden="true" />
+                  <p className="relative text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-300/70">Your spending power</p>
+                  {showShellBalance ? <p className="relative mt-2 text-3xl font-black tracking-[-0.04em]">{formatShellAmount(shellsAvailable)} <span className="text-base text-white/40">shells</span></p> : <p className="relative mt-2 text-lg font-bold text-white/40">Shell balance hidden</p>}
                   {showShellBalance && <button type="button" onClick={() => setShowSpent((visible) => !visible)} className="group relative mt-5 block w-full text-left" aria-expanded={showSpent}>
-                    <span className="block h-3 overflow-hidden rounded-full bg-slate-200">
+                    <span className="block h-3 overflow-hidden rounded-full bg-black/35 ring-1 ring-white/[0.06]">
                       <span className="block h-full rounded-full bg-gradient-to-r from-amber-300 to-orange-500 transition-[width] duration-500" style={{ width: `${availablePercent}%` }} />
                     </span>
-                    <span className={`absolute -top-10 right-0 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white shadow-xl transition ${showSpent ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:opacity-100'}`}>{formatShellAmount(shellsSpentTotal)} shells spent</span>
+                    <span className={`absolute -top-10 right-0 rounded-xl border border-white/10 bg-black/90 px-3 py-2 text-xs font-bold text-white shadow-xl transition ${showSpent ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:opacity-100'}`}>{formatShellAmount(shellsSpentTotal)} shells spent</span>
                   </button>}
-                  <div className="relative mt-4 flex flex-wrap items-end justify-between gap-3 text-xs text-slate-500">
+                  <div className="relative mt-4 flex flex-wrap items-end justify-between gap-3 text-xs text-white/40">
                     <div className="flex flex-wrap gap-x-5 gap-y-2">
-                      {showShellBalance && <span><strong className="text-slate-950">{formatShellAmount(shellsAvailable, { besideBar: true })}</strong> shells available</span>}
-                      {showBitcoinBalance && <span><strong className="text-slate-950">{Number(btcBalance).toFixed(8)}</strong> BTC</span>}
+                      {showShellBalance && <span><strong className="text-white">{formatShellAmount(shellsAvailable, { besideBar: true })}</strong> shells available</span>}
+                      {showBitcoinBalance && <span><strong className="text-white">{Number(btcBalance).toFixed(8)}</strong> BTC</span>}
                     </div>
                     <div className="flex items-center gap-3">
-                      {onShowStats && showShellBalance && <button type="button" onClick={onShowStats} className="font-bold text-slate-600 underline underline-offset-2 hover:text-slate-950">View activity</button>}
-                      <a href={`https://mempool.space/address/${profileAddress}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-bold text-amber-700 hover:text-amber-900 hover:underline">mempool.space <ExternalLink className="h-3 w-3" /></a>
+                      {onShowStats && showShellBalance && <button type="button" onClick={onShowStats} className="font-bold text-white/55 underline underline-offset-2 hover:text-white">View activity</button>}
+                      <a href={`https://mempool.space/address/${profileAddress}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-bold text-amber-300/75 hover:text-amber-300 hover:underline">mempool.space <ExternalLink className="h-3 w-3" /></a>
                     </div>
                   </div>
                 </div>
@@ -453,10 +474,10 @@ const ProfileStep = ({
 
             <nav className="sticky top-[68px] z-10 flex overflow-x-auto border-y border-white/[0.08] bg-[#101218]/90 px-3 backdrop-blur-xl sm:px-6" aria-label="Profile content">
               {[
-                { id: 'posts', label: 'Posts', count: tabMessages.posts.length, icon: MessageSquare },
-                { id: 'replies', label: 'Replies', count: tabMessages.replies.length, icon: MessageSquare },
-                { id: 'reposts', label: 'Reposts', count: tabMessages.reposts.length, icon: Repeat2 },
-                { id: 'useful', label: 'Useful', count: tabMessages.useful.length, icon: Lightbulb },
+                { id: 'posts', label: 'Posts', count: Number(profileCounts.posts) || 0, icon: MessageSquare },
+                { id: 'replies', label: 'Replies', count: Number(profileCounts.replies) || 0, icon: MessageSquare },
+                { id: 'reposts', label: 'Reposts', count: Number(profileCounts.reposts) || 0, icon: Repeat2 },
+                { id: 'useful', label: 'Useful', count: Number(profileCounts.useful) || 0, icon: Lightbulb },
               ].map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -491,7 +512,7 @@ const ProfileStep = ({
           profile={{ ...profile, display_name: displayName }}
           onClose={() => setShowEditProfile(false)}
           onSaved={handleProfileSaved}
-          onBalanceUpdated={onBalanceUpdated}
+          onBalanceUpdated={handleProfileBalanceUpdated}
         />
       )}
       {connectionsRelation && (

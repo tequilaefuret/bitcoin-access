@@ -83,6 +83,7 @@ create table public.editorial_author_preferences (
 \ir ../supabase/migrations/202608080002_fast_atomic_charges.sql
 \ir ../supabase/migrations/202608080003_transactional_billing_idempotency.sql
 \ir ../supabase/migrations/20260820222705_shell_units_and_refundable_locks.sql
+\ir ../supabase/migrations/20260821205412_fix_social_history_and_profile_counts.sql
 
 insert into public.user_balances (
   bitcoin_address, btc_balance, shells_balance, shells_spent_total
@@ -102,6 +103,7 @@ declare
   reconciled record;
   followed record;
   media_lock record;
+  useful_vote record;
   message_id uuid;
   oversized_batch uuid[];
   publish_request_id uuid := gen_random_uuid();
@@ -111,6 +113,8 @@ declare
   second_message_id uuid;
   foreign_message_id uuid;
   transaction_count integer;
+  media_lock_transaction_count integer;
+  media_unlock_transaction_count integer;
 begin
   select * into published
   from public.publish_message_with_cost_idempotent(
@@ -252,6 +256,23 @@ begin
   );
   if media_lock.lock_delta <> -10000 or media_lock.new_balance <> 69999994 then
     raise exception 'Profile media removal did not refund its lock: %', row_to_json(media_lock);
+  end if;
+  select
+    count(*) filter (where type = 'profile_avatar_lock'),
+    count(*) filter (where type = 'profile_avatar_unlock')
+  into media_lock_transaction_count, media_unlock_transaction_count
+  from public.transactions
+  where bitcoin_address = 'bc1q-local-security-test';
+  if media_lock_transaction_count <> 2 or media_unlock_transaction_count <> 2 then
+    raise exception 'Profile media replacement history is incomplete: locks %, unlocks %',
+      media_lock_transaction_count, media_unlock_transaction_count;
+  end if;
+
+  select * into useful_vote from public.toggle_message_useful_with_cost(
+    foreign_message_id, 'bc1q-local-security-test'
+  );
+  if not useful_vote.active or useful_vote.cost <> 1 or useful_vote.new_balance <> 69999993 then
+    raise exception 'Useful was not charged atomically: %', row_to_json(useful_vote);
   end if;
 
   begin

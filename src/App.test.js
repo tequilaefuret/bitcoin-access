@@ -89,6 +89,7 @@ test('offers a simple repost and a quote without a wallet-specific flow', async 
 });
 
 test('renders the original post inside a quote', () => {
+  const onOpenThread = jest.fn();
   render(
     <MessageCard
       message={buildMessage({
@@ -105,6 +106,7 @@ test('renders the original post inside a quote', () => {
         },
       })}
       currentAddress="bc1q-reader"
+      onOpenThread={onOpenThread}
       showActions={false}
     />
   );
@@ -112,6 +114,24 @@ test('renders the original post inside a quote', () => {
   expect(screen.getByText('My perspective.')).toBeInTheDocument();
   expect(screen.getByText('The original post.')).toBeInTheDocument();
   expect(screen.getByText('@original-author')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('The original post.'));
+  expect(onOpenThread).toHaveBeenCalledWith('message-1');
+});
+
+test('opens and focuses a comment composer without navigating to the thread', () => {
+  const onOpenThread = jest.fn();
+  render(
+    <MessageCard
+      message={buildMessage()}
+      currentAddress="bc1q-reader"
+      onOpenThread={onOpenThread}
+      onComment={jest.fn()}
+    />
+  );
+
+  fireEvent.click(screen.getByRole('button', { name: /write a comment/i }));
+  expect(screen.getByPlaceholderText(/write your comment/i)).toHaveFocus();
+  expect(onOpenThread).not.toHaveBeenCalled();
 });
 
 test('offers author and topic controls on comments', async () => {
@@ -129,16 +149,12 @@ test('offers author and topic controls on comments', async () => {
 
   render(
     <MessageCard
-      message={buildMessage({ comments_count: 1 })}
+      message={comment}
       currentAddress="bc1q-reader"
-      onLoadComments={jest.fn().mockResolvedValue([comment])}
       onEditorialPreference={onEditorialPreference}
       onEditorialTopicPreference={onEditorialTopicPreference}
     />
   );
-
-  fireEvent.click(screen.getByRole('button', { name: /show comments/i }));
-  await screen.findByText('A classified reply.');
 
   const commentOptions = screen.getByRole('button', { name: /comment options/i });
   fireEvent.click(commentOptions);

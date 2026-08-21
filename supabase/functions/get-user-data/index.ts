@@ -42,6 +42,10 @@ serve(async (req) => {
       { data: profile, error: profileError },
       { count: followersCount, error: followersError },
       { count: followingCount, error: followingError },
+      { count: postsCount, error: postsError },
+      { count: repliesCount, error: repliesError },
+      { count: repostsCount, error: repostsError },
+      { count: usefulCount, error: usefulError },
     ] = await Promise.all([
       supabase
         .from('user_profiles')
@@ -50,9 +54,19 @@ serve(async (req) => {
         .maybeSingle(),
       supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_address', address),
       supabase.from('follows').select('*', { count: 'exact', head: true }).eq('follower_address', address),
+      supabase.from('messages').select('*', { count: 'exact', head: true })
+        .eq('bitcoin_address', address).is('parent_id', null).is('repost_of', null).is('deleted_at', null),
+      supabase.from('messages').select('*', { count: 'exact', head: true })
+        .eq('bitcoin_address', address).not('parent_id', 'is', null).is('deleted_at', null),
+      supabase.from('messages').select('*', { count: 'exact', head: true })
+        .eq('bitcoin_address', address).not('repost_of', 'is', null).is('deleted_at', null),
+      supabase.from('message_useful_votes').select('*', { count: 'exact', head: true })
+        .eq('bitcoin_address', address),
     ]);
-    if (profileError || followersError || followingError) {
-      throw profileError || followersError || followingError;
+    if (profileError || followersError || followingError
+      || postsError || repliesError || repostsError || usefulError) {
+      throw profileError || followersError || followingError
+        || postsError || repliesError || repostsError || usefulError;
     }
 
     const { data: passwordCredential, error: passwordError } = await supabase
@@ -80,6 +94,12 @@ serve(async (req) => {
         password_setup_skipped: Boolean(accountPreferences?.password_prompt_skipped_at),
         followers_count: followersCount || 0,
         following_count: followingCount || 0,
+        profile_counts: {
+          posts: postsCount || 0,
+          replies: repliesCount || 0,
+          reposts: repostsCount || 0,
+          useful: usefulCount || 0,
+        },
       },
     });
   } catch (error) {

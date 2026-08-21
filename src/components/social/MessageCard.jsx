@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Ellipsis,
   Lightbulb,
@@ -9,7 +9,6 @@ import {
 import ExpandableText from './ExpandableText';
 import PostOptionsMenu from './PostOptionsMenu';
 import RepostComposer from './RepostComposer';
-import { FeedSkeleton } from '../ui/ContentSkeletons';
 import {
   countBillableCharacters,
   formatMessageTimestamp,
@@ -20,7 +19,6 @@ const MessageCard = ({
   currentAddress,
   onUseful,
   onComment,
-  onLoadComments,
   onRepost,
   onDelete,
   onUserClick,
@@ -32,12 +30,8 @@ const MessageCard = ({
   isFollowed = false,
   showActions = true
 }) => {
-  const [showComments, setShowComments] = useState(false);
   const [showCommentForm, setShowCommentForm] = useState(false);
   const [commentText, setCommentText] = useState('');
-  const [comments, setComments] = useState([]);
-  const [loadingComments, setLoadingComments] = useState(false);
-  const [commentsLoaded, setCommentsLoaded] = useState(false);
   const [commentLoading, setCommentLoading] = useState(false);
   const [commentError, setCommentError] = useState('');
   const [localUsefulCount, setLocalUsefulCount] = useState(Number(message.useful_count) || 0);
@@ -59,6 +53,11 @@ const MessageCard = ({
   const [showEditorialMenu, setShowEditorialMenu] = useState(false);
   const [editorialAction, setEditorialAction] = useState('');
   const [editorialError, setEditorialError] = useState('');
+  const commentInputRef = useRef(null);
+
+  useEffect(() => {
+    if (showCommentForm) commentInputRef.current?.focus();
+  }, [showCommentForm]);
 
   const authorAddress = message.bitcoin_address || null;
   const isOwnMessage = authorAddress === currentAddress;
@@ -94,44 +93,14 @@ const MessageCard = ({
     }
   };
 
-  const loadComments = async () => {
-    if (loadingComments || commentsLoaded || !onLoadComments) return;
-
-    setLoadingComments(true);
-    try {
-      const loadedComments = await onLoadComments(message.id);
-      setComments((current) => {
-        const merged = [...current, ...(loadedComments || [])];
-        const seen = new Set();
-        return merged.filter((comment) => {
-          if (!comment?.id || seen.has(comment.id)) return false;
-          seen.add(comment.id);
-          return true;
-        });
-      });
-      setCommentsLoaded(true);
-    } catch {
-      // Keep comments created locally even if the initial fetch failed.
-    } finally {
-      setLoadingComments(false);
-    }
-  };
-
   const submitComment = async () => {
     if (!onComment || commentLoading || !commentText.trim()) return;
 
     setCommentLoading(true);
     setCommentError('');
     try {
-      await onComment(message.id, commentText, (newComment) => {
+      await onComment(message.id, commentText, () => {
         setLocalCommentsCount((count) => count + 1);
-        if (newComment) {
-          setComments((current) => (
-            current.some((comment) => comment.id === newComment.id)
-              ? current
-              : [newComment, ...current]
-          ));
-        }
         setCommentText('');
         setShowCommentForm(false);
       });
@@ -331,15 +300,41 @@ const MessageCard = ({
 
       {message.repost_of && (
         originalMessage ? (
-          <div className="mb-3 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4">
-            <button
-              type="button"
-              onClick={() => onUserClick?.(originalMessage.bitcoin_address)}
-              disabled={!originalMessage.bitcoin_address || !onUserClick}
-              className="text-xs font-bold text-white/70 hover:underline disabled:no-underline"
-            >
-              {originalMessage.display_name ? `@${originalMessage.display_name}` : '@anonymous'}
-            </button>
+          <div
+            role={onOpenThread ? 'button' : undefined}
+            tabIndex={onOpenThread ? 0 : undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenThread?.(originalMessage.id);
+            }}
+            onKeyDown={(event) => {
+              if (onOpenThread && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault();
+                onOpenThread(originalMessage.id);
+              }
+            }}
+            className={`mb-3 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 ${onOpenThread ? 'cursor-pointer transition hover:border-white/[0.15] hover:bg-white/[0.05]' : ''}`}
+          >
+            <div className="flex items-center gap-2">
+              {originalMessage.avatar_url ? (
+                <img src={originalMessage.avatar_url} alt="" className="h-7 w-7 rounded-full object-cover" />
+              ) : (
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-[10px] font-black text-slate-950">
+                  {(originalMessage.display_name || 'A').trim().charAt(0).toUpperCase()}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onUserClick?.(originalMessage.bitcoin_address);
+                }}
+                disabled={!originalMessage.bitcoin_address || !onUserClick}
+                className="text-xs font-bold text-white/70 hover:underline disabled:no-underline"
+              >
+                {originalMessage.display_name ? `@${originalMessage.display_name}` : '@anonymous'}
+              </button>
+            </div>
             <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/60">
               {originalMessage.content}
             </p>
@@ -378,10 +373,10 @@ const MessageCard = ({
 
           <button
             type="button"
-            aria-label={`Show comments (${localCommentsCount})`}
-            onClick={() => {
-              setShowComments((current) => !current);
-              if (!showComments && !commentsLoaded) loadComments();
+            aria-label={`Write a comment (${localCommentsCount})`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setShowCommentForm(true);
             }}
             className="flex items-center gap-1 rounded-full px-2.5 py-1 text-white/40 transition hover:bg-sky-400/10 hover:text-sky-300"
           >
@@ -428,21 +423,11 @@ const MessageCard = ({
         />
       )}
 
-      {showComments && (
-        <div className="mt-4 border-t border-white/[0.08] pt-4">
-          {!showCommentForm && (
-            <button
-              type="button"
-              onClick={() => setShowCommentForm(true)}
-              className="mb-3 text-sm font-semibold text-amber-300 hover:text-amber-200"
-            >
-              + Add a comment
-            </button>
-          )}
-
-          {showCommentForm && (
-            <div className="mb-4 rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3">
+      {showCommentForm && (
+        <div className="mt-4 border-t border-white/[0.08] pt-4" onClick={(event) => event.stopPropagation()}>
+            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3">
               <textarea
+                ref={commentInputRef}
                 value={commentText}
                 onChange={(event) => setCommentText(event.target.value)}
                 placeholder="Write your comment..."
@@ -474,34 +459,6 @@ const MessageCard = ({
                 </div>
               </div>
             </div>
-          )}
-
-          {loadingComments ? (
-            <FeedSkeleton count={2} compact />
-          ) : comments.length > 0 ? (
-            <div className="space-y-3 border-l-2 border-white/[0.08] pl-4">
-              {comments.map((comment) => (
-                <MessageCard
-                  key={comment.id}
-                  message={comment}
-                  currentAddress={currentAddress}
-                  onUseful={onUseful}
-                  onComment={onComment}
-                  onLoadComments={onLoadComments}
-                  onRepost={onRepost}
-                  onDelete={onDelete}
-                  onUserClick={onUserClick}
-                  onEditorialPreference={onEditorialPreference}
-                  onEditorialTopicPreference={onEditorialTopicPreference}
-                  onReportMessage={onReportMessage}
-                  onOpenThread={onOpenThread}
-                  showActions
-                />
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm italic text-white/30">No comments yet</p>
-          )}
         </div>
       )}
     </article>
