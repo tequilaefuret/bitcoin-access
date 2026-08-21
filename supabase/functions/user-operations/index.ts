@@ -53,6 +53,10 @@ const GAME_COST = 100;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROFILE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_PROFILE_MEDIA_BYTES = 5 * 1024 * 1024;
+const POST_MEDIA_TYPES = new Set(['image/jpeg', 'image/webp']);
+const MAX_POST_MEDIA_ITEMS = 3;
+const MAX_POST_MEDIA_BYTES = 600 * 1024;
+const MAX_POST_MEDIA_EDGE = 1600;
 
 const r2 = R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY
   ? new S3Client({
@@ -274,6 +278,139 @@ async function profileMediaPrefix(address: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(address));
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
   return `profiles/${hash.slice(0, 32)}`;
+}
+
+async function postMediaPrefix(address: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(address));
+  const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `posts/${hash.slice(0, 32)}`;
+}
+
+async function deletePostMediaObjects(objectKeys: string[]) {
+  if (!r2 || !R2_BUCKET_NAME) return;
+  await Promise.all(objectKeys.map((objectKey) => (
+    r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey })).catch(() => null)
+  )));
+}
+
+async function createPostMediaUploads(
+  address: string,
+  requestedFiles: Array<{ contentType?: string; fileSize?: number }>,
+) {
+  if (!r2 || !R2_BUCKET_NAME || !R2_PUBLIC_BASE_URL) {
+    throw new OperationError('Le stockage des photos n’est pas encore configuré', 503);
+  }
+  if (!Array.isArray(requestedFiles) || requestedFiles.length < 1 || requestedFiles.length > MAX_POST_MEDIA_ITEMS) {
+    throw new OperationError('Une publication accepte entre une et trois photos');
+  }
+
+  const normalized = requestedFiles.map((file) => ({
+    contentType: typeof file?.contentType === 'string' ? file.contentType : '',
+    fileSize: Number(file?.fileSize),
+  }));
+  for (const file of normalized) {
+    if (!POST_MEDIA_TYPES.has(file.contentType)) {
+      throw new OperationError('Les photos doivent être optimisées en WebP ou JPEG');
+    }
+    if (!Number.isFinite(file.fileSize) || file.fileSize <= 0 || file.fileSize > MAX_POST_MEDIA_BYTES) {
+      throw new OperationError('Chaque photo optimisée doit peser moins de 600 Ko');
+    }
+  }
+
+  const prefix = await postMediaPrefix(address);
+  const batchId = crypto.randomUUID();
+  const uploads = await Promise.all(normalized.map(async (file, index) => {
+    const extension = file.contentType === 'image/webp' ? 'webp' : 'jpg';
+    const objectKey = `${prefix}/${batchId}/${index}.${extension}`;
+    const uploadUrl = await getSignedUrl(
+      r2,
+      new PutObjectCommand({
+        Bucket: R2_BUCKET_NAME,
+        Key: objectKey,
+        ContentType: file.contentType,
+      }),
+      { expiresIn: 300 },
+    );
+    return { upload_url: uploadUrl, object_key: objectKey };
+  }));
+
+  return { success: true, uploads, expires_in: 300 };
+}
+
+async function discardPostMediaUploads(address: string, objectKeys: unknown) {
+  const keys = Array.isArray(objectKeys)
+    ? [...new Set(objectKeys.filter((key): key is string => typeof key === 'string'))]
+    : [];
+  const prefix = `${await postMediaPrefix(address)}/`;
+  const ownedKeys = keys
+    .filter((key) => key.startsWith(prefix))
+    .slice(0, MAX_POST_MEDIA_ITEMS);
+  const unusedChecks = await Promise.all(ownedKeys.map(async (key) => {
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id')
+      .contains('media', [{ object_key: key }])
+      .limit(1);
+    if (error) throw error;
+    return (data || []).length === 0 ? key : null;
+  }));
+  const unusedKeys = unusedChecks.filter((key): key is string => Boolean(key));
+  await deletePostMediaObjects(unusedKeys);
+  return { success: true, discarded: unusedKeys.length };
+}
+
+async function validatePostMediaUploads(address: string, objectKeys: unknown) {
+  const keys = Array.isArray(objectKeys)
+    ? objectKeys.filter((key): key is string => typeof key === 'string')
+    : [];
+  if (keys.length === 0) return [];
+  if (keys.length > MAX_POST_MEDIA_ITEMS || new Set(keys).size !== keys.length) {
+    throw new OperationError('Les photos de la publication sont invalides');
+  }
+
+  const prefix = `${await postMediaPrefix(address)}/`;
+  const ownedKeyPattern = new RegExp(
+    `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[0-9a-f-]{36}/[0-2]\\.(webp|jpg)$`,
+    'i',
+  );
+  if (keys.some((key) => !ownedKeyPattern.test(key))) {
+    throw new OperationError('Une photo n’appartient pas à cette publication', 403);
+  }
+
+  try {
+    return await Promise.all(keys.map(async (objectKey) => {
+      const uploaded = await r2!.send(new HeadObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey }));
+      const bytesCount = Number(uploaded.ContentLength) || 0;
+      const contentType = uploaded.ContentType || '';
+      if (bytesCount <= 0 || bytesCount > MAX_POST_MEDIA_BYTES || !POST_MEDIA_TYPES.has(contentType)) {
+        throw new OperationError('Une photo envoyée ne respecte pas la limite de 600 Ko');
+      }
+
+      const object = await r2!.send(new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey }));
+      const bytes = new Uint8Array(await object.Body!.transformToByteArray());
+      const { width, height } = readImageDimensions(bytes, contentType);
+      if (
+        width < 1 || height < 1
+        || width > MAX_POST_MEDIA_EDGE || height > MAX_POST_MEDIA_EDGE
+        || !Number.isSafeInteger(width * height)
+      ) {
+        throw new OperationError('Une photo dépasse la résolution maximale de 1 600 px');
+      }
+
+      return {
+        url: `${R2_PUBLIC_BASE_URL}/${objectKey}`,
+        object_key: objectKey,
+        width,
+        height,
+        bytes: bytesCount,
+        content_type: contentType,
+      };
+    }));
+  } catch (error) {
+    await deletePostMediaObjects(keys);
+    if (error instanceof OperationError) throw error;
+    throw new OperationError('Une photo envoyée est introuvable ou invalide');
+  }
 }
 
 async function createProfileMediaUpload(
@@ -554,18 +691,24 @@ async function publishMessage(
   address: string,
   content: string,
   requestId: string,
-  parentId?: string
+  parentId?: string,
+  mediaObjectKeys: unknown = [],
 ) {
   console.log('📝 [PUBLISH_MESSAGE] Nouveau message');
 
   try {
     if (parentId) await assertEditorialInteractionAllowed(address, parentId);
+    if (parentId && Array.isArray(mediaObjectKeys) && mediaObjectKeys.length > 0) {
+      throw new OperationError('Les photos sont réservées aux publications');
+    }
+    const media = await validatePostMediaUploads(address, mediaObjectKeys);
 
-    const { data, error } = await supabase.rpc('publish_message_with_cost_idempotent', {
+    const { data, error } = await supabase.rpc('publish_message_with_media_cost_idempotent', {
       p_request_id: requestId,
       p_bitcoin_address: address,
-      p_content: content,
+      p_content: content || '',
       p_parent_id: parentId || null,
+      p_media: media,
     });
     if (error) {
       const expectedMessages = [
@@ -574,11 +717,15 @@ async function publishMessage(
         'Utilisateur introuvable',
         'Publication parente introuvable',
         'Le message ne peut pas être vide',
+        'La publication ne peut pas être vide',
         'Le message ne peut pas dépasser 1000 caractères',
+        'Les photos sont réservées aux publications',
+        'Médias de publication invalides',
         'Identifiant de requête déjà utilisé avec des paramètres différents',
       ];
       const expected = expectedMessages.find((message) => error.message?.includes(message));
       if (expected) {
+        await deletePostMediaObjects(media.map((item) => item.object_key));
         const status = expected.includes('INSUFFICIENT_SHELLS')
           ? 402
           : expected.includes('introuvable')
@@ -1733,6 +1880,9 @@ serve(async (req) => {
       contentType,
       fileSize,
       objectKey,
+      objectKeys,
+      files,
+      mediaObjectKeys,
       messageId,
       quoteContent,
       topicId,
@@ -1793,12 +1943,12 @@ serve(async (req) => {
         break;
       
       case 'publish_message':
-        if (!content) throw new Error('Paramètre "content" manquant');
+        if (typeof content !== 'string') throw new Error('Paramètre "content" invalide');
         if (typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) {
           throw new OperationError('Paramètre "requestId" invalide');
         }
         if (content.length > 1000) throw new Error('Message trop long (max 1000 caractères)');
-        result = await publishMessage(address, content, requestId, parentId);
+        result = await publishMessage(address, content, requestId, parentId, mediaObjectKeys);
         break;
       
       case 'get_messages':
@@ -2020,6 +2170,14 @@ serve(async (req) => {
 
       case 'remove_profile_media':
         result = await removeProfileMedia(address, mediaKind);
+        break;
+
+      case 'create_post_media_uploads':
+        result = await createPostMediaUploads(address, files);
+        break;
+
+      case 'discard_post_media_uploads':
+        result = await discardPostMediaUploads(address, objectKeys);
         break;
 
       case 'place_pixels':

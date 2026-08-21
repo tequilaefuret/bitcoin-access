@@ -8,6 +8,10 @@ import { deleteMessage } from '../../supabaseClient';
 import { normalizePublishedMessage } from '../../features/feed/classicFeedState';
 import { useClassicFeed } from '../../features/feed/useClassicFeed';
 import { useTemporaryMessageHides } from '../../features/feed/useTemporaryMessageHides';
+import {
+  optimizePostImages,
+  releasePostImage,
+} from '../../lib/postMedia';
 
 const SocialStep = ({
   address,
@@ -37,6 +41,9 @@ const SocialStep = ({
   const [topics, setTopics] = useState([]);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [postPhotos, setPostPhotos] = useState([]);
+  const [isOptimizingPhotos, setIsOptimizingPhotos] = useState(false);
+  const postPhotosRef = useRef([]);
   const [isLoadingOpinion, setIsLoadingOpinion] = useState(false);
   const [isSavingStance, setIsSavingStance] = useState(false);
   const [screenError, setScreenError] = useState('');
@@ -145,17 +152,21 @@ const SocialStep = ({
 
   const handlePublish = async () => {
     const content = messageContent.trim();
-    if (!content || !onPublishMessage || isPublishing) return;
+    if ((!content && postPhotos.length === 0) || !onPublishMessage || isPublishing) return;
 
     setIsPublishing(true);
     setScreenError('');
     try {
-      const result = await onPublishMessage(content);
+      const result = postPhotos.length > 0
+        ? await onPublishMessage(content, null, postPhotos.map((photo) => photo.file))
+        : await onPublishMessage(content);
       if (!result || result.success === false) return;
 
       const publishedMessage = hydrateOwnMessage(result.message);
       prependLatest(publishedMessage, classicSort === 'recent');
       setMessageContent('');
+      postPhotos.forEach(releasePostImage);
+      setPostPhotos([]);
       setEditorialNotice('Your post is published');
     } catch (publishError) {
       setScreenError(publishError.message || 'The post could not be published.');
@@ -163,6 +174,35 @@ const SocialStep = ({
       setIsPublishing(false);
     }
   };
+
+  const handlePhotosSelected = async (files) => {
+    setScreenError('');
+    setIsOptimizingPhotos(true);
+    try {
+      const optimized = await optimizePostImages(files, postPhotos.length);
+      setPostPhotos((current) => [...current, ...optimized]);
+    } catch (photoError) {
+      setScreenError(photoError.message || 'The selected photos could not be optimized.');
+    } finally {
+      setIsOptimizingPhotos(false);
+    }
+  };
+
+  const handleRemovePhoto = (photoId) => {
+    setPostPhotos((current) => current.filter((photo) => {
+      if (photo.id !== photoId) return true;
+      releasePostImage(photo);
+      return false;
+    }));
+  };
+
+  useEffect(() => {
+    postPhotosRef.current = postPhotos;
+  }, [postPhotos]);
+
+  useEffect(() => () => {
+    postPhotosRef.current.forEach(releasePostImage);
+  }, []);
 
   const handleComment = async (messageId, commentText, onSuccess) => {
     const content = commentText.trim();
@@ -346,6 +386,10 @@ const SocialStep = ({
           onLoadMore={loadMore}
           isLoadingMore={isLoadingMore}
           avatarUrl={avatarUrl}
+          photos={postPhotos}
+          onPhotosSelected={handlePhotosSelected}
+          onRemovePhoto={handleRemovePhoto}
+          isOptimizingPhotos={isOptimizingPhotos}
         />
       ) : (
         <OpinionFeedPanel

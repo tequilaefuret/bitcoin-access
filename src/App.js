@@ -424,10 +424,10 @@ const BitcoinExclusiveAccess = () => {
   }, [setError]);
 
   // ===== HANDLER : PUBLICATION MESSAGE =====
-  const handlePublishMessage = useCallback(async (content, parentId = null) => {
+  const handlePublishMessage = useCallback(async (content, parentId = null, mediaFiles = []) => {
     try {
       if (!address) throw new Error('No active session');
-      return await publishMessage(content, parentId);
+      return await publishMessage(content, parentId, mediaFiles);
     } catch (err) {
       setError(err.message || 'Publication failed');
       return { success: false, error: err.message };

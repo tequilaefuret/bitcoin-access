@@ -157,13 +157,13 @@ export const useBitcoinBalance = () => {
   /**
    * 📝 Publier un message
    */
-  const publishMessageCallback = useCallback(async (content, parentId = null) => {
+  const publishMessageCallback = useCallback(async (content, parentId = null, mediaFiles = []) => {
     setError('');
 
     try {
       beginActivity();
 
-      const result = await publishMessage(address, content, parentId);
+      const result = await publishMessage(address, content, parentId, mediaFiles);
 
       if (!result.success) {
         throw new Error(result.error || 'Publishing failed');

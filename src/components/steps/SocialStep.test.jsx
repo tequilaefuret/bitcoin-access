@@ -2,14 +2,22 @@ import { useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import SocialStep from './SocialStep';
 import Header from '../layout/Header';
+import { optimizePostImages } from '../../lib/postMedia';
 
 jest.mock('../../supabaseClient', () => ({
   deleteMessage: jest.fn(),
 }));
 
+jest.mock('../../lib/postMedia', () => ({
+  ...jest.requireActual('../../lib/postMedia'),
+  optimizePostImages: jest.fn(),
+  releasePostImage: jest.fn(),
+}));
+
 let triggerIntersection;
 
 beforeEach(() => {
+  optimizePostImages.mockReset();
   triggerIntersection = null;
   global.IntersectionObserver = class IntersectionObserver {
     constructor(callback) {
@@ -175,6 +183,53 @@ test('adds a newly published post locally without loading the feed again', async
   expect(onPublishMessage).toHaveBeenCalledWith(publishedMessage.content);
   expect(onLoadMessages).toHaveBeenCalledTimes(1);
   expect(await screen.findByText(/^your post is published$/i)).toBeInTheDocument();
+});
+
+test('optimizes and publishes a photo-only post', async () => {
+  const selectedFile = new File(['original'], 'camera.jpg', { type: 'image/jpeg' });
+  const optimizedFile = new File(['optimized'], 'camera.webp', { type: 'image/webp' });
+  optimizePostImages.mockResolvedValue([{
+    id: 'photo-1',
+    file: optimizedFile,
+    previewUrl: 'blob:optimized-photo',
+    originalBytes: 4_000_000,
+    optimizedBytes: 240_000,
+  }]);
+  const publishedMessage = {
+    ...message,
+    id: 'photo-post',
+    bitcoin_address: 'bc1q-reader',
+    content: '',
+    media: [{
+      url: 'https://media.example/posts/photo.webp',
+      width: 1200,
+      height: 900,
+    }],
+  };
+  const onPublishMessage = jest.fn().mockResolvedValue({
+    success: true,
+    message: publishedMessage,
+  });
+  const { container } = renderSocialStep({ defaultFeed: 'recent', onPublishMessage });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  const input = container.querySelector('input[type="file"]');
+  fireEvent.change(input, { target: { files: [selectedFile] } });
+
+  expect(await screen.findByRole('img', { name: /selected attachment 1/i })).toHaveAttribute(
+    'src',
+    'blob:optimized-photo',
+  );
+  expect(optimizePostImages).toHaveBeenCalledWith([selectedFile], 0);
+
+  fireEvent.click(screen.getByRole('button', { name: /^publish$/i }));
+  await waitFor(() => {
+    expect(onPublishMessage).toHaveBeenCalledWith('', null, [optimizedFile]);
+  });
+  expect(await screen.findByRole('img', { name: /post attachment 1/i })).toHaveAttribute(
+    'src',
+    'https://media.example/posts/photo.webp',
+  );
 });
 
 test('hydrates a locally added repost with the signed-in name and profile photo', async () => {

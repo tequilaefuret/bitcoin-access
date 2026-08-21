@@ -1,6 +1,10 @@
 // supabase/functions/social-delete/index.ts
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
 import {
+  DeleteObjectCommand,
+  S3Client,
+} from 'npm:@aws-sdk/client-s3@3.750.0';
+import {
   assertAllowedOrigin,
   corsHeaders as buildCorsHeaders,
   jsonResponse,
@@ -12,6 +16,20 @@ const supabase = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
   Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 );
+const R2_ACCOUNT_ID = Deno.env.get('R2_ACCOUNT_ID') ?? '';
+const R2_ACCESS_KEY_ID = Deno.env.get('R2_ACCESS_KEY_ID') ?? '';
+const R2_SECRET_ACCESS_KEY = Deno.env.get('R2_SECRET_ACCESS_KEY') ?? '';
+const R2_BUCKET_NAME = Deno.env.get('R2_BUCKET_NAME') ?? '';
+const r2 = R2_ACCOUNT_ID && R2_ACCESS_KEY_ID && R2_SECRET_ACCESS_KEY
+  ? new S3Client({
+      region: 'auto',
+      endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: R2_ACCESS_KEY_ID,
+        secretAccessKey: R2_SECRET_ACCESS_KEY,
+      },
+    })
+  : null;
 
 Deno.serve(async (req) => {
   const corsHeaders = buildCorsHeaders(req);
@@ -45,7 +63,7 @@ Deno.serve(async (req) => {
     // Vérifier que le message appartient à l'utilisateur
     const { data: message, error: fetchError } = await supabase
       .from('messages')
-      .select('id, bitcoin_address')
+      .select('id, bitcoin_address, media')
       .eq('id', messageId)
       .single();
 
@@ -74,6 +92,20 @@ Deno.serve(async (req) => {
     if (deleteError) {
       console.error('❌ Erreur suppression:', safeErrorForLog(deleteError));
       throw deleteError;
+    }
+
+    const postMediaKeys = Array.isArray(message.media)
+      ? message.media
+        .map((item: { object_key?: unknown }) => item?.object_key)
+        .filter((key: unknown): key is string => typeof key === 'string' && key.startsWith('posts/'))
+        .slice(0, 3)
+      : [];
+    if (r2 && R2_BUCKET_NAME && postMediaKeys.length > 0) {
+      await Promise.all(postMediaKeys.map((key: string) => (
+        r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: key })).catch((r2Error) => {
+          console.error('Post media cleanup failed:', safeErrorForLog(r2Error));
+        })
+      )));
     }
 
     console.log('✅ Message marqué comme supprimé');

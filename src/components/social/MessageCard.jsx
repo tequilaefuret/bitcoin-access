@@ -9,6 +9,7 @@ import {
 import ExpandableText from './ExpandableText';
 import PostOptionsMenu from './PostOptionsMenu';
 import RepostComposer from './RepostComposer';
+import PostMediaGallery from './PostMediaGallery';
 import {
   countBillableCharacters,
   formatMessageTimestamp,
@@ -298,6 +299,8 @@ const MessageCard = ({
 
       {message.content && <ExpandableText text={message.content} />}
 
+      <PostMediaGallery media={message.media} />
+
       {message.repost_of && (
         originalMessage ? (
           <div
@@ -335,9 +338,12 @@ const MessageCard = ({
                 {originalMessage.display_name ? `@${originalMessage.display_name}` : '@anonymous'}
               </button>
             </div>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/60">
-              {originalMessage.content}
-            </p>
+            {originalMessage.content && (
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-white/60">
+                {originalMessage.content}
+              </p>
+            )}
+            <PostMediaGallery media={originalMessage.media} compact />
             <p className="mt-2 text-[11px] text-white/25">
               {formatMessageTimestamp(originalMessage.created_at)}
             </p>

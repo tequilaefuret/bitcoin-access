@@ -441,15 +441,55 @@ export async function deductGameCost(address) {
  * @param {string|null} parentId - ID du message parent (pour commentaires)
  * @returns {Promise<object>} { success: true, message: {...}, user: {...} }
  */
-export async function publishMessage(address, content, parentId = null) {
+async function uploadPostMedia(address, files) {
+  const mediaFiles = Array.from(files || []);
+  if (mediaFiles.length === 0) return [];
+  if (mediaFiles.length > 3 || mediaFiles.some((file) => !(file instanceof File))) {
+    throw new Error('Choose between one and three optimized photos.');
+  }
+
+  const prepared = await invokeUserOperation(address, 'create_post_media_uploads', {
+    files: mediaFiles.map((file) => ({
+      contentType: file.type,
+      fileSize: file.size,
+    })),
+  }, 'Could not prepare photo upload');
+  const uploads = Array.isArray(prepared?.uploads) ? prepared.uploads : [];
+  if (uploads.length !== mediaFiles.length) throw new Error('Photo upload preparation was incomplete.');
+
+  try {
+    await Promise.all(uploads.map(async (upload, index) => {
+      const response = await fetch(upload.upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': mediaFiles[index].type },
+        body: mediaFiles[index],
+      });
+      if (!response.ok) throw new Error(`Photo ${index + 1} upload failed (${response.status}).`);
+    }));
+  } catch (error) {
+    await invokeUserOperation(address, 'discard_post_media_uploads', {
+      objectKeys: uploads.map((upload) => upload.object_key),
+    }, 'Could not discard incomplete photo uploads').catch(() => null);
+    throw error;
+  }
+
+  return uploads.map((upload) => upload.object_key);
+}
+
+export async function publishMessage(address, content, parentId = null, mediaFiles = []) {
   const cleanedContent = typeof content === 'string' ? content.trim() : '';
-  if (!cleanedContent) throw new Error('Message cannot be empty');
+  const files = Array.from(mediaFiles || []);
+  if (!cleanedContent && files.length === 0) throw new Error('Post cannot be empty');
   if (cleanedContent.length > 1000) throw new Error('Message is too long (maximum 1,000 characters)');
+  if (parentId && files.length > 0) throw new Error('Photos can only be added to posts.');
+
+  const mediaObjectKeys = await uploadPostMedia(address, files);
 
   return invokeUserOperation(address, 'publish_message', {
       requestId: createRequestId(),
       content: cleanedContent,
       ...(parentId ? { parentId } : {}),
+      ...(mediaObjectKeys.length > 0 ? { mediaObjectKeys } : {}),
   }, 'Publishing failed');
 }
 

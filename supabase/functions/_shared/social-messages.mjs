@@ -1,12 +1,12 @@
 export const SOCIAL_MESSAGE_SELECT = `
   id, bitcoin_address, content, char_count, cost_shells, created_at, parent_id,
-  repost_of, repost_kind, useful_count, content_origin,
+  repost_of, repost_kind, useful_count, content_origin, media,
   comments:messages!parent_id(count),
   reposts:messages!repost_of(count)
 `;
 
 export const PUBLIC_MESSAGE_SELECT = `
-  id, bitcoin_address, content, created_at, parent_id, repost_of, repost_kind, useful_count,
+  id, bitcoin_address, content, created_at, parent_id, repost_of, repost_kind, useful_count, media,
   comments:messages!parent_id(count),
   reposts:messages!repost_of(count)
 `;
@@ -47,7 +47,7 @@ export async function loadRepostOriginals(supabase, messages) {
 
   const { data, error } = await supabase
     .from('messages')
-    .select('id, bitcoin_address, content, created_at, useful_count')
+    .select('id, bitcoin_address, content, created_at, useful_count, media')
     .in('id', originalIds)
     .is('deleted_at', null);
   if (error) throw error;

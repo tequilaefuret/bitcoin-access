@@ -1,4 +1,4 @@
-# Photos de profil avec Cloudflare R2
+# Photos de profil et de publications avec Cloudflare R2
 
 Danaus enregistre les fichiers image dans Cloudflare R2 et conserve uniquement
 leurs URL publiques dans Supabase. Le navigateur ne reçoit jamais la clé secrète
@@ -6,9 +6,16 @@ R2 : une Edge Function Supabase crée une autorisation d'envoi valable cinq
 minutes, le navigateur envoie directement l'image à R2, puis le serveur vérifie
 son format et sa taille.
 
-Les formats acceptés sont JPG, PNG et WebP, avec une limite de 5 Mo par image.
+Les formats acceptés pour les profils sont JPG, PNG et WebP, avec une limite de 5 Mo par image.
 Chaque compte possède au maximum un objet `avatar` et un objet `cover` : changer
 une photo remplace l'ancienne au lieu d'accumuler des fichiers inutiles.
+
+Les publications acceptent de une à trois photos. Avant tout envoi, le navigateur
+retire les métadonnées en réencodant l’image, limite son côté le plus long à
+1 600 px et vise 450 Ko. Le serveur refuse toute photo dépassant 600 Ko ou
+1 600 px, même si le navigateur a été contourné. Ces limites donnent un rendu
+mobile et desktop satisfaisant tout en réduisant fortement le stockage et le
+trafic R2.
 
 ## 1. Activer R2 et créer le bucket
 
@@ -164,6 +171,7 @@ supabase functions deploy get-user-data
 supabase functions deploy get-public-profile
 supabase functions deploy verify-and-register
 supabase functions deploy social-follow
+supabase functions deploy social-delete
 ```
 
 La migration ajoute les métadonnées d'image et le verrou remboursable associé.
@@ -182,12 +190,18 @@ projet Supabase avant ce déploiement.
 3. Choisir un JPG, PNG ou WebP de moins de 5 Mo pour l'avatar et la couverture.
    L'écran affiche ses dimensions et le nombre de shells à verrouiller.
 4. Enregistrer, actualiser la page et vérifier que les deux images restent visibles.
-5. Dans Cloudflare R2, ouvrir **Objects** : deux objets doivent exister sous
+5. Dans Cloudflare R2, ouvrir **Objects** : deux objets de profil doivent exister sous
    `profiles/<identifiant-anonyme>/avatar/<uuid>` et
    `profiles/<identifiant-anonyme>/cover/<uuid>`.
 6. Vérifier également le profil depuis un autre compte et sur téléphone.
 7. Remplacer une image par une plus petite puis la supprimer. Une image de
    100 × 200 verrouille 20 000 shells ; une image de 100 × 100 en libère 10 000.
+8. Créer une publication avec trois grandes photos. Avant de publier, vérifier
+   que chaque aperçu indique moins de 600 Ko. Actualiser la page et ouvrir la
+   publication depuis un téléphone puis un ordinateur.
+9. Dans R2, vérifier la présence de trois objets sous
+   `posts/<identifiant-anonyme>/<uuid-du-lot>/`. Supprimer la publication et
+   vérifier que ses trois objets sont également supprimés.
 
 Si l'envoi affiche une erreur CORS, vérifier en priorité que l'origine exacte du
 site figure dans `AllowedOrigins`. Si l'image est envoyée mais ne s'affiche pas,
