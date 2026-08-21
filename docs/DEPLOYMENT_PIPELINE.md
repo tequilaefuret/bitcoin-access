@@ -59,6 +59,36 @@ Si ton offre GitHub ne propose pas les reviewers, la saisie obligatoire du mot
 
 ### 3. Ajouter les variables GitHub
 
+Avant les variables propres à chaque environnement, crée une variable au niveau
+du dépôt pour permettre au contrôle **Validate change** de compiler le frontend :
+
+1. ouvre le dépôt sur GitHub puis **Settings** ;
+2. dans la colonne de gauche, ouvre **Secrets and variables → Actions** ;
+3. sélectionne l'onglet **Variables** ;
+4. clique **New repository variable** ;
+5. saisis `REACT_APP_SUPABASE_URL` dans **Name** ;
+6. dans **Value**, saisis l'URL du projet Supabase DEV, sous la forme
+   `https://VOTRE_PROJECT_REF_DEV.supabase.co` ;
+7. clique **Add variable**.
+
+Cette URL est publique : elle doit être enregistrée comme **Variable**, pas comme
+Secret. Ne mets ni `/rest/v1`, ni `/functions/v1` à la fin. Le build de validation
+utilise l'URL DEV, tandis que les déploiements reconstruisent automatiquement la
+bonne URL à partir du `SUPABASE_PROJECT_REF` de l'environnement sélectionné.
+
+Si Netlify construit aussi automatiquement le dépôt lors d'un `git push`, ajoute
+la même clé dans chacun des sites Netlify concernés :
+
+1. ouvre le site dans Netlify ;
+2. ouvre **Project configuration → Environment variables** ;
+3. clique **Add a variable** ;
+4. saisis `REACT_APP_SUPABASE_URL` ;
+5. utilise l'URL Supabase DEV pour le site DEV et l'URL Supabase production pour
+   le site de production ;
+6. donne-lui au minimum le scope **Builds**, conserve les contextes de déploiement
+   voulus, puis enregistre ;
+7. relance le déploiement échoué avec **Retry deploy**.
+
 Ajoute les variables suivantes dans **chacun** des deux environnements. Les noms
 sont identiques, mais les valeurs sont propres à DEV ou production.
 

@@ -35,6 +35,10 @@ jobs:
     env:
       CI: true
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      # Public project URL used only to compile the frontend during CI.
+      # Deployment workflows replace it with the selected environment's
+      # SUPABASE_PROJECT_REF before building the deployable bundle.
+      REACT_APP_SUPABASE_URL: ${{ vars.REACT_APP_SUPABASE_URL }}
 
     steps:
       - name: Check out the release
