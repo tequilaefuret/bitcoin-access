@@ -8,13 +8,14 @@ import {
   ShieldCheck,
   UserRound,
 } from 'lucide-react';
-import { truncateAddress, upsertUserProfile } from '../../supabaseClient';
+import { upsertUserProfile } from '../../supabaseClient';
+import { canShowBitcoinBalance, formatBitcoinAddress } from '../../lib/displayPreferences';
 import DanausMark from '../layout/DanausMark';
 
 const MIN_LENGTH = 3;
 const MAX_LENGTH = 50;
 
-const ProfileSetupStep = ({ address, btcBalance, onComplete, loading, error }) => {
+const ProfileSetupStep = ({ address, btcBalance, onComplete, loading, error, addressDisplay = 'shortened', balanceDisplay = 'show_all' }) => {
   const [displayName, setDisplayName] = useState('');
   const [localError, setLocalError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -90,12 +91,12 @@ const ProfileSetupStep = ({ address, btcBalance, onComplete, loading, error }) =
           <div className="mt-7 flex flex-col gap-3 sm:flex-row">
             <div className="min-w-0 flex-1 rounded-2xl border border-white/[0.08] bg-black/20 px-4 py-3">
               <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/30">Verified address</p>
-              <p className="mt-1 truncate font-mono text-xs text-white/60" title={address}>{truncateAddress(address)}</p>
+              <p className="mt-1 truncate font-mono text-xs text-white/60" title={address}>{formatBitcoinAddress(address, addressDisplay)}</p>
             </div>
-            <div className="rounded-2xl border border-amber-200/10 bg-amber-300/[0.06] px-4 py-3 sm:min-w-40">
+            {canShowBitcoinBalance(balanceDisplay) && <div className="rounded-2xl border border-amber-200/10 bg-amber-300/[0.06] px-4 py-3 sm:min-w-40">
               <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-amber-200/50">Balance ready</p>
               <p className="mt-1 text-sm font-black text-amber-300">{Number(btcBalance || 0).toFixed(8)} BTC</p>
-            </div>
+            </div>}
           </div>
 
           {(error || localError) && (

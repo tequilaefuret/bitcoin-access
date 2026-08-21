@@ -26,12 +26,15 @@ import { FeedSkeleton, ProfileSkeleton } from '../ui/ContentSkeletons';
 import {
   getUserData,
   getPublicProfile,
-  getPublicUserMessages,
-  getPublicUserUsefulMessages,
-  getUserMessages,
+  getProfileMessages,
   getUserStats,
-  truncateAddress,
 } from '../../supabaseClient';
+import {
+  canShowBitcoinBalance,
+  canShowShellBalance,
+  formatBitcoinAddress,
+  formatShellAmount,
+} from '../../lib/displayPreferences';
 
 const PAGE_SIZE = 25;
 
@@ -51,23 +54,9 @@ const formatDate = (value) => {
   });
 };
 
-const isReplyMessage = (message) => Boolean(
-  message?.parent_id ||
-  message?.parentId ||
-  message?.reply_to ||
-  message?.replyTo ||
-  message?.reply_of ||
-  message?.comment_of ||
-  message?.type === 'comment' ||
-  message?.type === 'reply'
-);
-
-const isRepostMessage = (message) => Boolean(
-  message?.repost_of ||
-  message?.repostOf ||
-  message?.is_repost ||
-  message?.type === 'repost'
-);
+const EMPTY_TAB_MESSAGES = Object.freeze({ posts: [], replies: [], reposts: [], useful: [] });
+const EMPTY_LOADED_TABS = Object.freeze({ posts: false, replies: false, reposts: false, useful: false });
+const INITIAL_HAS_MORE = Object.freeze({ posts: true, replies: true, reposts: true, useful: true });
 
 const ProfileStep = ({
   profileAddress,
@@ -79,22 +68,29 @@ const ProfileStep = ({
   onShowStats,
   passwordConfigured = false,
   onAddPassword,
-  showFullAddress = false,
+  addressDisplay = 'shortened',
+  balanceDisplay = 'show_all',
   onEditorialPreference,
   onEditorialTopicPreference,
   onReportMessage,
   onReportProfile,
   onProfileUpdated,
+  onBalanceUpdated,
+  onPublishMessage,
+  onLoadComments,
+  onToggleUseful,
+  onRepostMessage,
+  onOpenThread,
 }) => {
   const [profileUser, setProfileUser] = useState(null);
   const [profileStats, setProfileStats] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [usefulMessages, setUsefulMessages] = useState([]);
+  const [tabMessages, setTabMessages] = useState({ ...EMPTY_TAB_MESSAGES });
+  const [loadedTabs, setLoadedTabs] = useState({ ...EMPTY_LOADED_TABS });
+  const [hasMoreByTab, setHasMoreByTab] = useState({ ...INITIAL_HAS_MORE });
   const [activeTab, setActiveTab] = useState('posts');
   const [loading, setLoading] = useState(true);
+  const [loadingTab, setLoadingTab] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [hasMoreUseful, setHasMoreUseful] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [showEditorialMenu, setShowEditorialMenu] = useState(false);
@@ -103,6 +99,7 @@ const ProfileStep = ({
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [connectionsRelation, setConnectionsRelation] = useState('');
   const [followersAdjustment, setFollowersAdjustment] = useState(0);
+  const [showSpent, setShowSpent] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,10 +110,9 @@ const ProfileStep = ({
       setLoading(true);
       setError('');
       setCopied(false);
-      setMessages([]);
-      setUsefulMessages([]);
-      setHasMore(true);
-      setHasMoreUseful(true);
+      setTabMessages({ ...EMPTY_TAB_MESSAGES });
+      setLoadedTabs({ ...EMPTY_LOADED_TABS });
+      setHasMoreByTab({ ...INITIAL_HAS_MORE });
       setActiveTab('posts');
       setShowEditProfile(false);
       setConnectionsRelation('');
@@ -124,23 +120,21 @@ const ProfileStep = ({
 
       try {
         const isOwner = profileAddress === currentAddress;
-        const [user, stats, initialMessages, initialUsefulMessages] = await Promise.all([
+        const [user, stats, initialMessages] = await Promise.all([
           isOwner ? getUserData(profileAddress) : getPublicProfile(profileAddress),
           isOwner ? getUserStats(profileAddress).catch(() => null) : Promise.resolve(null),
-          isOwner
-            ? getUserMessages(profileAddress, PAGE_SIZE, 0)
-            : getPublicUserMessages(profileAddress, PAGE_SIZE, 0),
-          getPublicUserUsefulMessages(profileAddress, PAGE_SIZE, 0),
+          getProfileMessages(currentAddress, profileAddress, 'posts', PAGE_SIZE, 0),
         ]);
 
         if (cancelled) return;
 
         setProfileUser(user);
         setProfileStats(stats);
-        setMessages(Array.isArray(initialMessages) ? initialMessages : []);
-        setUsefulMessages(Array.isArray(initialUsefulMessages) ? initialUsefulMessages : []);
-        setHasMore((initialMessages || []).length === PAGE_SIZE);
-        setHasMoreUseful((initialUsefulMessages || []).length === PAGE_SIZE);
+        const initialPosts = initialMessages?.messages || [];
+        setTabMessages((current) => ({ ...current, posts: initialPosts }));
+        setLoadedTabs((current) => ({ ...current, posts: true }));
+        setHasMoreByTab((current) => ({ ...current, posts: initialPosts.length === PAGE_SIZE }));
+        onBalanceUpdated?.(initialMessages);
       } catch (err) {
         if (cancelled) return;
         setError(err.message || 'Unable to load this profile');
@@ -156,23 +150,26 @@ const ProfileStep = ({
     return () => {
       cancelled = true;
     };
-  }, [currentAddress, profileAddress]);
+  }, [currentAddress, onBalanceUpdated, profileAddress]);
 
-  const normalizedMessages = messages
-    .filter(Boolean)
-    .map((message) => ({
-      ...message,
-      bitcoin_address: message.bitcoin_address || profileAddress
-    }))
-    .sort((a, b) => {
-      const left = safeDate(b.created_at || b.timestamp)?.getTime() || 0;
-      const right = safeDate(a.created_at || a.timestamp)?.getTime() || 0;
-      return left - right;
-    });
-
-  const posts = normalizedMessages.filter((message) => !isReplyMessage(message) && !isRepostMessage(message));
-  const replies = normalizedMessages.filter((message) => isReplyMessage(message));
-  const reposts = normalizedMessages.filter((message) => isRepostMessage(message));
+  useEffect(() => {
+    if (loading || loadedTabs[activeTab] || !profileAddress || !currentAddress) return undefined;
+    let cancelled = false;
+    setLoadingTab(true);
+    setError('');
+    getProfileMessages(currentAddress, profileAddress, activeTab, PAGE_SIZE, 0)
+      .then((result) => {
+        if (cancelled) return;
+        const nextMessages = Array.isArray(result?.messages) ? result.messages : [];
+        setTabMessages((current) => ({ ...current, [activeTab]: nextMessages }));
+        setLoadedTabs((current) => ({ ...current, [activeTab]: true }));
+        setHasMoreByTab((current) => ({ ...current, [activeTab]: nextMessages.length === PAGE_SIZE }));
+        onBalanceUpdated?.(result);
+      })
+      .catch((loadError) => !cancelled && setError(loadError.message || 'Unable to load this profile section'))
+      .finally(() => !cancelled && setLoadingTab(false));
+    return () => { cancelled = true; };
+  }, [activeTab, currentAddress, loadedTabs, loading, onBalanceUpdated, profileAddress]);
 
   const isOwnProfile = profileAddress && currentAddress && profileAddress === currentAddress;
   const handleProfileFollow = async () => {
@@ -254,6 +251,12 @@ const ProfileStep = ({
     return result;
   };
 
+  const handleComment = async (messageId, commentText, onSuccess) => {
+    const result = await onPublishMessage?.(commentText.trim(), messageId);
+    if (result && result.success !== false) onSuccess?.(result.message || null);
+    return result;
+  };
+
   const handleEditorialTopicPreference = async (messageId, preference) => {
     if (!onEditorialTopicPreference) return null;
     const result = await onEditorialTopicPreference(messageId, preference);
@@ -262,30 +265,26 @@ const ProfileStep = ({
   };
 
   const loadMore = async () => {
-    if ((activeTab === 'useful' ? !hasMoreUseful : !hasMore) || loadingMore) return;
+    if (!hasMoreByTab[activeTab] || loadingMore) return;
 
     setLoadingMore(true);
     setError('');
 
     try {
-      if (activeTab === 'useful') {
-        const nextUseful = await getPublicUserUsefulMessages(
-          profileAddress,
-          PAGE_SIZE,
-          usefulMessages.length,
-        );
-        const safeUseful = Array.isArray(nextUseful) ? nextUseful : [];
-        setUsefulMessages((previous) => [...previous, ...safeUseful]);
-        setHasMoreUseful(safeUseful.length === PAGE_SIZE);
-        return;
-      }
-
-      const nextMessages = isOwnProfile
-        ? await getUserMessages(profileAddress, PAGE_SIZE, messages.length)
-        : await getPublicUserMessages(profileAddress, PAGE_SIZE, messages.length);
-      const safeNextMessages = Array.isArray(nextMessages) ? nextMessages : [];
-      setMessages((prev) => [...prev, ...safeNextMessages]);
-      setHasMore(safeNextMessages.length === PAGE_SIZE);
+      const result = await getProfileMessages(
+        currentAddress,
+        profileAddress,
+        activeTab,
+        PAGE_SIZE,
+        tabMessages[activeTab].length,
+      );
+      const nextMessages = Array.isArray(result?.messages) ? result.messages : [];
+      onBalanceUpdated?.(result);
+      setTabMessages((current) => ({
+        ...current,
+        [activeTab]: [...current[activeTab], ...nextMessages],
+      }));
+      setHasMoreByTab((current) => ({ ...current, [activeTab]: nextMessages.length === PAGE_SIZE }));
     } catch (err) {
       setError(err.message || 'Unable to load more messages');
     } finally {
@@ -293,13 +292,10 @@ const ProfileStep = ({
     }
   };
 
-  const currentMessages = {
-    posts,
-    replies,
-    reposts,
-    useful: usefulMessages,
-  }[activeTab] || posts;
-  const currentHasMore = activeTab === 'useful' ? hasMoreUseful : hasMore;
+  const currentMessages = (tabMessages[activeTab] || [])
+    .filter(Boolean)
+    .map((message) => ({ ...message, bitcoin_address: message.bitcoin_address || profileAddress }));
+  const currentHasMore = hasMoreByTab[activeTab];
 
   const displayName =
     profileUser?.profile?.display_name ||
@@ -334,6 +330,12 @@ const ProfileStep = ({
   const btcBalance = profileStats?.btc_balance ?? profileUser?.btc_balance ?? 0;
   const shellsAvailable = profileStats?.shells_available ?? profileUser?.shells_balance ?? 0;
   const shellsSpentTotal = profileStats?.shells_spent_total ?? profileUser?.shells_spent_total ?? 0;
+  const showBitcoinBalance = canShowBitcoinBalance(balanceDisplay);
+  const showShellBalance = canShowShellBalance(balanceDisplay);
+  const totalShellCapacity = Math.max(0, Math.round(Number(btcBalance || 0) * 100000000));
+  const availablePercent = totalShellCapacity > 0
+    ? Math.max(0, Math.min(100, Number(shellsAvailable || 0) / totalShellCapacity * 100))
+    : 0;
   const followingProfile = isFollowing ? isFollowing(profileAddress) : false;
   const followersCount = Math.max(0, (Number(profileUser?.followers_count ?? profile.followers_count) || 0) + followersAdjustment);
   const followingCount = Number(profileUser?.following_count ?? profile.following_count) || 0;
@@ -355,7 +357,7 @@ const ProfileStep = ({
 
         <div className="relative px-5 pb-6 sm:px-8">
           <div className="flex items-end justify-between gap-4">
-            <div className={`-mt-12 grid h-24 w-24 place-items-center overflow-hidden rounded-[1.65rem] border-4 border-[#101218] bg-gradient-to-br ${avatarClass} shadow-xl sm:-mt-14 sm:h-28 sm:w-28`}>
+            <div className={`-mt-12 grid aspect-square h-24 w-24 shrink-0 place-items-center overflow-hidden rounded-[1.65rem] border-4 border-[#101218] bg-gradient-to-br ${avatarClass} shadow-xl transition-transform duration-300 hover:-translate-y-1 sm:-mt-14 sm:h-28 sm:w-28`}>
               {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : <UserRound className="h-11 w-11 text-white sm:h-12 sm:w-12" />}
             </div>
 
@@ -370,9 +372,6 @@ const ProfileStep = ({
               )}
               {isOwnProfile && displayName && (
                 <button type="button" onClick={() => setShowEditProfile(true)} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-4 py-2.5 text-sm font-semibold text-white/65 transition hover:bg-white/[0.08] hover:text-white"><Pencil className="h-4 w-4" /> Edit profile</button>
-              )}
-              {isOwnProfile && (
-                <button onClick={handleCopyAddress} className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-4 py-2.5 text-sm font-semibold text-white/60 transition hover:bg-white/[0.08] hover:text-white"><Copy className="h-4 w-4" /> {copied ? 'Address copied' : 'Copy address'}</button>
               )}
               {!isOwnProfile && (onEditorialPreference || onReportProfile) && (
                 <div className="relative">
@@ -398,7 +397,10 @@ const ProfileStep = ({
               {verified && <span title="Bitcoin ownership verified"><BadgeCheck className="h-5 w-5 fill-amber-300 text-slate-950" /></span>}
               {isOwnProfile && <span className="rounded-full border border-white/[0.08] bg-white/[0.04] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-white/35">Your profile</span>}
             </div>}
-            {isOwnProfile && <p className="mt-2 max-w-xl break-all font-mono text-xs text-white/35">{showFullAddress ? profileAddress : truncateAddress(profileAddress)}</p>}
+            {isOwnProfile && <div className="mt-2 flex max-w-xl items-center gap-2 text-white/35">
+              <button type="button" onClick={handleCopyAddress} aria-label="Copy Bitcoin address" title={copied ? 'Address copied' : 'Copy address'} className="shrink-0 rounded-md p-1 transition hover:bg-white/[0.06] hover:text-white"><Copy className="h-3.5 w-3.5" /></button>
+              <p className="min-w-0 break-all font-mono text-xs">{formatBitcoinAddress(profileAddress, addressDisplay)}</p>
+            </div>}
             {!loading && bio && <p className="mt-4 max-w-2xl whitespace-pre-wrap text-sm leading-6 text-white/60">{bio}</p>}
             {!loading && (location || websiteUrl) && <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/40">
               {location && <span className="inline-flex items-center gap-1.5"><MapPin className="h-4 w-4" /> {location}</span>}
@@ -424,30 +426,37 @@ const ProfileStep = ({
             )}
 
             {isOwnProfile && (
-              <div className="grid gap-3 border-t border-white/[0.08] p-5 sm:grid-cols-2 sm:p-8 lg:grid-cols-3">
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 text-left">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">BTC balance</p>
-                  <p className="mt-2 text-xl font-black text-white">{Number(btcBalance).toFixed(8)}</p>
-                  <a href={`https://mempool.space/address/${profileAddress}`} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-xs text-amber-300/65 transition hover:text-amber-300 hover:underline">View on mempool.space <ExternalLink className="h-3 w-3" /></a>
+              <div className="border-t border-white/[0.08] p-5 sm:p-8">
+                <div className="relative overflow-hidden rounded-[1.75rem] border border-amber-200/20 bg-[#f7f5ef] p-5 text-slate-950 shadow-[0_20px_60px_-38px_rgba(252,211,77,0.65)] sm:p-6">
+                  <div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-amber-300/25 blur-3xl" aria-hidden="true" />
+                  <p className="relative text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-700">Your spending power</p>
+                  {showShellBalance ? <p className="relative mt-2 text-3xl font-black tracking-[-0.04em]">{formatShellAmount(shellsAvailable)} <span className="text-base text-slate-500">shells</span></p> : <p className="relative mt-2 text-lg font-bold text-slate-500">Shell balance hidden</p>}
+                  {showShellBalance && <button type="button" onClick={() => setShowSpent((visible) => !visible)} className="group relative mt-5 block w-full text-left" aria-expanded={showSpent}>
+                    <span className="block h-3 overflow-hidden rounded-full bg-slate-200">
+                      <span className="block h-full rounded-full bg-gradient-to-r from-amber-300 to-orange-500 transition-[width] duration-500" style={{ width: `${availablePercent}%` }} />
+                    </span>
+                    <span className={`absolute -top-10 right-0 rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white shadow-xl transition ${showSpent ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:opacity-100'}`}>{formatShellAmount(shellsSpentTotal)} shells spent</span>
+                  </button>}
+                  <div className="relative mt-4 flex flex-wrap items-end justify-between gap-3 text-xs text-slate-500">
+                    <div className="flex flex-wrap gap-x-5 gap-y-2">
+                      {showShellBalance && <span><strong className="text-slate-950">{formatShellAmount(shellsAvailable, { besideBar: true })}</strong> shells available</span>}
+                      {showBitcoinBalance && <span><strong className="text-slate-950">{Number(btcBalance).toFixed(8)}</strong> BTC</span>}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {onShowStats && showShellBalance && <button type="button" onClick={onShowStats} className="font-bold text-slate-600 underline underline-offset-2 hover:text-slate-950">View activity</button>}
+                      <a href={`https://mempool.space/address/${profileAddress}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-bold text-amber-700 hover:text-amber-900 hover:underline">mempool.space <ExternalLink className="h-3 w-3" /></a>
+                    </div>
+                  </div>
                 </div>
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 text-left">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">Shells available</p>
-                  <p className="mt-2 text-xl font-black text-white">{Number(shellsAvailable).toFixed(8)}</p>
-                </div>
-                {onShowStats ? <button type="button" onClick={onShowStats} className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 text-left transition hover:border-white/[0.13] hover:bg-white/[0.05]">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">Shells spent</p>
-                  <p className="mt-2 text-xl font-black text-white">{Number(shellsSpentTotal).toFixed(8)}</p>
-                  <p className="mt-1 text-xs text-white/40 underline underline-offset-2">View activity</p>
-                </button> : <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-4 text-left"><p className="text-[10px] font-bold uppercase tracking-[0.15em] text-white/30">Shells spent</p><p className="mt-2 text-xl font-black text-white">{Number(shellsSpentTotal).toFixed(8)}</p></div>}
               </div>
             )}
 
             <nav className="sticky top-[68px] z-10 flex overflow-x-auto border-y border-white/[0.08] bg-[#101218]/90 px-3 backdrop-blur-xl sm:px-6" aria-label="Profile content">
               {[
-                { id: 'posts', label: 'Posts', count: posts.length, icon: MessageSquare },
-                { id: 'replies', label: 'Replies', count: replies.length, icon: MessageSquare },
-                { id: 'reposts', label: 'Reposts', count: reposts.length, icon: Repeat2 },
-                { id: 'useful', label: 'Useful', count: usefulMessages.length, icon: Lightbulb },
+                { id: 'posts', label: 'Posts', count: tabMessages.posts.length, icon: MessageSquare },
+                { id: 'replies', label: 'Replies', count: tabMessages.replies.length, icon: MessageSquare },
+                { id: 'reposts', label: 'Reposts', count: tabMessages.reposts.length, icon: Repeat2 },
+                { id: 'useful', label: 'Useful', count: tabMessages.useful.length, icon: Lightbulb },
               ].map((tab) => {
                 const Icon = tab.icon;
                 const isActive = activeTab === tab.id;
@@ -459,13 +468,13 @@ const ProfileStep = ({
             </nav>
 
             <div className="space-y-3 p-4 sm:p-6">
-              {currentMessages.length === 0 ? (
+              {loadingTab ? <FeedSkeleton count={3} /> : currentMessages.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.02] p-12 text-center">
                   <p className="font-semibold text-white/60">No {activeTab === 'posts' ? 'posts' : activeTab === 'replies' ? 'replies' : activeTab === 'reposts' ? 'reposts' : 'Useful posts'} yet.</p>
                   <p className="mt-2 text-sm text-white/30">This section will fill up as the conversation grows.</p>
                 </div>
               ) : currentMessages.map((message) => (
-                <MessageCard key={message.id} message={message} currentAddress={currentAddress} onUserClick={onOpenProfile} onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null} onEditorialTopicPreference={onEditorialTopicPreference ? handleEditorialTopicPreference : null} onReportMessage={onReportMessage ? handleReportMessage : null} showActions={false} />
+                <MessageCard key={message.id} message={message} currentAddress={currentAddress} onUserClick={onOpenProfile} onUseful={onToggleUseful} onComment={handleComment} onLoadComments={onLoadComments} onRepost={onRepostMessage} onOpenThread={onOpenThread} onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null} onEditorialTopicPreference={onEditorialTopicPreference ? handleEditorialTopicPreference : null} onReportMessage={onReportMessage ? handleReportMessage : null} showActions />
               ))}
               {loadingMore && currentMessages.length > 0 && <FeedSkeleton count={2} compact className="mt-4" />}
               <div className="flex items-center justify-center pt-2">
@@ -482,6 +491,7 @@ const ProfileStep = ({
           profile={{ ...profile, display_name: displayName }}
           onClose={() => setShowEditProfile(false)}
           onSaved={handleProfileSaved}
+          onBalanceUpdated={onBalanceUpdated}
         />
       )}
       {connectionsRelation && (
@@ -490,6 +500,7 @@ const ProfileStep = ({
           initialRelation={connectionsRelation}
           onClose={() => setConnectionsRelation('')}
           onOpenProfile={onOpenProfile}
+          addressDisplay={addressDisplay}
         />
       )}
     </main>

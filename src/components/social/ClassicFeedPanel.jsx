@@ -34,7 +34,7 @@ const ClassicFeedPanel = ({
               <textarea
                 value={messageContent}
                 onChange={(event) => onMessageContentChange(event.target.value)}
-                placeholder="Share something worth reading..."
+                placeholder="Share something new..."
                 maxLength={1000}
                 rows={3}
                 className="w-full resize-none bg-transparent pt-2 text-base leading-7 text-white outline-none placeholder:text-white/25 sm:text-lg"

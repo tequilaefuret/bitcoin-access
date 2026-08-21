@@ -1,8 +1,10 @@
 // src/components/ui/ErrorAlert.jsx
 import React from 'react';
 import { AlertCircle, CheckCircle } from 'lucide-react';
+import { friendlyShellError } from '../../lib/shells';
 
 const ErrorAlert = ({ error, success, className = '' }) => {
+  const friendlyError = friendlyShellError(error);
   if (!error && !success) return null;
 
   return (
@@ -27,7 +29,7 @@ const ErrorAlert = ({ error, success, className = '' }) => {
             )}
           </div>
         ) : (
-          <p className="whitespace-pre-line text-red-200">{error}</p>
+          <p className="whitespace-pre-line text-red-200">{friendlyError}</p>
         )}
       </div>
     </div>

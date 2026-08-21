@@ -1,13 +1,14 @@
 import React from 'react';
+import DanausMark from '../layout/DanausMark';
 
 const Bone = ({ className = '' }) => (
   <div className={`rounded-full bg-white/10 ${className}`} />
 );
 
-const SkeletonStatus = ({ label, children, className = '' }) => (
+const SkeletonStatus = ({ label, children, className = '', pulse = true }) => (
   <div role="status" aria-label={label} className={className}>
     <span className="sr-only">{label}</span>
-    <div aria-hidden="true" className="animate-pulse">
+    <div aria-hidden="true" className={pulse ? 'animate-pulse' : ''}>
       {children}
     </div>
   </div>
@@ -111,13 +112,15 @@ export const ListSkeleton = ({ label = 'Loading content', count = 3, className =
 );
 
 export const ScreenSkeleton = ({ label = 'Loading page' }) => (
-  <SkeletonStatus label={label} className="mx-auto w-full max-w-md py-6 text-center">
+  <SkeletonStatus label={label} pulse={false} className="mx-auto w-full max-w-md py-6 text-center">
     <div className="rounded-[2rem] border border-white/10 bg-white/[0.045] p-8 shadow-[0_28px_90px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-      <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-amber-300 shadow-[0_0_42px_rgba(252,211,77,0.24)]">
-        <span className="h-6 w-6 rounded-full border-[3px] border-slate-950/20 border-t-slate-950 animate-spin" />
+      <div className="relative mx-auto h-16 w-16" aria-hidden="true">
+        <DanausMark className="absolute inset-0 h-full w-full text-white/12" />
+        <div className="danaus-antenna-fill absolute inset-0 overflow-hidden">
+          <DanausMark className="h-full w-full text-amber-300 drop-shadow-[0_0_12px_rgba(252,211,77,0.35)]" />
+        </div>
       </div>
-      <p className="mt-6 text-xs font-bold uppercase tracking-[0.2em] text-amber-300">Danaus</p>
-      <h1 className="mt-2 text-2xl font-black tracking-[-0.04em] text-white">Restoring your space</h1>
+      <h1 className="mt-3 text-2xl font-black tracking-[-0.04em] text-white">Getting you there</h1>
       <p className="mt-2 text-sm leading-6 text-white/45">Verifying your private session and preparing your feed.</p>
       <div className="mx-auto mt-7 h-1.5 max-w-[220px] overflow-hidden rounded-full bg-white/[0.07]">
         <div className="h-full w-2/3 animate-pulse rounded-full bg-gradient-to-r from-amber-300 to-orange-400" />

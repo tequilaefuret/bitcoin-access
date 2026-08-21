@@ -10,7 +10,6 @@ import {
   Layers3,
   Loader,
   LockKeyhole,
-  ShieldCheck,
   Smartphone,
   Wallet
 } from 'lucide-react';
@@ -100,6 +99,7 @@ const ConnectStep = ({
   onPasswordLogin,
   onPasswordRecovery,
   onUseWallet,
+  onNewToBitcoin,
 }) => {
   const [showMobileLink, setShowMobileLink] = useState(false);
   const [mobileLinkCopied, setMobileLinkCopied] = useState(false);
@@ -175,8 +175,9 @@ const ConnectStep = ({
   };
 
   return (
-    <div className="mx-auto w-full max-w-2xl py-1 sm:py-3 lg:py-4">
-      <section className="overflow-hidden rounded-[28px] border border-white/10 bg-[#f7f5ef] text-slate-950 shadow-[0_30px_90px_-28px_rgba(0,0,0,0.9)] sm:rounded-[32px]">
+    <div className="relative mx-auto w-full max-w-2xl py-1 sm:py-3 lg:py-4">
+      <div className="pointer-events-none absolute inset-x-10 inset-y-6 -z-10 rounded-[3rem] bg-amber-300/[0.08] blur-3xl" aria-hidden="true" />
+      <section className="overflow-hidden rounded-[28px] border border-amber-200/15 bg-[#f7f5ef] text-slate-950 shadow-[0_30px_90px_-28px_rgba(0,0,0,0.9),0_0_70px_-35px_rgba(252,211,77,0.28)] sm:rounded-[32px]">
         <header className="relative isolate overflow-hidden border-b border-stone-200/80 px-5 py-5 sm:px-8 sm:py-6">
           <div className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
             <div className="absolute -right-16 -top-28 h-64 w-64 rounded-full bg-amber-300/30 blur-[80px]" />
@@ -188,7 +189,7 @@ const ConnectStep = ({
             </div>
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-amber-700 sm:text-xs">
-                Enter the place
+                Enter the space
               </p>
               <h1 className="mt-1 text-xl font-black tracking-[-0.04em] text-slate-950 sm:text-2xl">
                 {accessMode === 'password' ? 'Sign in with your password' : 'Sign in with your wallet'}
@@ -538,10 +539,11 @@ const ConnectStep = ({
           )}
 
           <div className="mt-6 border-t border-slate-100 pt-5 text-xs text-slate-400">
-            <span className="inline-flex items-center gap-1.5">
-              <ShieldCheck className="h-4 w-4" />
-              Read-only ownership proof
-            </span>
+            <div className="flex justify-end">
+              <button type="button" onClick={onNewToBitcoin} className="font-semibold text-amber-700 transition hover:text-amber-900 hover:underline">
+                Don't have a personal wallet?
+              </button>
+            </div>
           </div>
             </>
           )}

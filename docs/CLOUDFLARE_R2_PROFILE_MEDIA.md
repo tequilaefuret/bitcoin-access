@@ -29,8 +29,45 @@ une alerte de facturation dans Cloudflare est donc recommandé.
 
 ## 2. Donner une URL publique aux images
 
+Attention : l'adresse publique du bucket et l'adresse du site Danaus sont deux
+adresses différentes.
+
+- L'adresse publique du bucket sert à afficher les images. Elle devient
+  `R2_PUBLIC_BASE_URL`.
+- L'adresse du site DEV (par exemple une adresse Netlify) sera ajoutée plus tard
+  dans `AllowedOrigins`, à l'étape CORS. Elle ne doit pas être saisie dans
+  **Custom Domains**.
+
+### Solution recommandée pour le DEV : l'adresse `r2.dev`
+
+Une adresse Netlify telle que `votre-site-dev.netlify.app` n'appartient pas à
+votre compte Cloudflare. Cloudflare la refusera donc dans **Custom Domains** avec
+le message « That domain was not found on your account ».
+
+Pour continuer sans acheter ni déplacer de domaine :
+
+1. Ouvrir le bucket `danaus-profile-media`.
+2. Ouvrir **Settings**.
+3. Descendre jusqu'à **Public Development URL** — ne pas utiliser
+   **Custom Domains**.
+4. Cliquer sur **Enable**.
+5. Taper `allow`, puis valider avec **Allow**.
+6. Copier l'adresse générée, qui se termine par `.r2.dev`, sans ajouter de barre
+   oblique à la fin. Cette adresse exacte sera la valeur DEV de
+   `R2_PUBLIC_BASE_URL`.
+
+Cette URL est limitée par Cloudflare et réservée aux essais. Elle convient pour
+mettre en place et tester la fonctionnalité sur le site DEV.
+
+### Solution pour la production : un domaine que vous possédez
+
 Pour la production, utiliser un sous-domaine du domaine Danaus, par exemple
-`media.votre-domaine.fr` :
+`media.votre-domaine.fr`. Le domaine principal `votre-domaine.fr` doit d'abord
+figurer dans **Websites** dans le même compte Cloudflare et utiliser Cloudflare
+DNS. Une adresse fournie par Netlify, Vercel ou un autre hébergeur ne peut pas
+être utilisée comme domaine R2 personnalisé.
+
+Une fois votre propre domaine géré par Cloudflare :
 
 1. Ouvrir le bucket `danaus-profile-media`.
 2. Ouvrir **Settings**, puis la section **Custom Domains**.
@@ -40,9 +77,9 @@ Pour la production, utiliser un sous-domaine du domaine Danaus, par exemple
 5. Noter l'URL exacte `https://media.votre-domaine.fr`, sans barre oblique finale.
    Ce sera la valeur de `R2_PUBLIC_BASE_URL`.
 
-Le domaine doit être géré dans le même compte Cloudflare. Le sous-domaine
-`r2.dev`, activable dans **Public Development URL**, peut dépanner en DEV mais
-Cloudflare ne le recommande pas pour la production.
+Le statut peut rester **Initializing** quelques minutes avant de devenir
+**Active**. Ne pas créer un CNAME vers l'adresse `r2.dev` : cette méthode n'est
+pas prise en charge par Cloudflare.
 
 ## 3. Autoriser l'envoi direct depuis le site
 
@@ -67,7 +104,9 @@ policy** et coller ce JSON après avoir remplacé les deux domaines d'exemple :
 
 Une origine est uniquement le protocole et le domaine : ne pas ajouter de chemin
 tel que `/profile`, et ne pas mettre de barre oblique finale. Supprimer l'origine
-Netlify DEV si elle n'existe pas. Enregistrer la politique.
+Netlify DEV si elle n'existe pas. Contrairement au domaine public du bucket,
+l'origine CORS peut parfaitement être une adresse Netlify qui n'est pas gérée
+par Cloudflare. Enregistrer la politique.
 
 ## 4. Créer une clé limitée à ce bucket
 
@@ -124,10 +163,12 @@ supabase functions deploy user-operations
 supabase functions deploy get-user-data
 supabase functions deploy get-public-profile
 supabase functions deploy verify-and-register
+supabase functions deploy social-follow
 ```
 
-La migration ajoute uniquement les champs de bio enrichie et les URL des deux
-images. Elle ne transfère aucun fichier dans PostgreSQL.
+La migration ajoute les métadonnées d'image et le verrou remboursable associé.
+PostgreSQL ne reçoit jamais le fichier : uniquement son URL, sa clé R2, ses
+dimensions et le nombre de pixels verrouillés.
 
 Le pipeline complet du projet peut aussi déployer toutes les migrations et Edge
 Functions avec `npm run deploy:development`, puis, après validation, avec
@@ -139,10 +180,14 @@ projet Supabase avant ce déploiement.
 1. Ouvrir le site DEV et se connecter.
 2. Aller sur son profil puis cliquer sur **Edit profile**.
 3. Choisir un JPG, PNG ou WebP de moins de 5 Mo pour l'avatar et la couverture.
+   L'écran affiche ses dimensions et le nombre de shells à verrouiller.
 4. Enregistrer, actualiser la page et vérifier que les deux images restent visibles.
 5. Dans Cloudflare R2, ouvrir **Objects** : deux objets doivent exister sous
-   `profiles/<identifiant-anonyme>/avatar` et `profiles/<identifiant-anonyme>/cover`.
+   `profiles/<identifiant-anonyme>/avatar/<uuid>` et
+   `profiles/<identifiant-anonyme>/cover/<uuid>`.
 6. Vérifier également le profil depuis un autre compte et sur téléphone.
+7. Remplacer une image par une plus petite puis la supprimer. Une image de
+   100 × 200 verrouille 20 000 shells ; une image de 100 × 100 en libère 10 000.
 
 Si l'envoi affiche une erreur CORS, vérifier en priorité que l'origine exacte du
 site figure dans `AllowedOrigins`. Si l'image est envoyée mais ne s'affiche pas,

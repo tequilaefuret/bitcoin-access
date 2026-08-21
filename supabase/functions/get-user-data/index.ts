@@ -45,7 +45,7 @@ serve(async (req) => {
     ] = await Promise.all([
       supabase
         .from('user_profiles')
-        .select('bitcoin_address, display_name, bio, location, website_url, avatar_url, cover_url, created_at, updated_at')
+        .select('bitcoin_address, display_name, bio, location, website_url, avatar_url, cover_url, avatar_pixels, cover_pixels, created_at, updated_at')
         .eq('bitcoin_address', address)
         .maybeSingle(),
       supabase.from('follows').select('*', { count: 'exact', head: true }).eq('following_address', address),

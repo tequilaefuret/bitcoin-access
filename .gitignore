@@ -36,3 +36,5 @@ yarn-error.log*
 # IDE
 .vscode/
 .idea/
+# Generated from the selected Supabase project at build time.
+public/_redirects

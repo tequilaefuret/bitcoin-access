@@ -1,6 +1,7 @@
 // Application facade for authenticated balance and paid product operations.
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { usePendingActivity } from './usePendingActivity';
+import { friendlyShellError } from '../lib/shells';
 import {
   verifyAndRegister,
   syncUserBalance,
@@ -124,9 +125,7 @@ export const useBitcoinBalance = () => {
     };
   }, [address]);
 
-  /**
-   * 🎮 Démarrer une partie (coût : 0.000001 shells)
-   */
+  /** Démarrer une partie (coût : 100 shells). */
   const startGame = useCallback(async () => {
     setError('');
 
@@ -147,22 +146,13 @@ export const useBitcoinBalance = () => {
       return true;
 
     } catch (err) {
-      if (err.message.includes('insuffisant') || err.message.includes('Insufficient')) {
-        setError(
-          `Insufficient shells balance\n\n` +
-          `Required: ${0.000001.toFixed(8)} shells\n` +
-          `Available: ${shellsAvailable.toFixed(8)} shells\n\n` +
-          `Add bitcoin to your verified address and wait for the automatic balance refresh.`
-        );
-      } else {
-        setError(err.message);
-      }
+      setError(friendlyShellError(err));
 
       return false;
     } finally {
       endActivity();
     }
-  }, [address, beginActivity, endActivity, shellsAvailable]);
+  }, [address, beginActivity, endActivity]);
 
   /**
    * 📝 Publier un message
@@ -187,31 +177,18 @@ export const useBitcoinBalance = () => {
       return result;
 
     } catch (err) {
-      if (err.message.includes('insuffisant') || err.message.includes('Insufficient')) {
-        // Calculer coût du message pour l'erreur
-        const charCount = content.replace(/\n/g, '').length;
-        const cost = charCount * 0.00000001;
-
-        setError(
-          `Insufficient shells balance\n\n` +
-          `Required: ${cost.toFixed(8)} shells\n` +
-          `Available: ${shellsAvailable.toFixed(8)} shells\n\n` +
-          `Add bitcoin to your verified address and wait for the automatic balance refresh.`
-        );
-      } else {
-        setError('Error: ' + err.message);
-      }
+      setError(friendlyShellError(err, 'Publishing failed'));
 
       return false;
 
     } finally {
       endActivity();
     }
-  }, [address, beginActivity, endActivity, shellsAvailable]);
+  }, [address, beginActivity, endActivity]);
 
   /**
    * 📨 Charger les messages (tous) avec pagination
-   * Décompte 1 satoshi par message chargé
+   * Décompte 1 shell par publication d'un autre auteur chargée
    */
   const loadMessages = useCallback(async (
     limit = 20,
@@ -234,11 +211,7 @@ export const useBitcoinBalance = () => {
     } catch (err) {
 
       // Gestion d'erreur améliorée
-      if (err.message?.includes('insuffisant')) {
-        setError(`Insufficient balance to load messages.\n\nSync your Bitcoin balance.`);
-      } else {
-        setError('Could not load messages: ' + err.message);
-      }
+      setError(friendlyShellError(err, 'Could not load messages'));
 
       return { messages: [], hasMore: false, nextCursor: null };
     } finally {
@@ -263,7 +236,7 @@ export const useBitcoinBalance = () => {
       return result.messages;
 
     } catch (err) {
-      setError('Could not load comments: ' + err.message);
+      setError(friendlyShellError(err, 'Could not load comments'));
       return [];
     } finally {
       endActivity();
@@ -279,7 +252,7 @@ export const useBitcoinBalance = () => {
       const pixels = await getCanvasPixels();
       return pixels;
     } catch (err) {
-      setError(err.message);
+      setError(friendlyShellError(err));
       return [];
     } finally {
       endActivity();
@@ -384,7 +357,9 @@ export const useBitcoinBalance = () => {
 
   const loadOpinionTopics = useCallback(async () => {
     if (!address) return [];
-    return getOpinionTopics(address);
+    const result = await getOpinionTopics(address);
+    if (result?.new_balance !== undefined) setShellsAvailable(Number(result.new_balance) || 0);
+    return result?.topics || [];
   }, [address]);
 
   const savePrivateTopicStance = useCallback(async (topicId, stance) => {
@@ -414,6 +389,7 @@ export const useBitcoinBalance = () => {
     error,
     setAddress,
     setError,
+    updateBalance: applyBalance,
     restoreAuthenticatedUser,
     checkBitcoinBalance,
     startGame,

@@ -147,7 +147,7 @@ const LandingPage = ({ onStart, onSignIn }) => (
           <div className="max-w-2xl">
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-300">How does it work?</p>
             <h2 className="mt-4 text-4xl font-black leading-[0.98] tracking-[-0.055em] sm:text-5xl">Your bitcoin balance sets your starting power.</h2>
-            <p className="mt-5 text-base leading-7 text-white/60">Danaus mirrors the bitcoin balance of the address you prove you control into an internal shell balance. Shells are used only inside Danaus; your bitcoin remains in your wallet.</p>
+            <p className="mt-5 text-base leading-7 text-white/60">Danaus mirrors the bitcoin balance of the address you prove you control into an internal shell balance: 1 satoshi equals 1 shell. Shells are used only inside Danaus; your bitcoin remains in your wallet.</p>
           </div>
 
           <figure className="mt-12 overflow-hidden rounded-[2rem] border border-white/[0.09] bg-[#080a0e] shadow-[0_24px_70px_-32px_rgba(0,0,0,0.9)]">
@@ -159,11 +159,10 @@ const LandingPage = ({ onStart, onSignIn }) => (
             <figcaption className="grid divide-y divide-white/[0.08] border-t border-white/[0.09] bg-white/[0.025] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
               <div className="px-5 py-5 sm:px-6"><span className="text-xs font-black tracking-[0.16em] text-amber-300">01 / PROVE</span><p className="mt-2 text-sm leading-6 text-white/65">Sign a login message with an address you control. No bitcoin moves.</p></div>
               <div className="px-5 py-5 sm:px-6"><span className="text-xs font-black tracking-[0.16em] text-amber-300">02 / MIRROR</span><p className="mt-2 text-sm leading-6 text-white/65">Danaus mirrors your verified balance as shells. A sync reflects bitcoin added or moved.</p></div>
-              <div className="px-5 py-5 sm:px-6"><span className="text-xs font-black tracking-[0.16em] text-amber-300">03 / SPEND</span><p className="mt-2 text-sm leading-6 text-white/65">Reading, publishing, and creating spend shells, never on-chain bitcoin.</p></div>
+              <div className="px-5 py-5 sm:px-6"><span className="text-xs font-black tracking-[0.16em] text-amber-300">03 / SPEND</span><p className="mt-2 text-sm leading-6 text-white/65">Reading and publishing spend shells; following temporarily locks them. Your bitcoin never moves.</p></div>
             </figcaption>
           </figure>
 
-          <p className="mt-5 text-center text-sm leading-6 text-white/70"><span className="font-bold text-white">Example:</span> 2,685 sats proved → 2,685 shells mirrored → 577 shells spent → <span className="font-bold text-amber-300">2,108 shells available.</span></p>
         </div>
       </section>
 
@@ -186,13 +185,13 @@ const LandingPage = ({ onStart, onSignIn }) => (
             </article>
             <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 sm:p-7">
               <Compass className="h-5 w-5 text-amber-300" />
-              <h3 className="mt-8 text-lg font-black tracking-tight">Keep the door open</h3>
-              <p className="mt-3 text-sm leading-6 text-white/50">Bitcoiners can share what they know, while people who are new to Bitcoin can discover the tools and ideas at their own pace.</p>
+              <h3 className="mt-8 text-lg font-black tracking-tight">Benefit without spending</h3>
+              <p className="mt-3 text-sm leading-6 text-white/50">DeFi, vouchers, crypto cards... it's always about giving up on your savings. Our logic is different: save your bitcoins, spend shells in Danaus.</p>
             </article>
             <article className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 sm:p-7">
               <LockKeyhole className="h-5 w-5 text-amber-300" />
               <h3 className="mt-8 text-lg font-black tracking-tight">Privacy by default</h3>
-              <p className="mt-3 text-sm leading-6 text-white/50">No names, email addresses, or phone numbers are required or stored. Your public presence is yours to shape, without giving up your identity.</p>
+              <p className="mt-3 text-sm leading-6 text-white/50">No names, email addresses, or phone numbers are required or stored. Your profile is yours to shape, giving you the ability to decide what to share of yourself.</p>
             </article>
           </div>
         </div>
@@ -226,7 +225,7 @@ const LandingPage = ({ onStart, onSignIn }) => (
             {[
               ['01', 'Learn the basics', 'Explore independent educational resources and decide whether Bitcoin makes sense for you. Be wary of promises of returns.'],
               ['02', 'Choose how to get bitcoin', 'If you decide to proceed, use a method available in your country that you understand. Start small, with money you can afford to lose.'],
-              ['03', 'Move to self-custody, then sign in', 'Learn to secure a wallet you control. Once it holds bitcoin, sign a message to prove ownership and access Danaus.'],
+              ['03', 'Move to self-custody', 'Learn to secure a wallet you control. Once it holds bitcoin, you will be able to access Danaus.'],
             ].map(([number, title, text]) => (
               <li key={number} className="rounded-3xl border border-white/10 bg-[#0b0d12] p-6 sm:p-7">
                 <span className="text-xs font-black tracking-widest text-amber-300">{number}</span>
@@ -235,7 +234,7 @@ const LandingPage = ({ onStart, onSignIn }) => (
               </li>
             ))}
           </ol>
-          <p className="mt-6 flex items-start gap-2 text-xs leading-5 text-white/35"><BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-white/45" /> Danaus does not offer trading services nor provide investment advice. DYOR.</p>
+          <p className="mt-6 flex items-start gap-2 text-xs leading-5 text-white/35"><BadgeCheck className="mt-0.5 h-4 w-4 shrink-0 text-white/45" /> Danaus does not offer trading services nor provide investment advice. Do your own research (DYOR).</p>
         </div>
       </section>
 

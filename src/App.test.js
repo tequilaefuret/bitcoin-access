@@ -32,7 +32,7 @@ test('uses Useful as the only evaluation action', async () => {
   expect(screen.queryByText(/dislike/i)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: /useful 3/i })).toHaveAttribute(
     'title',
-    'Mark as useful (costs 1 satoshi)'
+    'Mark as useful (costs 1 shell)'
   );
 
   fireEvent.click(screen.getByRole('button', { name: /useful 3/i }));

@@ -2,13 +2,15 @@
 import React, { useState, useEffect } from 'react';
 import { Gamepad2, Loader } from 'lucide-react';
 import ErrorAlert from '../ui/ErrorAlert';
+import { canShowShellBalance, formatShellAmount } from '../../lib/displayPreferences';
 
 const GameStep = ({ 
   shellsAvailable,
   onStartGame,
   onBack,
   loading,
-  error
+  error,
+  balanceDisplay = 'show_all'
 }) => {
   const [score, setScore] = useState(0);
   const [gameActive, setGameActive] = useState(false);
@@ -56,10 +58,10 @@ const GameStep = ({
       
       <div className="bg-purple-50 p-4 rounded-lg mb-4 flex justify-between items-center">
         <p className="text-purple-800 font-semibold">
-          💎 Balance: {shellsAvailable.toFixed(8)} shells
+          💎 Balance: {canShowShellBalance(balanceDisplay) ? `${formatShellAmount(shellsAvailable)} shells` : 'Hidden'}
         </p>
         <p className="text-purple-600">
-          🎮 {Math.floor(shellsAvailable / 0.000001)} games left
+          🎮 {canShowShellBalance(balanceDisplay) ? `${Math.floor(shellsAvailable / 100)} games left` : 'Games available hidden'}
         </p>
       </div>
 
@@ -84,7 +86,7 @@ const GameStep = ({
             </p>
             {score === 0 && (
               <p className="text-sm text-purple-600 mb-4">
-                💰 This game costs 0.000001 shells
+                💰 This game costs 100 shells
               </p>
             )}
             <button

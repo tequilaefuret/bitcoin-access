@@ -35,6 +35,7 @@
     "web-vitals": "^2.1.4"
   },
   "scripts": {
+    "prebuild": "node scripts/generate-netlify-routes.mjs",
     "start": "cross-env HOST=127.0.0.1 CHOKIDAR_USEPOLLING=true WATCHPACK_POLLING=true GENERATE_SOURCEMAP=false react-scripts start",
     "build": "cross-env GENERATE_SOURCEMAP=false react-scripts build",
     "test": "react-scripts test",

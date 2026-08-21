@@ -1,11 +1,14 @@
 export const DEFAULT_USER_PREFERENCES = Object.freeze({
   defaultFeed: 'for_you',
   motion: 'system',
-  showFullAddress: false,
+  addressDisplay: 'shortened',
+  balanceDisplay: 'show_all',
 });
 
 const VALID_FEEDS = new Set(['for_you', 'recent', 'followed']);
 const VALID_MOTION_SETTINGS = new Set(['system', 'full', 'reduced']);
+const VALID_ADDRESS_SETTINGS = new Set(['full', 'shortened', 'masked']);
+const VALID_BALANCE_SETTINGS = new Set(['show_all', 'hide_all', 'hide_bitcoin', 'hide_shells']);
 
 const storageKey = (address) => `danaus_preferences:${address || 'anonymous'}`;
 
@@ -17,9 +20,14 @@ export function normalizeUserPreferences(value = {}) {
     motion: VALID_MOTION_SETTINGS.has(value.motion)
       ? value.motion
       : DEFAULT_USER_PREFERENCES.motion,
-    showFullAddress: typeof value.showFullAddress === 'boolean'
-      ? value.showFullAddress
-      : DEFAULT_USER_PREFERENCES.showFullAddress,
+    addressDisplay: VALID_ADDRESS_SETTINGS.has(value.addressDisplay)
+      ? value.addressDisplay
+      : value.showFullAddress === true
+        ? 'full'
+        : DEFAULT_USER_PREFERENCES.addressDisplay,
+    balanceDisplay: VALID_BALANCE_SETTINGS.has(value.balanceDisplay)
+      ? value.balanceDisplay
+      : DEFAULT_USER_PREFERENCES.balanceDisplay,
   };
 }
 

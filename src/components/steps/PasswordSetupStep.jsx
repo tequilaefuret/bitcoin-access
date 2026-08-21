@@ -11,13 +11,14 @@ import {
   ShieldCheck,
   Wallet,
 } from 'lucide-react';
-import { configurePassword, truncateAddress } from '../../supabaseClient';
+import { configurePassword } from '../../supabaseClient';
+import { formatBitcoinAddress } from '../../lib/displayPreferences';
 import DanausMark from '../layout/DanausMark';
 
 const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 128;
 
-const PasswordSetupStep = ({ address, mode = 'set', onComplete, onSkip }) => {
+const PasswordSetupStep = ({ address, mode = 'set', onComplete, onSkip, addressDisplay = 'shortened' }) => {
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -111,7 +112,7 @@ const PasswordSetupStep = ({ address, mode = 'set', onComplete, onSkip }) => {
 
           <div className="mt-6 rounded-2xl border border-white/[0.08] bg-black/20 px-4 py-3">
             <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/30">Verified account</p>
-            <p className="mt-1 truncate font-mono text-xs text-white/60">{truncateAddress(address)}</p>
+            <p className="mt-1 truncate font-mono text-xs text-white/60">{formatBitcoinAddress(address, addressDisplay)}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">

@@ -10,7 +10,8 @@ jest.mock('../../supabaseClient', () => ({
 const preferences = {
   defaultFeed: 'for_you',
   motion: 'system',
-  showFullAddress: false,
+  addressDisplay: 'shortened',
+  balanceDisplay: 'show_all',
 };
 
 beforeEach(() => {
@@ -102,8 +103,11 @@ test('updates feed, animation, and address privacy preferences', () => {
   fireEvent.change(screen.getByLabelText(/animations/i), { target: { value: 'reduced' } });
   expect(onPreferencesChange).toHaveBeenLastCalledWith({ ...updatedPreferences, motion: 'reduced' });
 
-  fireEvent.click(screen.getByRole('switch', { name: /show full bitcoin address/i }));
-  expect(onPreferencesChange).toHaveBeenLastCalledWith({ ...updatedPreferences, showFullAddress: true });
+  fireEvent.change(screen.getByLabelText(/show bitcoin address/i), { target: { value: 'full' } });
+  expect(onPreferencesChange).toHaveBeenLastCalledWith({ ...updatedPreferences, addressDisplay: 'full' });
+
+  fireEvent.change(screen.getByLabelText(/show balance/i), { target: { value: 'hide_bitcoin' } });
+  expect(onPreferencesChange).toHaveBeenLastCalledWith({ ...updatedPreferences, balanceDisplay: 'hide_bitcoin' });
 });
 
 test('offers password creation when the account has no password', () => {

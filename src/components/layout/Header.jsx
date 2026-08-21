@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronDown,
@@ -15,11 +15,7 @@ import {
   Users,
 } from 'lucide-react';
 import DanausMark from './DanausMark';
-
-const shortenAddress = (address) => {
-  if (!address || address.length < 15) return address;
-  return `${address.slice(0, 8)}...${address.slice(-6)}`;
-};
+import { formatBitcoinAddress } from '../../lib/displayPreferences';
 
 const FeedControls = ({ networkMode, onNetworkModeChange, feedSort, onFeedSortChange }) => (
   <div className="flex w-full items-center gap-2 overflow-x-auto px-4 pb-2 md:w-auto md:gap-3 md:overflow-visible md:px-0 md:pb-0">
@@ -28,8 +24,8 @@ const FeedControls = ({ networkMode, onNetworkModeChange, feedSort, onFeedSortCh
         { id: 'classic', label: 'Classic', icon: MessageSquareText },
         { id: 'opinion', label: 'Opinion', icon: Flame },
       ].map(({ id, label, icon: Icon }) => (
-        <button key={id} type="button" onClick={() => onNetworkModeChange?.(id)} aria-pressed={networkMode === id} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold transition ${networkMode === id ? 'bg-amber-300 text-slate-950' : 'text-white/40 hover:text-white'}`}>
-          <Icon className="h-3.5 w-3.5" /> {label}
+        <button key={id} type="button" onClick={() => onNetworkModeChange?.(id)} aria-label={label} aria-pressed={networkMode === id} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-bold transition md:px-3 ${networkMode === id ? 'bg-amber-300 text-slate-950' : 'text-white/40 hover:text-white'}`}>
+          <Icon className="h-3.5 w-3.5" /> <span className={networkMode === id ? '' : 'hidden md:inline'}>{label}</span>
         </button>
       ))}
     </div>
@@ -41,8 +37,8 @@ const FeedControls = ({ networkMode, onNetworkModeChange, feedSort, onFeedSortCh
           { id: 'recent', label: 'Latest', icon: Clock3 },
           { id: 'followed', label: 'Followed', icon: Users },
         ].map(({ id, label, icon: Icon }) => (
-          <button key={id} type="button" onClick={() => onFeedSortChange?.(id)} aria-pressed={feedSort === id} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${feedSort === id ? 'bg-white text-slate-950' : 'text-white/40 hover:text-white'}`}>
-            <Icon className="h-3.5 w-3.5" /> {label}
+          <button key={id} type="button" onClick={() => onFeedSortChange?.(id)} aria-label={label} aria-pressed={feedSort === id} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-semibold transition md:px-3 ${feedSort === id ? 'bg-white text-slate-950' : 'text-white/40 hover:text-white'}`}>
+            <Icon className="h-3.5 w-3.5" /> <span className={feedSort === id ? '' : 'hidden md:inline'}>{label}</span>
           </button>
         ))}
       </div>
@@ -64,12 +60,34 @@ const Header = ({
   onNetworkModeChange,
   feedSort = 'for_you',
   onFeedSortChange,
-  showFullAddress = false,
+  addressDisplay = 'shortened',
   minimal = false,
 }) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
+  const [mobileHidden, setMobileHidden] = useState(false);
+  const previousScroll = useRef(0);
   const userName = displayName || 'Danaus member';
+
+  useEffect(() => {
+    if (minimal) return undefined;
+    previousScroll.current = window.scrollY;
+    let ticking = false;
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      window.requestAnimationFrame(() => {
+        const current = Math.max(0, window.scrollY);
+        const delta = current - previousScroll.current;
+        if (current < 24 || delta < -5) setMobileHidden(false);
+        else if (current > 110 && delta > 5 && !showCreateMenu && !showProfileMenu) setMobileHidden(true);
+        previousScroll.current = current;
+        ticking = false;
+      });
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, [minimal, showCreateMenu, showProfileMenu]);
 
   if (minimal) {
     return (
@@ -86,7 +104,7 @@ const Header = ({
   }
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.08] bg-[#07080c]/90 backdrop-blur-2xl">
+    <header className={`fixed inset-x-0 top-0 z-50 border-b border-white/[0.08] bg-[#07080c]/90 backdrop-blur-2xl transition-transform duration-300 ease-out md:translate-y-0 ${mobileHidden ? '-translate-y-[118px]' : 'translate-y-0'}`}>
       <div className="mx-auto flex h-[68px] max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
         <button type="button" onClick={onHome} className="group flex shrink-0 items-center gap-2.5" aria-label="Danaus home">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-300 text-black shadow-[0_0_28px_rgba(252,211,77,0.2)]"><DanausMark className="h-6 w-6 transition-transform duration-500 group-hover:-translate-y-0.5" /></span>
@@ -116,10 +134,10 @@ const Header = ({
             )}
 
             <div className="relative">
-              <button type="button" onClick={() => { setShowProfileMenu((visible) => !visible); setShowCreateMenu(false); }} aria-expanded={showProfileMenu} aria-haspopup="menu" aria-label="Private session" className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.055] p-1.5 pr-2.5 text-white transition hover:border-white/20 hover:bg-white/[0.09]">
+              <button type="button" onClick={() => { setShowProfileMenu((visible) => !visible); setShowCreateMenu(false); }} aria-expanded={showProfileMenu} aria-haspopup="menu" aria-label="Private session" className="flex aspect-square items-center gap-2 rounded-xl border border-white/10 bg-white/[0.055] p-1.5 text-white transition hover:border-white/20 hover:bg-white/[0.09] sm:aspect-auto sm:rounded-full sm:pr-2.5">
                 <span className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-slate-950"><UserRound className="h-4 w-4" /></span>
                 <span className="hidden max-w-32 truncate text-sm font-bold text-white/75 sm:block">{userName}</span>
-                <ChevronDown className={`h-4 w-4 text-white/35 transition-transform ${showProfileMenu ? 'rotate-180' : ''}`} />
+                <ChevronDown className={`hidden h-4 w-4 text-white/35 transition-transform sm:block ${showProfileMenu ? 'rotate-180' : ''}`} />
               </button>
 
               {showProfileMenu && (
@@ -127,7 +145,7 @@ const Header = ({
                   <div className="border-b border-white/[0.08] bg-white/[0.035] p-4">
                     <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">Signed in as</p>
                     <p className="mt-2 truncate text-base font-black text-white">{userName}</p>
-                    <p className="mt-2 break-all rounded-xl border border-white/[0.08] bg-black/20 px-3 py-2 font-mono text-xs text-white/55">{showFullAddress ? connectedAddress : shortenAddress(connectedAddress)}</p>
+                    <p className="mt-2 break-all rounded-xl border border-white/[0.08] bg-black/20 px-3 py-2 font-mono text-xs text-white/55">{formatBitcoinAddress(connectedAddress, addressDisplay)}</p>
                   </div>
                   {onViewProfile && <button type="button" role="menuitem" onClick={() => { setShowProfileMenu(false); onViewProfile(); }} className="flex w-full items-center gap-3 border-b border-white/[0.06] px-4 py-3 text-left text-sm font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"><UserRound className="h-4 w-4 text-white/45" /> View my profile</button>}
                   {onSettings && <button type="button" role="menuitem" onClick={() => { setShowProfileMenu(false); onSettings(); }} className="group flex w-full items-center gap-3 border-b border-white/[0.06] px-4 py-3 text-left text-sm font-semibold text-white/70 transition hover:bg-white/[0.06] hover:text-white"><SettingsIcon className="h-4 w-4 text-white/45 transition-transform duration-300 group-hover:rotate-45" /> Settings</button>}

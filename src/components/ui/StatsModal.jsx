@@ -2,6 +2,7 @@
 import React from 'react';
 import { X, TrendingUp } from 'lucide-react';
 import { ListSkeleton } from './ContentSkeletons';
+import { canShowShellBalance, formatShellAmount } from '../../lib/displayPreferences';
 
 const formatDate = (value) => {
   if (!value) return 'Unknown date';
@@ -40,7 +41,7 @@ const typeLabel = {
   useful: 'Useful'
 };
 
-const StatsModal = ({ stats, onClose }) => {
+const StatsModal = ({ stats, onClose, balanceDisplay = 'show_all' }) => {
   if (!stats) {
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
@@ -124,7 +125,7 @@ const StatsModal = ({ stats, onClose }) => {
 
                     <div className="sm:text-right shrink-0">
                       <p className="text-lg font-black">
-                        -{Math.abs(amount).toFixed(8)} shells
+                        {canShowShellBalance(balanceDisplay) ? `-${formatShellAmount(Math.abs(amount))} shells` : 'Hidden'}
                       </p>
                     </div>
                   </div>

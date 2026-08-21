@@ -9,6 +9,10 @@ L'application utilise donc deux niveaux distincts :
 2. le solde interne de shells, stocké dans PostgreSQL et utilisé immédiatement
    pour toutes les actions de l'application.
 
+L'unité est explicite dans toute l'application : **1 satoshi = 1 shell**. Le
+solde Bitcoin reste stocké en BTC ; les soldes, coûts et transactions en shells
+sont des nombres entiers.
+
 Une vérification « atomique » ne consulte pas Bitcoin. PostgreSQL verrouille
 seulement la ligne du compte pendant quelques millisecondes, vérifie le solde
 interne, inscrit l'action, le débit et l'historique, puis valide l'ensemble.
@@ -36,19 +40,27 @@ automatisée lors du chantier de déploiement afin d'en maîtriser la taille.
 
 | Action | Prix | Appel externe bloquant | Traitement |
 |---|---:|---|---|
-| Publication | 1 satoshi par caractère | Non | Une transaction SQL |
-| Commentaire | 1 satoshi par caractère | Non | Même transaction que la publication |
-| Repost | Selon les caractères facturés | Non | Une transaction SQL |
-| Useful | 1 satoshi à l'ajout | Non | Une transaction SQL |
-| Like/dislike | 1 satoshi à l'ajout | Non | Une transaction SQL |
-| Lecture du fil | 1 satoshi par élément | Non | Un débit unique pour un lot de 20 maximum |
-| Follow/unfollow | Gratuit | Non | Écriture sociale authentifiée |
-| Partie | Prix fixe serveur | Non | Une transaction SQL |
+| Publication | 1 shell par caractère | Non | Une transaction SQL |
+| Commentaire | 1 shell par caractère | Non | Même transaction que la publication |
+| Repost | 1 shell par caractère facturé | Non | Une transaction SQL |
+| Useful | 1 shell à l'ajout | Non | Une transaction SQL |
+| Like/dislike historique | 1 shell à l'ajout | Non | Une transaction SQL |
+| Lecture | 1 shell par publication d'un autre auteur | Non | Ses propres contenus sont exclus en base |
+| Follow | 10 shells verrouillés | Non | Rendus lors du unfollow |
+| Photo de profil/couverture | 1 shell par pixel | Non | La différence est verrouillée ou rendue |
+| Pixel du Canvas | 1 shell | Non | Débit du nombre de pixels placés |
+| Partie | 100 shells | Non | Une transaction SQL |
 | Synchronisation Bitcoin | Gratuit | Oui | Arrière-plan ou action manuelle |
 
 Le contenu n'est renvoyé au navigateur que si le débit local du lot réussit.
 Une page vide reste gratuite. Une page partielle en fin de pagination facture
 uniquement le nombre réel d'éléments retournés.
+
+Les shells verrouillés ne sont pas ajoutés à `shells_spent_total` : ils restent
+remboursables. La table privée `shell_locks` conserve chaque réserve. Par
+sécurité, un remboursement est plafonné par le dernier solde Bitcoin observé :
+retirer les bitcoins qui garantissaient une réserve ne permet donc pas de recréer
+des shells en supprimant ensuite une image ou un follow.
 
 ## Transactions sortantes dans la mempool
 
@@ -90,7 +102,7 @@ des plafonds de crédit et une analyse temps réel des UTXO.
 Les migrations de facturation rapide et d'idempotence sont testées par
 `scripts/test-fast-billing-local.sql` sur PostgreSQL 17. Le test vérifie le coût
 d'une publication, les répétitions réseau, la restitution de l'instantané payé,
-la limite de 20 éléments et le rejet d'une observation Bitcoin périmée. Il
+la limite serveur des lots et le rejet d'une observation Bitcoin périmée. Il
 s'exécute uniquement avec des données fictives et ne contacte pas la production.
 
 ## Mise en production de cette évolution
@@ -98,11 +110,12 @@ s'exécute uniquement avec des données fictives et ne contacte pas la productio
 L'ordre est obligatoire pour éviter que l'Edge Function appelle des fonctions SQL
 qui n'existent pas encore :
 
-1. appliquer `202608080001_atomic_social_reactions.sql` si elle ne l'est pas déjà ;
-2. appliquer `202608080002_fast_atomic_charges.sql` si elle ne l'est pas déjà ;
-3. appliquer `202608080003_transactional_billing_idempotency.sql` ;
-4. redéployer uniquement l'Edge Function `user-operations` ;
+1. sauvegarder la base de l'environnement concerné ;
+2. exécuter `supabase db push --linked --dry-run` ;
+3. appliquer `20260820222705_shell_units_and_refundable_locks.sql` ;
+4. déployer les Edge Functions ;
 5. déployer ensuite l'application web mise à jour.
 
-La migration 003 est additive : elle ne supprime aucune donnée existante. Il ne
-faut pas redéployer `user-operations` avant son application.
+La migration convertit une fois les anciens montants en shells en les multipliant
+par 100 000 000 ; les montants BTC restent inchangés. Ne jamais la rejouer
+manuellement et ne pas déployer les fonctions avant son application.

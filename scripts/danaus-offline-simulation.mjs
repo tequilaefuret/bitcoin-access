@@ -346,7 +346,8 @@ create temp table danaus_costs (
   bitcoin_address text not null,
   amount numeric not null,
   transaction_type text not null,
-  created_at timestamptz not null
+  created_at timestamptz not null,
+  refundable boolean not null default false
 );
 
 do $danaus_validate$
@@ -410,14 +411,14 @@ with inserted as (
     p.bitcoin_address,
     p.content,
     char_length(replace(p.content, E'\\n', '')),
-    char_length(replace(p.content, E'\\n', '')) * 0.00000001,
+    char_length(replace(p.content, E'\\n', '')),
     p.created_at,
     'test'
   from danaus_posts p
   on conflict (id) do nothing
   returning bitcoin_address, cost_shells, created_at
 )
-insert into danaus_costs
+insert into danaus_costs (bitcoin_address, amount, transaction_type, created_at)
 select bitcoin_address, cost_shells, 'message', created_at from inserted;
 
 with inserted as (
@@ -429,7 +430,7 @@ with inserted as (
     c.bitcoin_address,
     c.content,
     char_length(replace(c.content, E'\\n', '')),
-    char_length(replace(c.content, E'\\n', '')) * 0.00000001,
+    char_length(replace(c.content, E'\\n', '')),
     c.created_at,
     c.parent_id,
     'test'
@@ -437,7 +438,7 @@ with inserted as (
   on conflict (id) do nothing
   returning bitcoin_address, cost_shells, created_at
 )
-insert into danaus_costs
+insert into danaus_costs (bitcoin_address, amount, transaction_type, created_at)
 select bitcoin_address, cost_shells, 'message', created_at from inserted;
 
 with inserted as (
@@ -447,13 +448,23 @@ with inserted as (
   on conflict (message_id, bitcoin_address) do nothing
   returning bitcoin_address, created_at
 )
-insert into danaus_costs
-select bitcoin_address, 0.00000001, 'social_useful', created_at from inserted;
+insert into danaus_costs (bitcoin_address, amount, transaction_type, created_at)
+select bitcoin_address, 1, 'social_useful', created_at from inserted;
 
-insert into public.follows (id, follower_address, following_address, created_at)
-select id, follower_address, following_address, created_at
-from danaus_follows
-on conflict (follower_address, following_address) do nothing;
+with inserted as (
+  insert into public.follows (id, follower_address, following_address, created_at)
+  select id, follower_address, following_address, created_at
+  from danaus_follows
+  on conflict (follower_address, following_address) do nothing
+  returning follower_address, following_address, created_at
+), locked as (
+  insert into public.shell_locks (owner_address, lock_kind, lock_key, amount)
+  select follower_address, 'follow', following_address, 10
+  from inserted
+  returning owner_address, lock_key, created_at
+)
+insert into danaus_costs (bitcoin_address, amount, transaction_type, created_at, refundable)
+select owner_address, 10, 'follow_lock', created_at, true from locked;
 
 do $danaus_balance_check$
 begin
@@ -479,10 +490,11 @@ where amount > 0;
 update public.user_balances b
 set
   shells_balance = b.shells_balance - c.total_cost,
-  shells_spent_total = coalesce(b.shells_spent_total, 0) + c.total_cost,
+  shells_spent_total = coalesce(b.shells_spent_total, 0) + c.spent_cost,
   last_sync = now()
 from (
-  select bitcoin_address, sum(amount) as total_cost
+  select bitcoin_address, sum(amount) as total_cost,
+    coalesce(sum(amount) filter (where not refundable), 0) as spent_cost
   from danaus_costs
   group by bitcoin_address
 ) c

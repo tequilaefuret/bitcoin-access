@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes danaus-antenna-fill {
+  0% { clip-path: inset(100% 0 0 0); opacity: 0.35; }
+  75%, 92% { clip-path: inset(0 0 0 0); opacity: 1; }
+  100% { clip-path: inset(0 0 0 0); opacity: 0; }
+}
+
+.danaus-antenna-fill {
+  animation: danaus-antenna-fill 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
 .danaus-reduce-motion *,
 .danaus-reduce-motion *::before,
 .danaus-reduce-motion *::after {

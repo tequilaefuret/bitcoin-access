@@ -2,22 +2,19 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import ProfileStep from './ProfileStep';
 import {
   getPublicProfile,
-  getPublicUserMessages,
-  getPublicUserUsefulMessages,
+  getProfileMessages,
   getUserData,
-  getUserMessages,
   getUserStats,
 } from '../../supabaseClient';
 
 jest.mock('../../supabaseClient', () => ({
   getUserData: jest.fn(),
   getPublicProfile: jest.fn(),
-  getPublicUserMessages: jest.fn(),
-  getPublicUserUsefulMessages: jest.fn(),
-  getUserMessages: jest.fn(),
+  getProfileMessages: jest.fn(),
   getUserStats: jest.fn(),
   getPublicProfileConnections: jest.fn().mockResolvedValue({ accounts: [], total: 0 }),
   uploadProfileMedia: jest.fn(),
+  removeProfileMedia: jest.fn(),
   upsertUserProfile: jest.fn(),
   truncateAddress: (address) => `${address.slice(0, 8)}...${address.slice(-6)}`,
 }));
@@ -25,15 +22,31 @@ jest.mock('../../supabaseClient', () => ({
 const address = 'bc1qabcdefghijklmnopqrstuvwxyz123456';
 
 beforeEach(() => {
+  jest.clearAllMocks();
   getUserData.mockResolvedValue({
     profile: { display_name: 'screen-safe-user' },
     ownership_verified: true,
   });
   getUserStats.mockResolvedValue({});
-  getUserMessages.mockResolvedValue([]);
+  getProfileMessages.mockResolvedValue({ messages: [], new_balance: 100 });
   getPublicProfile.mockResolvedValue({ profile: { display_name: 'public-writer' } });
-  getPublicUserMessages.mockResolvedValue([]);
-  getPublicUserUsefulMessages.mockResolvedValue([]);
+});
+
+test('loads and bills only the profile tab that is actually opened', async () => {
+  render(
+    <ProfileStep
+      profileAddress={address}
+      currentAddress={address}
+      onBack={jest.fn()}
+    />
+  );
+
+  await waitFor(() => expect(getProfileMessages).toHaveBeenCalledWith(address, address, 'posts', 25, 0));
+  expect(getProfileMessages.mock.calls.some((call) => call[2] === 'useful')).toBe(false);
+
+  fireEvent.click(await screen.findByRole('button', { name: /replies/i }));
+  await waitFor(() => expect(getProfileMessages).toHaveBeenCalledWith(address, address, 'replies', 25, 0));
+  expect(getProfileMessages.mock.calls.some((call) => call[2] === 'useful')).toBe(false);
 });
 
 test('shortens the address on the personal profile by default', async () => {
@@ -69,7 +82,7 @@ test('shows the complete profile address only when the preference is enabled', a
       profileAddress={address}
       currentAddress={address}
       onBack={jest.fn()}
-      showFullAddress
+      addressDisplay="full"
     />
   );
 

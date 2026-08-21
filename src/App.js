@@ -33,6 +33,7 @@ const ProfileStep = lazy(() => import('./components/steps/ProfileStep'));
 const CanvasStep = lazy(() => import('./components/steps/CanvasStep'));
 const StatsModal = lazy(() => import('./components/ui/StatsModal'));
 const SettingsStep = lazy(() => import('./components/steps/SettingsStep'));
+const ThreadStep = lazy(() => import('./components/steps/ThreadStep'));
 
 const FOLLOWING_KEY = 'danaus_following_addresses';
 
@@ -70,6 +71,8 @@ const BitcoinExclusiveAccess = () => {
   const [profileReturnStep, setProfileReturnStep] = useState('social');
   const [preserveSocialForProfile, setPreserveSocialForProfile] = useState(false);
   const [settingsReturnStep, setSettingsReturnStep] = useState('social');
+  const [threadMessageId, setThreadMessageId] = useState('');
+  const [threadReturnStep, setThreadReturnStep] = useState('social');
   const [profileSetupAddress, setProfileSetupAddress] = useState(null);
   const [passwordConfigured, setPasswordConfigured] = useState(false);
   const [passwordSetupSkipped, setPasswordSetupSkipped] = useState(false);
@@ -90,6 +93,7 @@ const BitcoinExclusiveAccess = () => {
     error,
     setAddress,
     setError,
+    updateBalance,
     restoreAuthenticatedUser,
     checkBitcoinBalance,
     startGame,
@@ -250,15 +254,17 @@ const BitcoinExclusiveAccess = () => {
       ? [bitcoinAddress, ...previous]
       : previous.filter((item) => item !== bitcoinAddress);
 
-    // Follow is free: reflect the click immediately, then reconcile with the
-    // server response. Roll back only if the authenticated write fails.
+    // Reflect the click immediately, then reconcile the refundable 10-shell
+    // lock with the authoritative server balance.
     setFollowingAddresses(optimistic);
     localStorage.setItem(FOLLOWING_KEY, JSON.stringify(optimistic));
 
     try {
-      const next = address
+      const result = address
         ? await setFollowingAddress(address, bitcoinAddress, shouldFollow)
-        : optimistic;
+        : { following: optimistic };
+      const next = result.following;
+      updateBalance(result);
       setFollowingAddresses(next);
       localStorage.setItem(FOLLOWING_KEY, JSON.stringify(next));
       return next;
@@ -268,7 +274,7 @@ const BitcoinExclusiveAccess = () => {
       setError(followError.message || 'Unable to update follow');
       throw followError;
     }
-  }, [address, followingAddresses, setError]);
+  }, [address, followingAddresses, setError, updateBalance]);
 
   const handleEditorialPreference = useCallback(async (targetAddress, preference) => {
     const result = await updateEditorialAuthorPreference(targetAddress, preference);
@@ -459,6 +465,20 @@ const BitcoinExclusiveAccess = () => {
     setPreserveSocialForProfile(false);
   }, [preserveSocialForProfile, profileReturnStep, restoreScroll, setError]);
 
+  const handleOpenThread = useCallback((messageId) => {
+    if (!messageId) return;
+    setError('');
+    setThreadReturnStep((current) => step === 'thread' ? current : step === 'profile' ? 'profile' : 'social');
+    setThreadMessageId(messageId);
+    setStep('thread');
+    scrollToTop();
+  }, [scrollToTop, setError, step]);
+
+  const handleThreadBack = useCallback(() => {
+    setError('');
+    setStep(threadReturnStep || 'social');
+  }, [setError, threadReturnStep]);
+
   const handleOpenSettings = useCallback(() => {
     setError('');
     setSettingsReturnStep(['profile', 'game', 'canvas'].includes(step) ? step : 'social');
@@ -516,6 +536,14 @@ const BitcoinExclusiveAccess = () => {
     routeToNetwork();
   }, [routeToNetwork]);
 
+  const handleNewToBitcoin = useCallback(() => {
+    setStep('landing');
+    window.history.replaceState(null, '', '#new-to-bitcoin');
+    window.requestAnimationFrame(() => {
+      document.getElementById('new-to-bitcoin')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
+
   const handleAddPassword = useCallback(() => {
     setError('');
     setPasswordRecoveryRequested(false);
@@ -572,7 +600,7 @@ const BitcoinExclusiveAccess = () => {
           onNetworkModeChange={setNetworkMode}
           feedSort={socialFeedSort}
           onFeedSortChange={setSocialFeedSort}
-          showFullAddress={userPreferences.showFullAddress}
+          addressDisplay={userPreferences.addressDisplay}
           onViewProfile={
             !showPrivateSession
               ? null
@@ -654,6 +682,7 @@ const BitcoinExclusiveAccess = () => {
               onPasswordLogin={handlePasswordLogin}
               onPasswordRecovery={() => setPasswordRecoveryRequested(true)}
               onUseWallet={() => setPasswordRecoveryRequested(false)}
+              onNewToBitcoin={handleNewToBitcoin}
             />
           )}
 
@@ -665,13 +694,14 @@ const BitcoinExclusiveAccess = () => {
               onBack={handleGameBack}
               loading={loading}
               error={error}
+              balanceDisplay={userPreferences.balanceDisplay}
             />
           )}
 
           {(step === 'social' || step === 'authorized' || preserveSocialForProfile) && (
             <div
-              className={step === 'profile' ? 'hidden' : ''}
-              aria-hidden={step === 'profile' ? 'true' : undefined}
+              className={!['social', 'authorized'].includes(step) ? 'hidden' : ''}
+              aria-hidden={!['social', 'authorized'].includes(step) ? 'true' : undefined}
             >
             <SocialStep
               address={address}
@@ -688,7 +718,10 @@ const BitcoinExclusiveAccess = () => {
               onSetPrivateStance={savePrivateTopicStance}
               loading={loading}
               error={error}
+              addressDisplay={userPreferences.addressDisplay}
+              balanceDisplay={userPreferences.balanceDisplay}
               onUserClick={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'social')}
+              onOpenThread={handleOpenThread}
               activeMode={networkMode}
               feedSort={socialFeedSort}
               followingAddresses={followingAddresses}
@@ -710,12 +743,37 @@ const BitcoinExclusiveAccess = () => {
               onShowStats={handleShowStats}
               passwordConfigured={passwordConfigured}
               onAddPassword={handleAddPassword}
-              showFullAddress={userPreferences.showFullAddress}
+              addressDisplay={userPreferences.addressDisplay}
+              balanceDisplay={userPreferences.balanceDisplay}
+              onBalanceUpdated={updateBalance}
+              onPublishMessage={handlePublishMessage}
+              onLoadComments={loadComments}
+              onToggleUseful={toggleUseful}
+              onRepostMessage={repostMessage}
+              onOpenThread={handleOpenThread}
               onEditorialPreference={handleEditorialPreference}
               onEditorialTopicPreference={updateEditorialTopicPreference}
               onReportMessage={reportMessage}
               onReportProfile={reportProfile}
               onProfileUpdated={(profile) => setSessionDisplayName(profile.display_name || '')}
+            />
+          )}
+
+          {step === 'thread' && threadMessageId && (
+            <ThreadStep
+              messageId={threadMessageId}
+              currentAddress={authenticatedAddress}
+              onBack={handleThreadBack}
+              onOpenProfile={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'thread')}
+              onOpenThread={handleOpenThread}
+              onPublishMessage={handlePublishMessage}
+              onLoadComments={loadComments}
+              onToggleUseful={toggleUseful}
+              onRepostMessage={repostMessage}
+              onBalanceUpdated={updateBalance}
+              onEditorialPreference={handleEditorialPreference}
+              onEditorialTopicPreference={updateEditorialTopicPreference}
+              onReportMessage={reportMessage}
             />
           )}
 
@@ -726,6 +784,8 @@ const BitcoinExclusiveAccess = () => {
               onComplete={handleProfileSetupComplete}
               loading={loading}
               error={error}
+              addressDisplay={userPreferences.addressDisplay}
+              balanceDisplay={userPreferences.balanceDisplay}
             />
           )}
 
@@ -735,6 +795,7 @@ const BitcoinExclusiveAccess = () => {
               mode={passwordSetupMode}
               onComplete={handlePasswordSetupComplete}
               onSkip={handlePasswordSetupSkip}
+              addressDisplay={userPreferences.addressDisplay}
             />
           )}
 
@@ -761,6 +822,7 @@ const BitcoinExclusiveAccess = () => {
               loading={loading}
               error={error}
               onBack={handleCanvasBack}
+              balanceDisplay={userPreferences.balanceDisplay}
             />
           )}
           </Suspense>
@@ -771,6 +833,7 @@ const BitcoinExclusiveAccess = () => {
             <StatsModal
               stats={stats}
               onClose={() => setShowStats(false)}
+              balanceDisplay={userPreferences.balanceDisplay}
             />
           )}
         </Suspense>

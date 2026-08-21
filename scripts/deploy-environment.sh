@@ -46,7 +46,7 @@ echo "$APP_URL" | grep -Eq '^https://[^/]+/?$' \
 
 export REACT_APP_ENVIRONMENT="$target"
 export REACT_APP_SUPABASE_URL="https://${SUPABASE_PROJECT_REF}.supabase.co"
-export REACT_APP_AUTH_API_URL="${REACT_APP_AUTH_API_URL:-${REACT_APP_SUPABASE_URL}/functions/v1}"
+export REACT_APP_AUTH_API_URL="${REACT_APP_AUTH_API_URL:-/api/auth}"
 
 printf 'Validating %s release...\n' "$target"
 sh scripts/validate-deployment-structure.sh
@@ -63,6 +63,10 @@ printf 'Applying pending database migrations...\n'
 supabase db push --linked
 
 printf 'Deploying all Edge Functions and pruning removed functions...\n'
+supabase secrets set \
+  --project-ref "$SUPABASE_PROJECT_REF" \
+  AUTH_COOKIE_SECURE=true \
+  AUTH_COOKIE_SAME_SITE=Lax
 supabase functions deploy \
   --project-ref "$SUPABASE_PROJECT_REF" \
   --use-api \

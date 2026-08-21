@@ -1,10 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
-import {
-  enrichSocialMessages,
-  PUBLIC_MESSAGE_SELECT,
-} from '../_shared/social-messages.mjs';
-
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
@@ -27,47 +22,12 @@ serve(async (req) => {
       });
     }
 
+    // Publication appearances are authenticated and billed by user-operations.
+    // Keeping this former public route available would permit free reads by
+    // calling the Edge Function directly instead of using the application.
     if (action === 'messages' || action === 'useful') {
-      const safeLimit = Math.min(Math.max(Number(limit) || 25, 1), 50);
-      const safeOffset = Math.max(Number(offset) || 0, 0);
-      let messages: any[] = [];
-
-      if (action === 'messages') {
-        const { data, error } = await supabase
-          .from('messages')
-          .select(PUBLIC_MESSAGE_SELECT)
-          .eq('bitcoin_address', address)
-          .is('deleted_at', null)
-          .order('created_at', { ascending: false })
-          .range(safeOffset, safeOffset + safeLimit - 1);
-        if (error) throw error;
-        messages = data || [];
-      } else {
-        const { data: votes, error: votesError } = await supabase
-          .from('message_useful_votes')
-          .select('message_id, created_at')
-          .eq('bitcoin_address', address)
-          .order('created_at', { ascending: false })
-          .range(safeOffset, safeOffset + safeLimit - 1);
-        if (votesError) throw votesError;
-        const ids = (votes || []).map((vote: any) => vote.message_id);
-        if (ids.length > 0) {
-          const { data, error } = await supabase
-            .from('messages')
-            .select(PUBLIC_MESSAGE_SELECT)
-            .in('id', ids)
-            .is('deleted_at', null);
-          if (error) throw error;
-          const byId = new Map((data || []).map((message: any) => [message.id, message]));
-          messages = ids.map((id: string) => byId.get(id)).filter(Boolean);
-        }
-      }
-
-      return new Response(JSON.stringify({
-        messages: await enrichSocialMessages(supabase, messages, {
-          includeTopicFeedback: true,
-        }),
-      }), {
+      return new Response(JSON.stringify({ error: 'Authentication required' }), {
+        status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
       });
     }
@@ -125,7 +85,7 @@ serve(async (req) => {
     ] = await Promise.all([
       supabase
         .from('user_profiles')
-        .select('display_name, bio, location, website_url, avatar_url, cover_url, created_at, updated_at')
+        .select('display_name, bio, location, website_url, avatar_url, cover_url, avatar_pixels, cover_pixels, created_at, updated_at')
         .eq('bitcoin_address', address)
         .maybeSingle(),
       supabase
@@ -154,6 +114,8 @@ serve(async (req) => {
         website_url: profile.website_url,
         avatar_url: profile.avatar_url,
         cover_url: profile.cover_url,
+        avatar_pixels: profile.avatar_pixels,
+        cover_pixels: profile.cover_pixels,
         followers_count: followersCount || 0,
         following_count: followingCount || 0,
         created_at: profile.created_at || account.created_at,

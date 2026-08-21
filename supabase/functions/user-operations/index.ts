@@ -7,6 +7,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -47,8 +48,8 @@ const R2_PUBLIC_BASE_URL = (Deno.env.get('R2_PUBLIC_BASE_URL') ?? '').replace(/\
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // === CONSTANTES ===
-const MESSAGE_COST_PER_CHAR = 0.00000001; // 1 satoshi par caractère
-const GAME_COST = 0.000001;
+const MESSAGE_COST_PER_CHAR = 1; // 1 satoshi = 1 shell
+const GAME_COST = 100;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PROFILE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_PROFILE_MEDIA_BYTES = 5 * 1024 * 1024;
@@ -269,15 +270,6 @@ function normalizeProfileWebsite(value: string = ''): string | null {
   return parsed.toString();
 }
 
-function normalizeProfileMediaUrl(value: string = ''): string | null {
-  const cleaned = value.trim();
-  if (!cleaned) return null;
-  if (!R2_PUBLIC_BASE_URL || !cleaned.startsWith(`${R2_PUBLIC_BASE_URL}/profiles/`)) {
-    throw new OperationError('URL de média de profil invalide');
-  }
-  return cleaned;
-}
-
 async function profileMediaPrefix(address: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(address));
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -299,7 +291,7 @@ async function createProfileMediaUpload(
     throw new OperationError('L’image doit peser moins de 5 Mo');
   }
 
-  const objectKey = `${await profileMediaPrefix(address)}/${mediaKind}`;
+  const objectKey = `${await profileMediaPrefix(address)}/${mediaKind}/${crypto.randomUUID()}`;
   const uploadUrl = await getSignedUrl(
     r2,
     new PutObjectCommand({
@@ -317,8 +309,8 @@ async function confirmProfileMediaUpload(address: string, mediaKind: string, obj
   if (!r2 || !R2_BUCKET_NAME || !R2_PUBLIC_BASE_URL) {
     throw new OperationError('Le stockage des images de profil n’est pas encore configuré', 503);
   }
-  const expectedKey = `${await profileMediaPrefix(address)}/${mediaKind}`;
-  if (!['avatar', 'cover'].includes(mediaKind) || objectKey !== expectedKey) {
+  const expectedPrefix = `${await profileMediaPrefix(address)}/${mediaKind}/`;
+  if (!['avatar', 'cover'].includes(mediaKind) || !objectKey.startsWith(expectedPrefix)) {
     throw new OperationError('Média de profil invalide');
   }
 
@@ -330,9 +322,113 @@ async function confirmProfileMediaUpload(address: string, mediaKind: string, obj
     throw new OperationError('Le fichier envoyé ne respecte pas les limites du profil');
   }
 
+  const object = await r2.send(new GetObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey }));
+  const bytes = new Uint8Array(await object.Body!.transformToByteArray());
+  const { width, height } = readImageDimensions(bytes, contentType);
+  const pixels = width * height;
+  if (!Number.isSafeInteger(pixels) || width < 1 || height < 1 || width > 8192 || height > 8192 || pixels > 67108864) {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey })).catch(() => null);
+    throw new OperationError('Les dimensions de cette image sont trop grandes');
+  }
+
+  const publicUrl = `${R2_PUBLIC_BASE_URL}/${objectKey}`;
+  const { data, error } = await supabase.rpc('set_profile_media_lock', {
+    p_bitcoin_address: address,
+    p_media_kind: mediaKind,
+    p_pixels: pixels,
+    p_public_url: publicUrl,
+    p_object_key: objectKey,
+  });
+  if (error) {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: objectKey })).catch(() => null);
+    if (error.message?.includes('INSUFFICIENT_SHELLS')) throw new OperationError('INSUFFICIENT_SHELLS', 402);
+    throw error;
+  }
+  const locked = data?.[0];
+  if (locked?.old_object_key && locked.old_object_key !== objectKey) {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: locked.old_object_key })).catch(() => null);
+  }
   return {
     success: true,
-    public_url: `${R2_PUBLIC_BASE_URL}/${objectKey}?v=${Date.now()}`,
+    public_url: publicUrl,
+    width,
+    height,
+    pixels,
+    lock_delta: Number(locked?.lock_delta) || 0,
+    user: {
+      shells_balance: Number(locked?.new_balance) || 0,
+      shells_spent_total: Number(locked?.shells_spent_total) || 0,
+    },
+  };
+}
+
+function readImageDimensions(bytes: Uint8Array, contentType: string) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const isPng = bytes.length >= 24
+    && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+    && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+  if (contentType === 'image/png' && isPng) {
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  }
+  const isJpeg = bytes.length >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8;
+  if (contentType === 'image/jpeg' && isJpeg) {
+    let offset = 2;
+    while (offset + 9 < bytes.length) {
+      if (bytes[offset] !== 0xff) { offset += 1; continue; }
+      const marker = bytes[offset + 1];
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        return { width: view.getUint16(offset + 7), height: view.getUint16(offset + 5) };
+      }
+      const segmentLength = view.getUint16(offset + 2);
+      if (segmentLength < 2) break;
+      offset += 2 + segmentLength;
+    }
+  }
+  const isWebp = bytes.length >= 30
+    && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) === 'RIFF'
+    && String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]) === 'WEBP';
+  if (contentType === 'image/webp' && isWebp) {
+    const chunk = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+    if (chunk === 'VP8X') {
+      const width = 1 + bytes[24] + (bytes[25] << 8) + (bytes[26] << 16);
+      const height = 1 + bytes[27] + (bytes[28] << 8) + (bytes[29] << 16);
+      return { width, height };
+    }
+    if (chunk === 'VP8 ' && bytes.length >= 30) {
+      return { width: view.getUint16(26, true) & 0x3fff, height: view.getUint16(28, true) & 0x3fff };
+    }
+    if (chunk === 'VP8L' && bytes.length >= 25 && bytes[20] === 0x2f) {
+      const width = 1 + bytes[21] + ((bytes[22] & 0x3f) << 8);
+      const height = 1 + ((bytes[22] & 0xc0) >> 6) + (bytes[23] << 2) + ((bytes[24] & 0x0f) << 10);
+      return { width, height };
+    }
+  }
+  throw new OperationError('Impossible de lire les dimensions de cette image');
+}
+
+async function removeProfileMedia(address: string, mediaKind: string) {
+  if (!['avatar', 'cover'].includes(mediaKind)) throw new OperationError('Type de média invalide');
+  const { data, error } = await supabase.rpc('set_profile_media_lock', {
+    p_bitcoin_address: address,
+    p_media_kind: mediaKind,
+    p_pixels: 0,
+    p_public_url: null,
+    p_object_key: null,
+  });
+  if (error) throw error;
+  const unlocked = data?.[0];
+  if (r2 && R2_BUCKET_NAME && unlocked?.old_object_key) {
+    await r2.send(new DeleteObjectCommand({ Bucket: R2_BUCKET_NAME, Key: unlocked.old_object_key })).catch(() => null);
+  }
+  return {
+    success: true,
+    public_url: null,
+    pixels: 0,
+    lock_delta: Number(unlocked?.lock_delta) || 0,
+    user: {
+      shells_balance: Number(unlocked?.new_balance) || 0,
+      shells_spent_total: Number(unlocked?.shells_spent_total) || 0,
+    },
   };
 }
 
@@ -342,15 +438,11 @@ async function upsertProfile(
   bio: string = '',
   location: string = '',
   websiteUrl: string = '',
-  avatarUrl: string = '',
-  coverUrl: string = '',
 ) {
   const cleanedDisplayName = displayName.trim();
   const cleanedBio = bio.trim();
   const cleanedLocation = location.trim();
   const cleanedWebsiteUrl = normalizeProfileWebsite(websiteUrl);
-  const cleanedAvatarUrl = normalizeProfileMediaUrl(avatarUrl);
-  const cleanedCoverUrl = normalizeProfileMediaUrl(coverUrl);
 
   if (cleanedDisplayName.length < 3 || cleanedDisplayName.length > 50) {
     throw new OperationError('Le pseudo doit contenir entre 3 et 50 caractères');
@@ -389,8 +481,6 @@ async function upsertProfile(
           bio: cleanedBio,
           location: cleanedLocation || null,
           website_url: cleanedWebsiteUrl,
-          avatar_url: cleanedAvatarUrl,
-          cover_url: cleanedCoverUrl,
           updated_at: now
         })
         .eq('bitcoin_address', address)
@@ -413,8 +503,6 @@ async function upsertProfile(
         bio: cleanedBio,
         location: cleanedLocation || null,
         website_url: cleanedWebsiteUrl,
-        avatar_url: cleanedAvatarUrl,
-        cover_url: cleanedCoverUrl,
         created_at: now,
         updated_at: now
       })
@@ -496,6 +584,7 @@ async function publishMessage(
     });
     if (error) {
       const expectedMessages = [
+        'INSUFFICIENT_SHELLS',
         'Solde insuffisant',
         'Utilisateur introuvable',
         'Publication parente introuvable',
@@ -505,7 +594,9 @@ async function publishMessage(
       ];
       const expected = expectedMessages.find((message) => error.message?.includes(message));
       if (expected) {
-        const status = expected.includes('introuvable')
+        const status = expected.includes('INSUFFICIENT_SHELLS')
+          ? 402
+          : expected.includes('introuvable')
           ? 404
           : expected.includes('déjà utilisé')
             ? 409
@@ -661,7 +752,7 @@ function compareOpinionTopics(left: any, right: any) {
   return (Number(left.sort_rank) || 0) - (Number(right.sort_rank) || 0);
 }
 
-async function getOpinionTopics(address: string) {
+async function getOpinionTopics(address: string, requestId: string) {
   const { error: refreshError } = await supabase.rpc(
     'refresh_active_opinion_cycle_quality'
   );
@@ -868,15 +959,34 @@ async function getOpinionTopics(address: string) {
     };
   });
 
-  await recordMessageExposures(
-    formattedTopics.flatMap((topic: any) =>
-      topic.posts.map((post: any) => post.id)
-    )
+  const opinionMessageIds = formattedTopics.flatMap((topic: any) =>
+    topic.posts.flatMap((post: any) => [post.id, post.reposted_message?.id].filter(Boolean))
   );
+  const { data: chargedRows, error: chargeError } = await supabase.rpc('charge_message_batch_idempotent', {
+    p_request_id: requestId,
+    p_bitcoin_address: address,
+    p_message_ids: opinionMessageIds,
+    p_request_context: { view: 'opinion_topics' },
+    p_messages_snapshot: formattedTopics,
+  });
+  if (chargeError) {
+    if (chargeError.message?.includes('INSUFFICIENT_SHELLS')) throw new OperationError('INSUFFICIENT_SHELLS', 402);
+    throw chargeError;
+  }
+  const charged = chargedRows?.[0];
+  const paidTopics = Array.isArray(charged?.messages_snapshot)
+    ? charged.messages_snapshot
+    : formattedTopics;
+
+  await recordMessageExposures(paidTopics.flatMap((topic: any) =>
+    (topic.posts || []).map((post: any) => post.id)
+  ));
 
   return {
     success: true,
-    topics: formattedTopics
+    topics: paidTopics,
+    new_balance: Number(charged?.new_balance) || 0,
+    cost: Number(charged?.cost) || 0,
   };
 }
 
@@ -997,6 +1107,149 @@ async function getStats(address: string) {
   }
 }
 
+async function getProfileMessages(
+  viewerAddress: string,
+  targetAddress: string,
+  category: string,
+  limit: number,
+  offset: number,
+  requestId: string,
+) {
+  const boundedLimit = Math.max(1, Math.min(Number(limit) || 25, 25));
+  const boundedOffset = Math.max(0, Number(offset) || 0);
+  let rawMessages: any[] = [];
+
+  if (category === 'useful') {
+    const { data: votes, error: votesError } = await supabase
+      .from('message_useful_votes')
+      .select('message_id, created_at')
+      .eq('bitcoin_address', targetAddress)
+      .order('created_at', { ascending: false })
+      .range(boundedOffset, boundedOffset + boundedLimit - 1);
+    if (votesError) throw votesError;
+    const ids = (votes || []).map((vote: any) => vote.message_id);
+    if (ids.length) {
+      const { data, error } = await supabase.from('messages').select(SOCIAL_MESSAGE_SELECT)
+        .in('id', ids).is('deleted_at', null);
+      if (error) throw error;
+      const byId = new Map((data || []).map((message: any) => [message.id, message]));
+      rawMessages = ids.map((id: string) => byId.get(id)).filter(Boolean);
+    }
+  } else {
+    let query = supabase.from('messages').select(SOCIAL_MESSAGE_SELECT)
+      .eq('bitcoin_address', targetAddress).is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    if (category === 'posts') query = query.is('parent_id', null).is('repost_of', null);
+    else if (category === 'replies') query = query.not('parent_id', 'is', null);
+    else if (category === 'reposts') query = query.not('repost_of', 'is', null);
+    else throw new OperationError('Catégorie de profil invalide');
+    const { data, error } = await query.range(boundedOffset, boundedOffset + boundedLimit - 1);
+    if (error) throw error;
+    rawMessages = data || [];
+  }
+
+  const enriched = await enrichSocialMessages(supabase, rawMessages, {
+    includeTopicFeedback: true,
+    readerAddress: viewerAddress,
+  });
+  const parentIds = [...new Set(enriched.map((message: any) => message.parent_id).filter(Boolean))];
+  let parents: any[] = [];
+  if (parentIds.length) {
+    const { data, error } = await supabase.from('messages').select(SOCIAL_MESSAGE_SELECT)
+      .in('id', parentIds).is('deleted_at', null);
+    if (error) throw error;
+    parents = await enrichSocialMessages(supabase, data || [], {
+      includeTopicFeedback: true,
+      readerAddress: viewerAddress,
+    });
+  }
+  const parentsById = new Map(parents.map((message: any) => [message.id, message]));
+  const snapshot = enriched.map((message: any) => ({
+    ...message,
+    ...(message.parent_id && parentsById.has(message.parent_id)
+      ? { parent_message: parentsById.get(message.parent_id) }
+      : {}),
+  }));
+  const billableIds = [
+    ...snapshot.flatMap((message: any) => [message.id, message.reposted_message?.id].filter(Boolean)),
+    ...parents.flatMap((message: any) => [message.id, message.reposted_message?.id].filter(Boolean)),
+  ];
+  const { data: chargedRows, error: chargeError } = await supabase.rpc('charge_message_batch_idempotent', {
+    p_request_id: requestId,
+    p_bitcoin_address: viewerAddress,
+    p_message_ids: billableIds,
+    p_request_context: {
+      target_address: targetAddress,
+      category,
+      limit: boundedLimit,
+      offset: boundedOffset,
+    },
+    p_messages_snapshot: snapshot,
+  });
+  if (chargeError) {
+    if (chargeError.message?.includes('INSUFFICIENT_SHELLS')) throw new OperationError('INSUFFICIENT_SHELLS', 402);
+    throw chargeError;
+  }
+  const charged = chargedRows?.[0];
+  return {
+    success: true,
+    messages: Array.isArray(charged?.messages_snapshot) ? charged.messages_snapshot : snapshot,
+    count: snapshot.length,
+    new_balance: Number(charged?.new_balance) || 0,
+    cost: Number(charged?.cost) || 0,
+  };
+}
+
+async function getMessageThread(viewerAddress: string, messageId: string, requestId: string) {
+  const { data: selected, error: selectedError } = await supabase.from('messages')
+    .select(SOCIAL_MESSAGE_SELECT).eq('id', messageId).is('deleted_at', null).maybeSingle();
+  if (selectedError) throw selectedError;
+  if (!selected) throw new OperationError('Publication introuvable', 404);
+
+  let root = selected;
+  let depth = 0;
+  while (root.parent_id && depth < 20) {
+    const { data: parent, error } = await supabase.from('messages')
+      .select(SOCIAL_MESSAGE_SELECT).eq('id', root.parent_id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!parent) break;
+    root = parent;
+    depth += 1;
+  }
+
+  const { data: replies, error: repliesError } = await supabase.from('messages')
+    .select(SOCIAL_MESSAGE_SELECT).eq('parent_id', root.id).is('deleted_at', null)
+    .order('created_at', { ascending: true }).limit(50);
+  if (repliesError) throw repliesError;
+  const rawThread = [root, ...(replies || [])];
+  if (!rawThread.some((message: any) => message.id === selected.id)) rawThread.push(selected);
+  const snapshot = await enrichSocialMessages(supabase, rawThread, {
+    includeTopicFeedback: true,
+    readerAddress: viewerAddress,
+  });
+  const { data: chargedRows, error: chargeError } = await supabase.rpc('charge_message_batch_idempotent', {
+    p_request_id: requestId,
+    p_bitcoin_address: viewerAddress,
+    p_message_ids: snapshot.flatMap((message: any) => [message.id, message.reposted_message?.id].filter(Boolean)),
+    p_request_context: { message_id: messageId, view: 'thread' },
+    p_messages_snapshot: snapshot,
+  });
+  if (chargeError) {
+    if (chargeError.message?.includes('INSUFFICIENT_SHELLS')) throw new OperationError('INSUFFICIENT_SHELLS', 402);
+    throw chargeError;
+  }
+  const charged = chargedRows?.[0];
+  const paid = Array.isArray(charged?.messages_snapshot) ? charged.messages_snapshot : snapshot;
+  return {
+    success: true,
+    root: paid.find((message: any) => message.id === root.id) || paid[0],
+    comments: paid.filter((message: any) => message.id !== root.id),
+    focus_id: messageId,
+    new_balance: Number(charged?.new_balance) || 0,
+    cost: Number(charged?.cost) || 0,
+  };
+}
+
 function summarizeContent(content: string | null | undefined, maxLength: number = 70) {
   const cleaned = (content || '').replace(/\s+/g, ' ').trim();
   if (!cleaned) return 'No content';
@@ -1103,13 +1356,13 @@ async function getHistory(address: string, limit: number = 20) {
       history.push({
         id: `like:${like.id}`,
         type: 'like',
-        amount: -0.00000001,
+        amount: -1,
         created_at: like.created_at,
         title: 'Like',
         description: target
           ? `On ${targetType}: ${summarizeContent(target.content)}`
           : 'On a deleted post',
-        detail: '1 satoshi'
+        detail: '1 shell'
       });
     });
 
@@ -1120,13 +1373,13 @@ async function getHistory(address: string, limit: number = 20) {
       history.push({
         id: `dislike:${dislike.id}`,
         type: 'dislike',
-        amount: -0.00000001,
+        amount: -1,
         created_at: dislike.created_at,
         title: 'Dislike',
         description: target
           ? `On ${targetType}: ${summarizeContent(target.content)}`
           : 'On a deleted post',
-        detail: '1 satoshi'
+        detail: '1 shell'
       });
     });
 
@@ -1148,22 +1401,22 @@ async function getHistory(address: string, limit: number = 20) {
           description: action.game_score !== null && action.game_score !== undefined
             ? `Session score: ${action.game_score} points`
             : 'Game session',
-          detail: `${amount.toFixed(8)} shells spent`
+          detail: `${Math.round(amount)} shells spent`
         },
         canvas: {
           title: 'Canvas',
-          description: `${Math.round(amount / 0.00000001)} pixels placed`,
-          detail: `${amount.toFixed(8)} shells spent`
+          description: `${Math.round(amount)} pixels placed`,
+          detail: `${Math.round(amount)} shells spent`
         },
         read_messages: {
           title: 'Feed reading',
-          description: `${Math.round(amount / 0.00000001)} messages loaded`,
-          detail: `${amount.toFixed(8)} shells spent`
+          description: `${Math.round(amount)} messages loaded`,
+          detail: `${Math.round(amount)} shells spent`
         },
         useful: {
           title: 'Useful',
           description: 'Marked a post or comment as useful',
-          detail: `${amount.toFixed(8)} shells spent`
+          detail: `${Math.round(amount)} shells spent`
         }
       };
 
@@ -1275,7 +1528,7 @@ async function placePixels(address: string, pixels: Array<{ x: number; y: number
     }
 
     // Calcul du coût total
-    const costPerPixel = 0.00000001;
+    const costPerPixel = 1;
     const totalCost = pixels.length * costPerPixel;
 
     console.log(`💰 Coût total: ${totalCost} shells`);
@@ -1439,8 +1692,6 @@ serve(async (req) => {
       bio,
       location,
       websiteUrl,
-      avatarUrl,
-      coverUrl,
       mediaKind,
       contentType,
       fileSize,
@@ -1453,6 +1704,7 @@ serve(async (req) => {
       cursor,
       requestId,
       targetAddress,
+      category,
       preference,
       targetKind,
       profileAddress,
@@ -1541,7 +1793,9 @@ serve(async (req) => {
           {
             p_request_id: requestId,
             p_bitcoin_address: address,
-            p_message_ids: messagesResult.messages.map((message: any) => message.id),
+            p_message_ids: messagesResult.messages.flatMap((message: any) =>
+              [message.id, message.reposted_message?.id].filter(Boolean)
+            ),
             p_request_context: {
               limit: Math.max(1, Math.min(Number(limit) || FEED_BATCH_SIZE, FEED_BATCH_SIZE)),
               offset: Math.max(0, Number(offset) || 0),
@@ -1608,7 +1862,7 @@ serve(async (req) => {
           }
         }
 
-        console.log(`✅ [GET_MESSAGES] ${totalCost.toFixed(8)} shells déduits`);
+        console.log(`✅ [GET_MESSAGES] ${Math.round(totalCost)} shells déduits`);
         
         // Retourner les 20 messages et le résultat de leur débit unique.
         result = {
@@ -1679,7 +1933,8 @@ serve(async (req) => {
         break;
 
       case 'get_opinion_topics':
-        result = await getOpinionTopics(address);
+        if (typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) throw new OperationError('Paramètre "requestId" invalide');
+        result = await getOpinionTopics(address, requestId);
         break;
 
       case 'set_private_topic_stance':
@@ -1690,6 +1945,19 @@ serve(async (req) => {
 
       case 'get_user_messages':
         result = await getUserMessages(address, limit || 20, offset || 0);
+        break;
+
+      case 'get_profile_messages':
+        if (!targetAddress) throw new OperationError('Paramètre "targetAddress" manquant');
+        if (!['posts', 'replies', 'reposts', 'useful'].includes(category)) throw new OperationError('Catégorie de profil invalide');
+        if (typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) throw new OperationError('Paramètre "requestId" invalide');
+        result = await getProfileMessages(address, targetAddress, category, limit, offset, requestId);
+        break;
+
+      case 'get_message_thread':
+        if (!messageId) throw new OperationError('Paramètre "messageId" manquant');
+        if (typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) throw new OperationError('Paramètre "requestId" invalide');
+        result = await getMessageThread(address, messageId, requestId);
         break;
       
       case 'get_stats':
@@ -1704,8 +1972,6 @@ serve(async (req) => {
           bio || '',
           location || '',
           websiteUrl || '',
-          avatarUrl || '',
-          coverUrl || '',
         );
         break;
 
@@ -1715,6 +1981,10 @@ serve(async (req) => {
 
       case 'confirm_profile_media_upload':
         result = await confirmProfileMediaUpload(address, mediaKind, objectKey);
+        break;
+
+      case 'remove_profile_media':
+        result = await removeProfileMedia(address, mediaKind);
         break;
 
       case 'place_pixels':
@@ -1729,12 +1999,17 @@ serve(async (req) => {
 
   } catch (error: any) {
     console.error('❌ [HANDLER] Erreur:', safeErrorForLog(error));
-    const status = error?.message === 'Origin not allowed'
+    const insufficientShells = /INSUFFICIENT_SHELLS|solde insuffisant/i.test(error?.message || '');
+    const status = insufficientShells
+      ? 402
+      : error?.message === 'Origin not allowed'
       ? 403
       : error instanceof OperationError
         ? error.status
         : 500;
-    const publicMessage = status === 500
+    const publicMessage = insufficientShells
+      ? 'INSUFFICIENT_SHELLS'
+      : status === 500
       ? 'Une erreur interne est survenue. Veuillez réessayer.'
       : error?.message || 'Requête invalide';
 

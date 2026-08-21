@@ -1,15 +1,13 @@
 // src/supabaseClient.js - VERSION SÉCURISÉE AVEC JWT + RÉSEAU SOCIAL + HISTORIQUE
 import { createClient } from '@supabase/supabase-js';
+import { friendlyShellError } from './lib/shells';
 
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-const isLocalDevelopment = process.env.NODE_ENV === 'development'
-  && typeof window !== 'undefined'
-  && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const authApiBaseUrl = (
   process.env.REACT_APP_AUTH_API_URL
-  || (isLocalDevelopment ? '/api/auth' : `${supabaseUrl}/functions/v1`)
+  || '/api/auth'
 ).replace(/\/$/, '');
 let accessToken = null;
 let sessionRefreshPromise = null;
@@ -80,12 +78,12 @@ async function edgeFunctionErrorMessage(error, fallback) {
   if (response && typeof response.clone === 'function') {
     try {
       const payload = await response.clone().json();
-      if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+      if (typeof payload?.error === 'string' && payload.error.trim()) return friendlyShellError(payload.error);
     } catch {
       // Fall through to the SDK message when the response is not JSON.
     }
   }
-  return error?.message || fallback;
+  return friendlyShellError(error?.message, fallback);
 }
 
 export async function restoreSession() {
@@ -347,24 +345,6 @@ export async function getPublicProfileConnections(address, relation, limit = 50,
   };
 }
 
-export async function getPublicUserMessages(address, limit = 25, offset = 0) {
-  const { data, error } = await supabase.functions.invoke('get-public-profile', {
-    body: { address, action: 'messages', limit, offset },
-  });
-  if (error) throw new Error(error.message || 'Unable to load public messages');
-  return Array.isArray(data?.messages) ? data.messages : [];
-}
-
-export async function getPublicUserUsefulMessages(address, limit = 25, offset = 0) {
-  const { data, error } = await supabase.functions.invoke('get-public-profile', {
-    body: { address, action: 'useful', limit, offset },
-  });
-  if (error) {
-    throw new Error(await edgeFunctionErrorMessage(error, 'Unable to load Useful posts'));
-  }
-  return Array.isArray(data?.messages) ? data.messages : [];
-}
-
 async function invokeEdgeFunction(functionName, body, fallbackMessage) {
   const { data, error } = await supabase.functions.invoke(functionName, { body });
   if (error) throw new Error(await edgeFunctionErrorMessage(error, fallbackMessage));
@@ -397,8 +377,6 @@ export async function upsertUserProfile(address, displayName, details = {}) {
     bio: typeof normalizedDetails.bio === 'string' ? normalizedDetails.bio.trim() : '',
     location: typeof normalizedDetails.location === 'string' ? normalizedDetails.location.trim() : '',
     websiteUrl: typeof normalizedDetails.websiteUrl === 'string' ? normalizedDetails.websiteUrl.trim() : '',
-    avatarUrl: typeof normalizedDetails.avatarUrl === 'string' ? normalizedDetails.avatarUrl.trim() : '',
-    coverUrl: typeof normalizedDetails.coverUrl === 'string' ? normalizedDetails.coverUrl.trim() : '',
   }, 'Could not save profile');
   return data.profile || data;
 }
@@ -424,7 +402,11 @@ export async function uploadProfileMedia(address, file, mediaKind) {
     mediaKind,
     objectKey: prepared.object_key,
   }, 'Could not confirm image upload');
-  return confirmed.public_url;
+  return confirmed;
+}
+
+export async function removeProfileMedia(address, mediaKind) {
+  return invokeUserOperation(address, 'remove_profile_media', { mediaKind }, 'Could not remove image');
 }
 
 /**
@@ -440,7 +422,7 @@ export async function syncUserBalance(address, network) {
 /**
  * Déduire shells pour jouer
  * @param {string} address - Adresse Bitcoin
- * @param {number} amount - Montant (défaut: 0.000001)
+ * Le prix fixe d'une partie est de 100 shells.
  * @returns {Promise<object>} { success: true, user }
  */
 export async function deductGameCost(address) {
@@ -508,7 +490,7 @@ export async function getMessages(
 
 /**
  * Ajouter ou retirer le signal Useful d'une publication.
- * L'ajout coûte 0.00000001 shell ; le retrait est gratuit.
+ * L'ajout coûte 1 shell ; le retrait est gratuit.
  */
 export async function toggleMessageUseful(address, messageId) {
   return invokeUserOperation(address, 'toggle_message_useful', { messageId }, 'Could not update Useful');
@@ -596,7 +578,11 @@ export async function setFollowingAddress(address, targetAddress, follow) {
       targetAddress,
       action: follow ? 'follow' : 'unfollow',
   }, 'Unable to update follow');
-  return Array.isArray(data.following) ? data.following : [];
+  return {
+    following: Array.isArray(data.following) ? data.following : [],
+    shells_balance: Number(data.shells_balance) || 0,
+    lock_delta: Number(data.lock_delta) || 0,
+  };
 }
 
 /**
@@ -604,8 +590,7 @@ export async function setFollowingAddress(address, targetAddress, follow) {
  * La répartition interne des perspectives n'est jamais renvoyée au navigateur.
  */
 export async function getOpinionTopics(address) {
-  const data = await invokeUserOperation(address, 'get_opinion_topics', {}, 'Could not load Opinion mode');
-  return data.topics || [];
+  return invokeUserOperation(address, 'get_opinion_topics', { requestId: createRequestId() }, 'Could not load Opinion mode');
 }
 
 /**
@@ -625,6 +610,28 @@ export async function setPrivateTopicStance(address, topicId, stance) {
 export async function getUserMessages(address, limit = 20, offset = 0) {
   const data = await invokeUserOperation(address, 'get_user_messages', { limit, offset }, 'Could not load history');
   return data?.messages || [];
+}
+
+export async function getProfileMessages(address, targetAddress, category = 'posts', limit = 25, offset = 0) {
+  const data = await invokeUserOperation(address, 'get_profile_messages', {
+    requestId: createRequestId(),
+    targetAddress,
+    category,
+    limit,
+    offset,
+  }, 'Unable to load profile posts');
+  return {
+    messages: Array.isArray(data?.messages) ? data.messages : [],
+    new_balance: data?.new_balance,
+    cost: Number(data?.cost) || 0,
+  };
+}
+
+export async function getMessageThread(address, messageId) {
+  return invokeUserOperation(address, 'get_message_thread', {
+    requestId: createRequestId(),
+    messageId,
+  }, 'Unable to load this conversation');
 }
 
 /**

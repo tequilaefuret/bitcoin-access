@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Loader, UserRound, X } from 'lucide-react';
 import { getPublicProfileConnections } from '../../supabaseClient';
+import { formatBitcoinAddress } from '../../lib/displayPreferences';
 
 const PAGE_SIZE = 50;
 
-const ProfileConnectionsModal = ({ address, initialRelation = 'followers', onClose, onOpenProfile }) => {
+const ProfileConnectionsModal = ({ address, initialRelation = 'followers', onClose, onOpenProfile, addressDisplay = 'shortened' }) => {
   const [relation, setRelation] = useState(initialRelation);
   const [accounts, setAccounts] = useState([]);
   const [total, setTotal] = useState(0);
@@ -80,7 +81,7 @@ const ProfileConnectionsModal = ({ address, initialRelation = 'followers', onClo
                 <button key={account.bitcoin_address} type="button" onClick={() => openProfile(account.bitcoin_address)} className="flex w-full items-center gap-3 rounded-2xl p-3 text-left transition hover:bg-white/[0.055]">
                   {account.avatar_url ? <img src={account.avatar_url} alt="" className="h-11 w-11 shrink-0 rounded-full object-cover" /> : <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-sm font-black text-slate-950">{account.display_name?.charAt(0)?.toUpperCase() || '?'}</span>}
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold text-white">{account.display_name || `${account.bitcoin_address.slice(0, 8)}…${account.bitcoin_address.slice(-6)}`}</span>
+                    <span className="block truncate text-sm font-bold text-white">{account.display_name || formatBitcoinAddress(account.bitcoin_address, addressDisplay)}</span>
                     {account.bio && <span className="mt-0.5 block truncate text-xs text-white/35">{account.bio}</span>}
                   </span>
                 </button>

@@ -28,6 +28,7 @@ const MessageCard = ({
   onEditorialPreference,
   onEditorialTopicPreference,
   onReportMessage,
+  onOpenThread,
   isFollowed = false,
   showActions = true
 }) => {
@@ -224,9 +225,13 @@ const MessageCard = ({
   const originalMessage = message.reposted_message || null;
   const repostedText = originalMessage?.content || message.content || '';
   const repostedCharacterCount = countBillableCharacters(repostedText);
+  const openThreadFromCard = (event) => {
+    if (!onOpenThread || event.target.closest('button, a, input, textarea, select, [role="menu"]')) return;
+    onOpenThread(message.id);
+  };
 
   return (
-    <article className="rounded-[1.5rem] border border-white/[0.085] bg-[#11131a] p-4 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.9)] transition hover:border-white/[0.14] sm:p-5">
+    <article onClick={openThreadFromCard} className={`rounded-[1.5rem] border border-white/[0.085] bg-[#11131a] p-4 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.9)] transition hover:border-white/[0.14] sm:p-5 ${onOpenThread ? 'cursor-pointer' : ''}`}>
       <div className="mb-3 flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           {message.avatar_url ? (
@@ -315,6 +320,13 @@ const MessageCard = ({
         </div>
       )}
 
+      {message.parent_message && (
+        <button type="button" onClick={() => onOpenThread?.(message.parent_message.id)} disabled={!onOpenThread} className="mb-3 block w-full rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3 text-left transition hover:bg-white/[0.045] disabled:cursor-default">
+          <span className="text-xs font-bold text-white/45">Replying to {message.parent_message.display_name ? `@${message.parent_message.display_name}` : 'a post'}</span>
+          <span className="mt-1 block line-clamp-3 whitespace-pre-wrap text-sm leading-5 text-white/55">{message.parent_message.content}</span>
+        </button>
+      )}
+
       {message.content && <ExpandableText text={message.content} />}
 
       {message.repost_of && (
@@ -352,7 +364,7 @@ const MessageCard = ({
               ? 'You cannot mark your own post as useful'
               : localUserMarkedUseful
                 ? 'Remove Useful (free)'
-                : 'Mark as useful (costs 1 satoshi)'}
+                : 'Mark as useful (costs 1 shell)'}
             className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
               localUserMarkedUseful
                 ? 'bg-amber-300/15 font-semibold text-amber-300'
@@ -482,6 +494,7 @@ const MessageCard = ({
                   onEditorialPreference={onEditorialPreference}
                   onEditorialTopicPreference={onEditorialTopicPreference}
                   onReportMessage={onReportMessage}
+                  onOpenThread={onOpenThread}
                   showActions
                 />
               ))}

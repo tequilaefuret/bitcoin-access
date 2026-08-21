@@ -290,7 +290,7 @@ Legacy note:
 Purpose:
 - track whether a reader found a post or comment useful
 - one vote per message and Bitcoin address
-- adding a vote costs `0.00000001` shell; removing it is free
+- adding a vote costs `1` shell; removing it is free
 
 The `messages.useful_count` column is maintained by a database trigger and is used by the Classic feed's `Useful` sort.
 
@@ -603,7 +603,7 @@ Role:
 10. Followed users can be prioritized in the social experience.
 11. All UI text should remain in English.
 12. The social surface has separate `Classic` and `Opinion` modes.
-14. Adding `Useful` costs `0.00000001` shell, removing it is free, and it is the only public evaluation signal in the first Opinion version.
+14. Adding `Useful` costs `1` shell, removing it is free, and it is the only public evaluation signal in the first Opinion version.
 15. Opinion perspective buckets are internal selection data and must not be shown to readers.
 16. Private topic stances must only be returned to the authenticated owner.
 17. Automatic topic grouping must require both a minimum similarity and a minimum lead over the second topic.

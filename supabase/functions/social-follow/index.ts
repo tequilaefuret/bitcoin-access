@@ -104,32 +104,26 @@ Deno.serve(async (req) => {
         return jsonResponse(req, { error: 'Interaction impossible entre ces comptes' }, 403);
       }
 
-      const { error } = await supabase
-        .from('follows')
-        .upsert(
-          {
-            follower_address: address,
-            following_address: targetAddress
-          },
-          {
-            onConflict: 'follower_address,following_address'
-          }
-        );
-
-      if (error) throw error;
-    } else if (action === 'unfollow') {
-      const { error } = await supabase
-        .from('follows')
-        .delete()
-        .eq('follower_address', address)
-        .eq('following_address', targetAddress);
-
-      if (error) throw error;
-    } else {
+    } else if (action !== 'unfollow') {
       return new Response(
         JSON.stringify({ error: 'Unknown action' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    const { data: lockRows, error: lockError } = await supabase.rpc('set_follow_with_lock', {
+      p_follower_address: address,
+      p_following_address: targetAddress,
+      p_should_follow: action === 'follow',
+    });
+    if (lockError) {
+      if (lockError.message?.includes('INSUFFICIENT_SHELLS')) {
+        return jsonResponse(req, { error: 'INSUFFICIENT_SHELLS' }, 402);
+      }
+      throw lockError;
+    } else {
+      // The database transaction is authoritative for both the relationship
+      // and its refundable 10-shell lock.
     }
 
     const { data: following } = await supabase
@@ -141,7 +135,9 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        following: (following || []).map((row: any) => row.following_address)
+        following: (following || []).map((row: any) => row.following_address),
+        shells_balance: Number(lockRows?.[0]?.new_balance) || 0,
+        lock_delta: Number(lockRows?.[0]?.lock_delta) || 0,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

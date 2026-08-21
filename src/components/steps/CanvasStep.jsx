@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Palette, Grid3x3, ZoomIn, ZoomOut, Eye, EyeOff, ArrowLeft, Check, X } from 'lucide-react';
+import { canShowShellBalance, formatShellAmount } from '../../lib/displayPreferences';
+import { INSUFFICIENT_SHELLS_MESSAGE } from '../../lib/shells';
 
   // 16-color palette (r/place style)
 const COLORS = [
@@ -10,7 +12,7 @@ const COLORS = [
 ];
 
 const CANVAS_SIZE = 100; // 100x100 pixels
-  const PIXEL_COST = 0.00000001; // 1 satoshi per pixel
+  const PIXEL_COST = 1; // 1 satoshi = 1 shell per pixel
   const MAX_PIXELS = 1000; // Validation limit
 
 const CanvasStep = ({
@@ -21,7 +23,8 @@ const CanvasStep = ({
   onLoadUserPixelCount,
   loading,
   error,
-  onBack
+  onBack,
+  balanceDisplay = 'show_all'
 }) => {
   // États du canvas
   const [canvasPixels, setCanvasPixels] = useState([]); // Pixels validés (DB)
@@ -196,7 +199,7 @@ const CanvasStep = ({
     const totalCost = pendingPixels.length * PIXEL_COST;
 
     if (shellsAvailable < totalCost) {
-      alert(`Insufficient balance. Required: ${totalCost.toFixed(8)} shells`);
+      alert(INSUFFICIENT_SHELLS_MESSAGE);
       return;
     }
 
@@ -250,7 +253,7 @@ const CanvasStep = ({
             
             <div className="bg-gradient-to-br from-blue-100 to-blue-50 rounded-xl p-4">
               <p className="text-sm text-gray-600 mb-1">Available balance</p>
-              <p className="text-2xl font-bold text-blue-600">{shellsAvailable.toFixed(8)} shells</p>
+              <p className="text-2xl font-bold text-blue-600">{canShowShellBalance(balanceDisplay) ? `${formatShellAmount(shellsAvailable)} shells` : 'Hidden'}</p>
             </div>
           </div>
         </div>
@@ -357,7 +360,7 @@ const CanvasStep = ({
                   </div>
                   <div className="flex justify-between">
                     <span>Total cost:</span>
-                    <span className="font-bold">{totalCost.toFixed(8)} shells</span>
+                    <span className="font-bold">{formatShellAmount(totalCost)} shells</span>
                   </div>
                 </div>
 

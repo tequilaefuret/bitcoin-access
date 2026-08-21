@@ -137,7 +137,7 @@ test('adds a newly published post locally without loading the feed again', async
   });
 
   expect(await screen.findByText(message.content)).toBeInTheDocument();
-  fireEvent.change(screen.getByPlaceholderText(/share something worth reading/i), {
+  fireEvent.change(screen.getByPlaceholderText(/share something new/i), {
     target: { value: publishedMessage.content },
   });
   const publishButton = screen.getAllByRole('button', { name: /^publish$/i })
@@ -147,7 +147,7 @@ test('adds a newly published post locally without loading the feed again', async
   expect(await screen.findByText(publishedMessage.content)).toBeInTheDocument();
   expect(onPublishMessage).toHaveBeenCalledWith(publishedMessage.content);
   expect(onLoadMessages).toHaveBeenCalledTimes(1);
-  expect(await screen.findByText(/added without moving your feed/i)).toBeInTheDocument();
+  expect(await screen.findByText(/^your post is published$/i)).toBeInTheDocument();
 });
 
 test('inserts a published comment without reloading the parent feed', async () => {

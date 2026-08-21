@@ -13,7 +13,8 @@ import {
   ShieldCheck,
   WalletCards,
 } from 'lucide-react';
-import { changePassword, truncateAddress } from '../../supabaseClient';
+import { changePassword } from '../../supabaseClient';
+import { formatBitcoinAddress } from '../../lib/displayPreferences';
 import { ListSkeleton } from '../ui/ContentSkeletons';
 
 const MIN_PASSWORD_LENGTH = 12;
@@ -127,22 +128,22 @@ const SettingsStep = ({
       <button
         type="button"
         onClick={onBack}
-        className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-slate-500 transition hover:text-slate-950"
+        className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-white/50 transition hover:text-white"
       >
         <ArrowLeft className="h-4 w-4" />
         Back
       </button>
 
       <div className="mb-7">
-        <p className="text-xs font-bold uppercase tracking-[0.22em] text-orange-600">Your account</p>
-        <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950">Settings</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          Security and display preferences for {truncateAddress(address)}.
+        <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-300">Your account</p>
+        <h2 className="mt-2 text-3xl font-black tracking-tight text-white">Settings</h2>
+        <p className="mt-2 text-sm text-white/45">
+          Security and display preferences for {formatBitcoinAddress(address, preferences.addressDisplay)}.
         </p>
       </div>
 
       <div className="space-y-6">
-        <section className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-lg shadow-slate-200/40">
+        <section className="overflow-hidden rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)]">
           <header className="flex items-start gap-4 border-b border-slate-100 px-5 py-5 sm:px-7">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-orange-500 text-white">
               <KeyRound className="h-5 w-5" />
@@ -251,7 +252,7 @@ const SettingsStep = ({
           )}
         </section>
 
-        <section className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-lg shadow-slate-200/40 sm:p-7">
+        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
           <div className="flex items-start gap-4">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
               <Rss className="h-5 w-5" />
@@ -274,7 +275,7 @@ const SettingsStep = ({
         </section>
 
         {onLoadEditorialPreferences && (
-          <section className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-lg shadow-slate-200/40 sm:p-7">
+          <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
             <div className="flex items-start gap-4">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
                 <ShieldCheck className="h-5 w-5" />
@@ -306,7 +307,7 @@ const SettingsStep = ({
                       <li key={item.target_address} className="flex items-center justify-between gap-4 px-4 py-3">
                         <div className="min-w-0">
                           <p className="truncate text-sm font-bold text-slate-900">
-                            {item.display_name || truncateAddress(item.target_address)}
+                            {item.display_name || formatBitcoinAddress(item.target_address, preferences.addressDisplay)}
                           </p>
                           <p className="mt-0.5 text-xs capitalize text-slate-500">
                             {item.preference === 'reduce' ? 'Show fewer posts' : item.preference === 'mute' ? 'Hidden' : 'Blocked'}
@@ -316,7 +317,7 @@ const SettingsStep = ({
                           type="button"
                           onClick={() => restoreEditorialAuthor(item.target_address)}
                           disabled={Boolean(editorialAction)}
-                          aria-label={`Restore ${item.display_name || truncateAddress(item.target_address)}`}
+                          aria-label={`Restore ${item.display_name || formatBitcoinAddress(item.target_address, preferences.addressDisplay)}`}
                           className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-orange-300 hover:text-orange-700 disabled:opacity-50"
                         >
                           {editorialAction === item.target_address
@@ -333,7 +334,7 @@ const SettingsStep = ({
           </section>
         )}
 
-        <section className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-lg shadow-slate-200/40 sm:p-7">
+        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
           <div className="flex items-start gap-4">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
               <MonitorCog className="h-5 w-5" />
@@ -355,28 +356,40 @@ const SettingsStep = ({
           </div>
         </section>
 
-        <section className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-lg shadow-slate-200/40 sm:p-7">
+        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
           <div className="flex items-start gap-4">
             <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
               <WalletCards className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-5">
-                <div>
-                  <label htmlFor="show-full-address" className="block text-lg font-black text-slate-950">Show full Bitcoin address</label>
-                  <p className="mt-1 text-sm leading-6 text-slate-500">Display the complete address in your account menu and profile. It is shortened by default for screen-sharing privacy.</p>
+              <div>
+                <label htmlFor="address-display" className="block text-lg font-black text-slate-950">Show Bitcoin address</label>
+                <p className="mt-1 text-sm leading-6 text-slate-500">Choose how your connected address appears throughout Danaus.</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,220px)_1fr] sm:items-center">
+                  <select id="address-display" value={preferences.addressDisplay} onChange={(event) => updatePreference('addressDisplay', event.target.value)} className="w-full rounded-2xl border border-stone-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10">
+                    <option value="full">Full address</option>
+                    <option value="shortened">Shortened</option>
+                    <option value="masked">Masked</option>
+                  </select>
+                  <code className="min-w-0 break-all rounded-2xl border border-stone-200 bg-stone-100 px-4 py-3 text-xs text-slate-600">{formatBitcoinAddress(address, preferences.addressDisplay)}</code>
                 </div>
-                <button
-                  id="show-full-address"
-                  type="button"
-                  role="switch"
-                  aria-checked={preferences.showFullAddress}
-                  onClick={() => updatePreference('showFullAddress', !preferences.showFullAddress)}
-                  className={`relative h-7 w-12 shrink-0 rounded-full transition ${preferences.showFullAddress ? 'bg-orange-500' : 'bg-slate-300'}`}
-                >
-                  <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition ${preferences.showFullAddress ? 'left-6' : 'left-1'}`} />
-                </button>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
+          <div className="flex items-start gap-4">
+            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white"><Eye className="h-5 w-5" /></span>
+            <div className="min-w-0 flex-1">
+              <label htmlFor="balance-display" className="block text-lg font-black text-slate-950">Show balance</label>
+              <p className="mt-1 text-sm leading-6 text-slate-500">Control which account balances are visible across Danaus.</p>
+              <select id="balance-display" value={preferences.balanceDisplay} onChange={(event) => updatePreference('balanceDisplay', event.target.value)} className="mt-4 w-full rounded-2xl border border-stone-300 bg-white px-4 py-3 text-sm font-semibold text-slate-800 outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-500/10 sm:max-w-sm">
+                <option value="show_all">Show bitcoin and shell balances</option>
+                <option value="hide_all">Hide bitcoin and shell balances</option>
+                <option value="hide_bitcoin">Hide bitcoin balances</option>
+                <option value="hide_shells">Hide shell balances</option>
+              </select>
             </div>
           </div>
         </section>

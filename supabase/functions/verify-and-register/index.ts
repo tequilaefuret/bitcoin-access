@@ -616,7 +616,7 @@ serve(async (req) => {
 
     if (existingUser) {
       const oldBtc = existingUser.btc_balance || 0;
-      const delta = btcBalance - oldBtc;
+      const delta = Math.round((btcBalance - oldBtc) * 100000000);
       const newShells = Math.max(0, (existingUser.shells_balance || 0) + delta);
       const { data: updatedUser, error: updateError } = await supabase
         .from('user_balances')
@@ -648,7 +648,7 @@ serve(async (req) => {
         .insert({
           bitcoin_address: address,
           btc_balance: btcBalance,
-          shells_balance: btcBalance,
+          shells_balance: Math.round(btcBalance * 100000000),
           shells_spent_total: 0,
           ownership_verified_at: verifiedAt,
           ownership_address_type: verification.addressType,
@@ -664,7 +664,7 @@ serve(async (req) => {
 
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('bitcoin_address, display_name, bio, location, website_url, avatar_url, cover_url, created_at, updated_at')
+      .select('bitcoin_address, display_name, bio, location, website_url, avatar_url, cover_url, avatar_pixels, cover_pixels, created_at, updated_at')
       .eq('bitcoin_address', address)
       .maybeSingle();
     if (profileError && profileError.code !== 'PGRST116') throw profileError;

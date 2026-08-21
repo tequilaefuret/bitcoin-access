@@ -25,6 +25,7 @@ const SocialStep = ({
   loading,
   error,
   onUserClick,
+  onOpenThread,
   activeMode = 'classic',
   feedSort,
   followingAddresses = [],
@@ -144,11 +145,7 @@ const SocialStep = ({
       const publishedMessage = normalizePublishedMessage(result.message, address);
       prependLatest(publishedMessage, classicSort === 'recent');
       setMessageContent('');
-      setEditorialNotice(
-        classicSort === 'recent'
-          ? 'Your post is published and has been added without moving your feed.'
-          : 'Your post is published. Your current feed has stayed in place.'
-      );
+      setEditorialNotice('Your post is published');
     } catch (publishError) {
       setScreenError(publishError.message || 'The post could not be published.');
     } finally {
@@ -300,6 +297,7 @@ const SocialStep = ({
       onRepost={handleRepost}
       onDelete={handleDelete}
       onUserClick={onUserClick}
+      onOpenThread={onOpenThread}
       onNotInterested={classicSort === 'for_you' && onForYouNotInterested
         ? handleForYouNotInterested
         : null}

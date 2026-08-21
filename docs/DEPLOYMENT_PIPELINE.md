@@ -68,7 +68,7 @@ sont identiques, mais les valeurs sont propres à DEV ou production.
 | `SUPABASE_PROJECT_REF` | Project Ref Supabase DEV | Project Ref Supabase production |
 | `NETLIFY_SITE_ID` | Site ID Netlify DEV | Site ID Netlify production |
 | `APP_URL` | URL HTTPS du site DEV | URL HTTPS du site production |
-| `REACT_APP_AUTH_API_URL` | Optionnel : URL `/functions/v1` DEV | Optionnel : URL `/functions/v1` production |
+| `REACT_APP_AUTH_API_URL` | Laisser vide ou `/api/auth` | Laisser vide ou `/api/auth` |
 | `REACT_APP_TREZOR_MANIFEST_EMAIL` | E-mail public de contact du site | E-mail public de contact du site |
 
 `APP_URL` doit être une origine sans chemin, par exemple
@@ -76,6 +76,10 @@ sont identiques, mais les valeurs sont propres à DEV ou production.
 `REACT_APP_TREZOR_MANIFEST_EMAIL` est transmis au manifeste public exigé par
 Trezor Connect. Ce n'est pas un secret et il ne donne aucun accès au wallet ;
 utilise une adresse que les utilisateurs peuvent réellement contacter.
+
+Ne renseigne pas d'URL `supabase.co/functions/v1` dans
+`REACT_APP_AUTH_API_URL`. Le build crée le proxy Netlify `/api/auth` vers le bon
+projet Supabase afin que la session survive à une actualisation.
 
 ### 4. Ajouter les secrets GitHub
 

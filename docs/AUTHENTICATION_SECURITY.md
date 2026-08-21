@@ -143,7 +143,7 @@ Replace the example domain with the exact HTTPS origin serving the React app:
 supabase secrets set \
   AUTH_ALLOWED_ORIGINS=https://YOUR_SITE_DOMAIN \
   AUTH_COOKIE_SECURE=true \
-  AUTH_COOKIE_SAME_SITE=None
+  AUTH_COOKIE_SAME_SITE=Lax
 ```
 
 Several origins can be comma-separated. Do not use `*` because credentialed
@@ -178,38 +178,34 @@ been deployed.
 
 ## Frontend deployment
 
-The frontend accepts this variable:
-
-```bash
-REACT_APP_AUTH_API_URL=https://YOUR_PROJECT_REF.supabase.co/functions/v1
-```
-
-This direct configuration uses a secure cross-site cookie. Browser privacy
-settings can block cross-site cookies. For reliable automatic reconnection,
-the production host should expose a same-origin reverse proxy such as:
+The frontend uses `/api/auth` by default. During each build,
+`scripts/generate-netlify-routes.mjs` creates the Netlify rewrite that exposes a
+same-origin endpoint such as:
 
 ```text
-https://YOUR_SITE_DOMAIN/api/auth-session
+https://YOUR_SITE_DOMAIN/api/auth/auth-session
     -> https://YOUR_PROJECT_REF.supabase.co/functions/v1/auth-session
 ```
 
-The proxy must forward `POST`, `OPTIONS`, request headers, response headers and
-especially every `Set-Cookie` header without caching. With a generic `/api/*`
-proxy, configure:
+Leave `REACT_APP_AUTH_API_URL` empty, or set it to the relative path below:
 
 ```bash
-REACT_APP_AUTH_API_URL=https://YOUR_SITE_DOMAIN/api
+REACT_APP_AUTH_API_URL=/api/auth
 ```
 
-When the proxy is same-origin, set the cookie policy to `Lax`:
+Do not configure a direct `supabase.co/functions/v1` URL: that would make the
+refresh cookie cross-site and some browser privacy settings could block it. The
+same-origin proxy allows the browser to keep the secure `HttpOnly` refresh
+cookie while the short-lived access token remains in memory only.
+
+The deployment script configures the cookie policy for that proxy:
 
 ```bash
 supabase secrets set AUTH_COOKIE_SAME_SITE=Lax
 ```
 
-The exact proxy configuration depends on the hosting provider. Do not switch
-the frontend variable until every configured authentication path is reachable
-through the proxy.
+If the site is moved away from Netlify, reproduce this rewrite with the new
+hosting provider before switching DNS.
 
 ## Verification checklist
 
