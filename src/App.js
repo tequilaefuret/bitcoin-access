@@ -47,6 +47,13 @@ const getDisplayName = (user) => (
   || ''
 );
 
+const getAvatarUrl = (user) => (
+  user?.profile?.avatar_url
+  || user?.profile_avatar_url
+  || user?.avatar_url
+  || ''
+);
+
 const safeParseArray = (value) => {
   try {
     const parsed = JSON.parse(value || '[]');
@@ -79,6 +86,7 @@ const BitcoinExclusiveAccess = () => {
   const [passwordSetupMode, setPasswordSetupMode] = useState('set');
   const [passwordRecoveryRequested, setPasswordRecoveryRequested] = useState(false);
   const [sessionDisplayName, setSessionDisplayName] = useState('');
+  const [sessionAvatarUrl, setSessionAvatarUrl] = useState('');
   const [networkMode, setNetworkMode] = useState('classic');
   const [socialFeedSort, setSocialFeedSort] = useState(DEFAULT_USER_PREFERENCES.defaultFeed);
   const [userPreferences, setUserPreferences] = useState({ ...DEFAULT_USER_PREFERENCES });
@@ -138,6 +146,11 @@ const BitcoinExclusiveAccess = () => {
 
   const routeToNetwork = useCallback(() => {
     setStep('social');
+  }, []);
+
+  const syncSessionProfile = useCallback((user) => {
+    setSessionDisplayName(getDisplayName(user));
+    setSessionAvatarUrl(getAvatarUrl(user));
   }, []);
 
   useEffect(() => {
@@ -238,6 +251,7 @@ const BitcoinExclusiveAccess = () => {
     passwordRecoveryRequested,
     setStep,
     hasUserProfile,
+    onAuthenticatedUser: syncSessionProfile,
   });
 
   const isFollowing = useCallback((bitcoinAddress) => {
@@ -313,7 +327,7 @@ const BitcoinExclusiveAccess = () => {
     const hasSkippedPassword = Boolean(user?.password_setup_skipped);
     setPasswordConfigured(hasPassword);
     setPasswordSetupSkipped(hasSkippedPassword);
-    setSessionDisplayName(getDisplayName(user));
+    syncSessionProfile(user);
 
     if (!hasUserProfile(user)) {
       setProfileSetupAddress(sessionAddress);
@@ -329,7 +343,7 @@ const BitcoinExclusiveAccess = () => {
     }
 
     routeToNetwork();
-  }, [routeToNetwork]);
+  }, [routeToNetwork, syncSessionProfile]);
 
   // ===== VÉRIFICATION SESSION AU CHARGEMENT =====
   useEffect(() => {
@@ -373,6 +387,7 @@ const BitcoinExclusiveAccess = () => {
       setPasswordSetupMode('set');
       setPasswordRecoveryRequested(false);
       setSessionDisplayName('');
+      setSessionAvatarUrl('');
       setStep('landing');
     } catch (err) {
       setError('Unable to close the session. Please try again.');
@@ -497,7 +512,7 @@ const BitcoinExclusiveAccess = () => {
   // ===== HANDLER : PSEUDO CRÉÉ =====
   const handleProfileSetupComplete = useCallback((profile) => {
     setError('');
-    setSessionDisplayName(getDisplayName(profile));
+    syncSessionProfile(profile);
     setProfileSetupAddress(null);
     if ((!passwordConfigured && !passwordSetupSkipped) || passwordRecoveryRequested) {
       setPasswordSetupMode(passwordRecoveryRequested && passwordConfigured ? 'reset' : 'set');
@@ -505,7 +520,7 @@ const BitcoinExclusiveAccess = () => {
       return;
     }
     routeToNetwork();
-  }, [passwordConfigured, passwordRecoveryRequested, passwordSetupSkipped, routeToNetwork, setError]);
+  }, [passwordConfigured, passwordRecoveryRequested, passwordSetupSkipped, routeToNetwork, setError, syncSessionProfile]);
 
   const handlePasswordLogin = useCallback(async (identifier, password) => {
     setError('');
@@ -589,6 +604,7 @@ const BitcoinExclusiveAccess = () => {
           <Header 
           connectedAddress={showPrivateSession ? authenticatedAddress : null}
           displayName={sessionDisplayName}
+          avatarUrl={sessionAvatarUrl}
           minimal={step === 'connect'}
           onHome={() => setStep('landing')}
           onDisconnect={handleManualDisconnect}
@@ -705,6 +721,7 @@ const BitcoinExclusiveAccess = () => {
             >
             <SocialStep
               address={address}
+              avatarUrl={sessionAvatarUrl}
               onPublishMessage={handlePublishMessage}
               onLoadMessages={loadMessages}
               onLoadComments={loadComments}
@@ -755,7 +772,7 @@ const BitcoinExclusiveAccess = () => {
               onEditorialTopicPreference={updateEditorialTopicPreference}
               onReportMessage={reportMessage}
               onReportProfile={reportProfile}
-              onProfileUpdated={(profile) => setSessionDisplayName(profile.display_name || '')}
+              onProfileUpdated={syncSessionProfile}
             />
           )}
 

@@ -21,6 +21,7 @@ const ClassicFeedPanel = ({
   hasMore,
   onLoadMore,
   isLoadingMore,
+  avatarUrl = '',
 }) => {
   const charCount = messageContent.replace(/\n/g, '').length;
 
@@ -29,7 +30,11 @@ const ClassicFeedPanel = ({
       <main className="min-w-0 space-y-4">
         <section className="overflow-hidden rounded-[1.6rem] border border-white/[0.09] bg-[#11131a] shadow-[0_22px_60px_-34px_rgba(0,0,0,0.9)]">
           <div className="flex gap-3 p-4 sm:p-5">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-sm font-black text-slate-950">Y</span>
+            <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-amber-200 to-orange-500 text-sm font-black text-slate-950">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="Your profile" className="h-full w-full object-cover" />
+              ) : 'Y'}
+            </span>
             <div className="min-w-0 flex-1">
               <textarea
                 value={messageContent}

@@ -11,7 +11,8 @@ describe('display preferences', () => {
   test('formats Bitcoin addresses in all supported privacy modes', () => {
     expect(formatBitcoinAddress(address, 'full')).toBe(address);
     expect(formatBitcoinAddress(address, 'shortened')).toBe('bc1qabcd...567890');
-    expect(formatBitcoinAddress(address, 'masked')).toBe('bc1q••••••••••7890');
+    expect(formatBitcoinAddress(address, 'masked')).toBe('••••••••••••');
+    expect(formatBitcoinAddress('bc1q-short', 'masked')).toBe('••••••••••••');
   });
 
   test('applies the balance visibility choices independently', () => {

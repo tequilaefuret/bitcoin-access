@@ -1,7 +1,7 @@
 export function formatBitcoinAddress(address, mode = 'shortened') {
   if (!address) return '';
+  if (mode === 'masked') return '••••••••••••';
   if (mode === 'full' || address.length < 15) return address;
-  if (mode === 'masked') return `${address.slice(0, 4)}${'•'.repeat(10)}${address.slice(-4)}`;
   return `${address.slice(0, 8)}...${address.slice(-6)}`;
 }
 

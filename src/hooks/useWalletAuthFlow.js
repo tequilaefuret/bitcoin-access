@@ -51,6 +51,7 @@ export default function useWalletAuthFlow({
   passwordRecoveryRequested,
   setStep,
   hasUserProfile,
+  onAuthenticatedUser,
 }) {
   const recommendedPersonaId = useMemo(() => {
     const recommended = getRecommendedPersona({
@@ -405,6 +406,7 @@ export default function useWalletAuthFlow({
       const verifiedUser = await loadAuthenticatedUser(normalizedAddress, getUserData);
 
       setAddress(normalizedAddress);
+      onAuthenticatedUser?.(verifiedUser);
 
       routeVerifiedWalletUser(verifiedUser, normalizedAddress);
 
@@ -444,6 +446,7 @@ export default function useWalletAuthFlow({
     const verifiedUser = await loadAuthenticatedUser(normalizedAddress, getUserData);
 
     setAddress(normalizedAddress);
+    onAuthenticatedUser?.(verifiedUser);
 
     routeVerifiedWalletUser(verifiedUser, normalizedAddress);
 
@@ -465,6 +468,7 @@ export default function useWalletAuthFlow({
     prepareAuthRequest,
     selectedPersonaId,
     setAddress,
+    onAuthenticatedUser,
     routeVerifiedWalletUser,
     signMessage,
   ]);

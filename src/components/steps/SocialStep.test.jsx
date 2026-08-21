@@ -71,6 +71,13 @@ test('opens the personalized feed by default and keeps Latest and Followed avail
   expect(onLoadMessages).toHaveBeenCalledTimes(3);
 });
 
+test('shows the signed-in profile photo beside the post composer', async () => {
+  renderSocialStep({ avatarUrl: 'https://media.example/avatar.webp' });
+
+  expect(await screen.findByRole('img', { name: /your profile/i }))
+    .toHaveAttribute('src', 'https://media.example/avatar.webp');
+});
+
 test('loads the next page from its opaque cursor and removes duplicate posts', async () => {
   const secondMessage = {
     ...message,

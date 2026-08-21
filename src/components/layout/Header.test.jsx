@@ -19,3 +19,18 @@ test('opens Settings from the private-session menu and hides the full address by
   fireEvent.click(screen.getByRole('menuitem', { name: /settings/i }));
   expect(onSettings).toHaveBeenCalledTimes(1);
 });
+
+test('shows the signed-in profile photo in the header button', () => {
+  render(
+    <Header
+      connectedAddress="bc1qabcdefghijklmnopqrstuvwxyz123456"
+      displayName="screen-safe-user"
+      avatarUrl="https://media.example/avatar.webp"
+      onDisconnect={jest.fn()}
+      onHome={jest.fn()}
+    />
+  );
+
+  expect(screen.getByRole('img', { name: /screen-safe-user's profile/i }))
+    .toHaveAttribute('src', 'https://media.example/avatar.webp');
+});

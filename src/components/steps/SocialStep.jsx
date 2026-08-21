@@ -11,6 +11,7 @@ import { useTemporaryMessageHides } from '../../features/feed/useTemporaryMessag
 
 const SocialStep = ({
   address,
+  avatarUrl = '',
   onPublishMessage,
   onLoadMessages,
   onLoadComments,
@@ -334,6 +335,7 @@ const SocialStep = ({
           hasMore={hasMore}
           onLoadMore={loadMore}
           isLoadingMore={isLoadingMore}
+          avatarUrl={avatarUrl}
         />
       ) : (
         <OpinionFeedPanel
