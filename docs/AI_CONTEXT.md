@@ -290,7 +290,7 @@ Legacy note:
 Purpose:
 - track whether a reader found a post or comment useful
 - one vote per message and Bitcoin address
-- adding a vote costs `1` shell; removing it is free
+- adding a vote locks `1` shell; removing it returns that shell
 
 The `messages.useful_count` column is maintained by a database trigger and is used by the Classic feed's `Useful` sort.
 
@@ -482,6 +482,18 @@ Supported operations:
 Important:
 - `get_history` powers the spending history modal.
 - this function is the main backend surface for economic and social mutations.
+- publication, comment, quoted-repost and profile photos lock one refundable shell per started
+  KiB, using the byte size verified in R2; deleting content releases its text
+  and media locks.
+- reposts never rebill original photo bytes; a quoted repost can add one to three
+  optimized photos, whose own KiB locks are released when the quote is deleted.
+- post, comment and quoted-repost composers share `useMessagePhotos` for the
+  optimization/preview lifecycle and `MessagePhotoAttachments` for their picker
+  and previews; new message composers must reuse these primitives.
+- every reversible paid action must call the private, atomic
+  `private.set_refundable_shell_lock` primitive; direct reversible debits are forbidden.
+- `message_read_receipts` guarantees that a reader pays for a message only once,
+  across feeds, profiles, threads and the desktop photo discussion panel.
 - its entrypoint handles authentication, routing and atomic billing; feed
   selection and ranking are delegated to `user-operations/feed-service.ts`.
 
@@ -603,7 +615,7 @@ Role:
 10. Followed users can be prioritized in the social experience.
 11. All UI text should remain in English.
 12. The social surface has separate `Classic` and `Opinion` modes.
-14. Adding `Useful` costs `1` shell, removing it is free, and it is the only public evaluation signal in the first Opinion version.
+14. Adding `Useful` locks `1` shell, removing it returns that shell, and it is the only public evaluation signal in the first Opinion version.
 15. Opinion perspective buckets are internal selection data and must not be shown to readers.
 16. Private topic stances must only be returned to the authenticated owner.
 17. Automatic topic grouping must require both a minimum similarity and a minimum lead over the second topic.

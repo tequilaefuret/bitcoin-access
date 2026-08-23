@@ -1,6 +1,7 @@
 import {
   MAX_POST_IMAGE_EDGE,
   optimizePostImage,
+  postImageShellCost,
   validatePostImageSelection,
 } from './postMedia';
 
@@ -57,5 +58,15 @@ describe('post photo optimization', () => {
     expect(optimized.width).toBe(MAX_POST_IMAGE_EDGE);
     expect(optimized.height).toBe(1200);
     expect(close).toHaveBeenCalled();
+  });
+});
+
+describe('post photo shell billing', () => {
+  test('charges one shell per started KiB', () => {
+    expect(postImageShellCost(0)).toBe(0);
+    expect(postImageShellCost(1)).toBe(1);
+    expect(postImageShellCost(1024)).toBe(1);
+    expect(postImageShellCost(1025)).toBe(2);
+    expect(postImageShellCost(353 * 1024)).toBe(353);
   });
 });

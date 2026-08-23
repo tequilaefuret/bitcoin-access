@@ -127,6 +127,25 @@ test('offers password creation when the account has no password', () => {
   expect(onAddPassword).toHaveBeenCalledTimes(1);
 });
 
+test('keeps normal page scrolling with amber icons and glow on the cards', () => {
+  const { container } = render(
+    <SettingsStep
+      address="bc1q-test-address"
+      passwordConfigured
+      preferences={preferences}
+      onPreferencesChange={jest.fn()}
+      onBack={jest.fn()}
+    />
+  );
+
+  expect(container.firstChild).not.toHaveClass('overflow-hidden');
+  expect(screen.queryByTestId('settings-scroll-region')).not.toBeInTheDocument();
+  const defaultFeedCard = screen.getByText('Default feed').closest('section');
+  expect(defaultFeedCard.className).toContain('radial-gradient');
+  expect(defaultFeedCard.querySelector('span')).toHaveClass('bg-amber-300', 'text-slate-950');
+  expect(screen.getByRole('button', { name: /update password/i })).toHaveClass('bg-amber-300', 'text-slate-950');
+});
+
 test('lists content controls and lets the user restore an account', async () => {
   const onLoadEditorialPreferences = jest.fn().mockResolvedValue([
     {

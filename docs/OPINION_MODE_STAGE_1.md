@@ -15,7 +15,7 @@ This document describes the first functional foundation of the Danaus Opinion fe
 - `Opinion` contains only posts explicitly selected for an active subject.
 - A post can receive one public signal: `Useful`.
 - There is no downvote in this stage.
-- Adding `Useful` costs `1` shell, the same cost as the former like. Removing it is free.
+- Adding `Useful` locks `1` shell, the same amount as the former like. Removing it returns that shell.
 - Posts can be ordered by recency or by their `Useful` count in Classic mode.
 - Perspective buckets exist only to build a varied selection.
 - Perspective buckets are removed from the server response and never displayed to readers.

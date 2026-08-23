@@ -3,15 +3,12 @@ import MessageCard from '../social/MessageCard';
 import ClassicFeedPanel from '../social/ClassicFeedPanel';
 import OpinionFeedPanel from '../social/OpinionFeedPanel';
 import TemporarilyHiddenPost from '../social/TemporarilyHiddenPost';
+import FloatingPostComposer from '../social/FloatingPostComposer';
 import ErrorAlert from '../ui/ErrorAlert';
-import { deleteMessage } from '../../supabaseClient';
 import { normalizePublishedMessage } from '../../features/feed/classicFeedState';
 import { useClassicFeed } from '../../features/feed/useClassicFeed';
 import { useTemporaryMessageHides } from '../../features/feed/useTemporaryMessageHides';
-import {
-  optimizePostImages,
-  releasePostImage,
-} from '../../lib/postMedia';
+import useMessagePhotos from '../../hooks/useMessagePhotos';
 
 const SocialStep = ({
   address,
@@ -20,8 +17,10 @@ const SocialStep = ({
   onPublishMessage,
   onLoadMessages,
   onLoadComments,
+  onLoadThread,
   onToggleUseful,
   onRepostMessage,
+  onDeleteMessage,
   onForYouNotInterested,
   onEditorialPreference,
   onEditorialTopicPreference,
@@ -41,14 +40,19 @@ const SocialStep = ({
   const [topics, setTopics] = useState([]);
   const [selectedTopicId, setSelectedTopicId] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
-  const [postPhotos, setPostPhotos] = useState([]);
-  const [isOptimizingPhotos, setIsOptimizingPhotos] = useState(false);
-  const postPhotosRef = useRef([]);
   const [isLoadingOpinion, setIsLoadingOpinion] = useState(false);
   const [isSavingStance, setIsSavingStance] = useState(false);
   const [screenError, setScreenError] = useState('');
   const [editorialNotice, setEditorialNotice] = useState('');
   const opinionSessionRef = useRef('');
+  const {
+    photos: postPhotos,
+    isOptimizingPhotos,
+    photoError,
+    selectPhotos: handlePhotosSelected,
+    removePhoto: handleRemovePhoto,
+    clearPhotos: clearPostPhotos,
+  } = useMessagePhotos();
   const {
     classicSort,
     messages,
@@ -152,7 +156,7 @@ const SocialStep = ({
 
   const handlePublish = async () => {
     const content = messageContent.trim();
-    if ((!content && postPhotos.length === 0) || !onPublishMessage || isPublishing) return;
+    if ((!content && postPhotos.length === 0) || !onPublishMessage || isPublishing) return false;
 
     setIsPublishing(true);
     setScreenError('');
@@ -160,57 +164,30 @@ const SocialStep = ({
       const result = postPhotos.length > 0
         ? await onPublishMessage(content, null, postPhotos.map((photo) => photo.file))
         : await onPublishMessage(content);
-      if (!result || result.success === false) return;
+      if (!result || result.success === false) return false;
 
       const publishedMessage = hydrateOwnMessage(result.message);
       prependLatest(publishedMessage, classicSort === 'recent');
       setMessageContent('');
-      postPhotos.forEach(releasePostImage);
-      setPostPhotos([]);
+      clearPostPhotos();
       setEditorialNotice('Your post is published');
+      return true;
     } catch (publishError) {
       setScreenError(publishError.message || 'The post could not be published.');
+      return false;
     } finally {
       setIsPublishing(false);
     }
   };
 
-  const handlePhotosSelected = async (files) => {
-    setScreenError('');
-    setIsOptimizingPhotos(true);
-    try {
-      const optimized = await optimizePostImages(files, postPhotos.length);
-      setPostPhotos((current) => [...current, ...optimized]);
-    } catch (photoError) {
-      setScreenError(photoError.message || 'The selected photos could not be optimized.');
-    } finally {
-      setIsOptimizingPhotos(false);
-    }
-  };
-
-  const handleRemovePhoto = (photoId) => {
-    setPostPhotos((current) => current.filter((photo) => {
-      if (photo.id !== photoId) return true;
-      releasePostImage(photo);
-      return false;
-    }));
-  };
-
-  useEffect(() => {
-    postPhotosRef.current = postPhotos;
-  }, [postPhotos]);
-
-  useEffect(() => () => {
-    postPhotosRef.current.forEach(releasePostImage);
-  }, []);
-
-  const handleComment = async (messageId, commentText, onSuccess) => {
+  const handleComment = async (messageId, commentText, mediaFiles = [], onSuccess) => {
     const content = commentText.trim();
-    if (!content || !onPublishMessage) return;
+    const files = Array.from(mediaFiles || []);
+    if ((!content && files.length === 0) || !onPublishMessage) return false;
 
-    const result = await onPublishMessage(content, messageId);
+    const result = await onPublishMessage(content, messageId, files);
 
-    if (!result || result.success === false) return;
+    if (!result || result.success === false) return false;
 
     updateMessageEverywhere(messageId, (message) => ({
       ...message,
@@ -218,18 +195,23 @@ const SocialStep = ({
     }));
 
     if (onSuccess) onSuccess(result.message || null);
+    return result;
   };
 
   const handleDelete = async (messageId) => {
     if (!window.confirm('Delete this post?')) return;
-
-    await deleteMessage(address, messageId);
-
-    removeClassicMessage(messageId);
-    setTopics((current) => current.map((topic) => ({
-      ...topic,
-      posts: (topic.posts || []).filter((post) => post.id !== messageId)
-    })));
+    if (!onDeleteMessage) return;
+    setScreenError('');
+    try {
+      await onDeleteMessage(messageId);
+      removeClassicMessage(messageId);
+      setTopics((current) => current.map((topic) => ({
+        ...topic,
+        posts: (topic.posts || []).filter((post) => post.id !== messageId)
+      })));
+    } catch (deleteError) {
+      setScreenError(deleteError.message || 'The publication could not be deleted.');
+    }
   };
 
   const handlePrivateStance = async (stance) => {
@@ -254,14 +236,16 @@ const SocialStep = ({
     }
   };
 
-  const handleRepost = async (messageId, quoteContent = '') => {
-    const result = await onRepostMessage?.(messageId, quoteContent);
+  const handleRepost = async (messageId, quoteContent = '', mediaFiles = []) => {
+    const result = mediaFiles.length > 0
+      ? await onRepostMessage?.(messageId, quoteContent, mediaFiles)
+      : await onRepostMessage?.(messageId, quoteContent);
     if (!result) return result;
 
     updateMessageEverywhere(messageId, (message) => ({
       ...message,
       reposts_count: Number(result.reposts_count) || 0,
-      ...(!quoteContent.trim() ? { user_has_reposted: Boolean(result.active) } : {}),
+      ...(!quoteContent.trim() && mediaFiles.length === 0 ? { user_has_reposted: Boolean(result.active) } : {}),
     }));
 
     const sourceMessage = messages.find((message) => message.id === messageId);
@@ -349,6 +333,7 @@ const SocialStep = ({
       onDelete={handleDelete}
       onUserClick={onUserClick}
       onOpenThread={onOpenThread}
+      onLoadThread={onLoadThread}
       onNotInterested={classicSort === 'for_you' && onForYouNotInterested
         ? handleForYouNotInterested
         : null}
@@ -364,7 +349,7 @@ const SocialStep = ({
 
   return (
     <div className="mx-auto max-w-6xl">
-      <ErrorAlert error={screenError || feedError || error} />
+      <ErrorAlert error={screenError || photoError || feedError || error} />
       {editorialNotice && (
         <div className="mb-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm font-medium text-emerald-200">
           {editorialNotice}
@@ -403,6 +388,18 @@ const SocialStep = ({
           onPrivateStance={handlePrivateStance}
         />
       )}
+      <FloatingPostComposer
+        messageContent={messageContent}
+        onMessageContentChange={setMessageContent}
+        onPublish={handlePublish}
+        isPublishing={isPublishing}
+        actionLoading={loading}
+        avatarUrl={avatarUrl}
+        photos={postPhotos}
+        onPhotosSelected={handlePhotosSelected}
+        onRemovePhoto={handleRemovePhoto}
+        isOptimizingPhotos={isOptimizingPhotos}
+      />
     </div>
   );
 };

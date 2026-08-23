@@ -48,3 +48,21 @@ test('describes profile media locks and unlocks as separate events', () => {
   expect(screen.getByText('100 shells locked for the profile photo')).toBeInTheDocument();
   expect(screen.getByText('80 shells unlocked from the profile photo')).toBeInTheDocument();
 });
+
+test('shows text and photo refunds when a publication is deleted', () => {
+  render(
+    <StatsModal
+      stats={{
+        history: [
+          { id: 'text-refund', event_key: 'message_text_unlock', amount: 42, action_count: 1, created_at: '2026-08-21T12:01:00Z' },
+          { id: 'photo-refund', event_key: 'message_media_unlock', amount: 353, action_count: 1, created_at: '2026-08-21T12:00:00Z' },
+        ],
+        hasMore: false,
+      }}
+      onClose={jest.fn()}
+    />
+  );
+
+  expect(screen.getByText('42 text shells unlocked from a deleted message')).toBeInTheDocument();
+  expect(screen.getByText('353 photo shells unlocked from a deleted message')).toBeInTheDocument();
+});

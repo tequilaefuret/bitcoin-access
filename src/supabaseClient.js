@@ -439,6 +439,7 @@ export async function deductGameCost(address) {
  * @param {string} address - Adresse Bitcoin de l'auteur
  * @param {string} content - Contenu du message (max 1000 caractères)
  * @param {string|null} parentId - ID du message parent (pour commentaires)
+ * @param {File[]} mediaFiles - Une à trois photos déjà optimisées
  * @returns {Promise<object>} { success: true, message: {...}, user: {...} }
  */
 async function uploadPostMedia(address, files) {
@@ -479,9 +480,8 @@ async function uploadPostMedia(address, files) {
 export async function publishMessage(address, content, parentId = null, mediaFiles = []) {
   const cleanedContent = typeof content === 'string' ? content.trim() : '';
   const files = Array.from(mediaFiles || []);
-  if (!cleanedContent && files.length === 0) throw new Error('Post cannot be empty');
+  if (!cleanedContent && files.length === 0) throw new Error('Message cannot be empty');
   if (cleanedContent.length > 1000) throw new Error('Message is too long (maximum 1,000 characters)');
-  if (parentId && files.length > 0) throw new Error('Photos can only be added to posts.');
 
   const mediaObjectKeys = await uploadPostMedia(address, files);
 
@@ -531,17 +531,31 @@ export async function getMessages(
 
 /**
  * Ajouter ou retirer le signal Useful d'une publication.
- * L'ajout coûte 1 shell ; le retrait est gratuit.
+ * L'ajout verrouille 1 shell ; le retrait libère ce shell.
  */
 export async function toggleMessageUseful(address, messageId) {
   return invokeUserOperation(address, 'toggle_message_useful', { messageId }, 'Could not update Useful');
 }
 
-export async function createMessageRepost(address, messageId, quoteContent = '') {
-  return invokeUserOperation(address, 'repost_message', {
-    messageId,
-    quoteContent: typeof quoteContent === 'string' ? quoteContent.trim() : '',
-  }, 'Could not repost');
+export async function createMessageRepost(address, messageId, quoteContent = '', mediaFiles = []) {
+  const cleanedQuote = typeof quoteContent === 'string' ? quoteContent.trim() : '';
+  const files = Array.from(mediaFiles || []);
+  const mediaObjectKeys = await uploadPostMedia(address, files);
+
+  try {
+    return await invokeUserOperation(address, 'repost_message', {
+      messageId,
+      quoteContent: cleanedQuote,
+      ...(mediaObjectKeys.length > 0 ? { mediaObjectKeys } : {}),
+    }, 'Could not repost');
+  } catch (error) {
+    if (mediaObjectKeys.length > 0) {
+      await invokeUserOperation(address, 'discard_post_media_uploads', {
+        objectKeys: mediaObjectKeys,
+      }, 'Could not discard unused quote photos').catch(() => null);
+    }
+    throw error;
+  }
 }
 
 /**
@@ -668,10 +682,11 @@ export async function getProfileMessages(address, targetAddress, category = 'pos
   };
 }
 
-export async function getMessageThread(address, messageId) {
+export async function getMessageThread(address, messageId, replySort = 'recent') {
   return invokeUserOperation(address, 'get_message_thread', {
     requestId: createRequestId(),
     messageId,
+    replySort: replySort === 'useful' ? 'useful' : 'recent',
   }, 'Unable to load this conversation');
 }
 

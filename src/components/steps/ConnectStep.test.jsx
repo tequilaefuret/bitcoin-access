@@ -229,6 +229,7 @@ test('offers Jade through direct USB and xpub-derived QR proof journeys', () => 
   fireEvent.click(screen.getByRole('button', { name: /don't have an account/i }));
 
   expect(screen.getByRole('heading', { name: /^jade$/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /use jade qr/i })).toHaveClass('bg-white', 'text-slate-700');
   fireEvent.click(screen.getByRole('button', { name: /connect jade by usb/i }));
   expect(connectJadeUsb).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button', { name: /use jade qr/i }));
@@ -251,6 +252,7 @@ test('hides Jade USB on mobile and directs the user to QR PIN Unlock', () => {
   });
 
   expect(screen.queryByRole('button', { name: /connect jade by usb/i })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /use jade qr/i })).toHaveClass('bg-black', 'text-white');
   expect(screen.getByText(/unlock jade with qr pin unlock/i)).toBeInTheDocument();
 });
 

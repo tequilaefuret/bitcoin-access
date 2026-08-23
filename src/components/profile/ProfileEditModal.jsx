@@ -47,7 +47,13 @@ const ProfileEditModal = ({ address, profile, onClose, onSaved, onBalanceUpdated
       URL.revokeObjectURL(preview);
       return;
     }
-    const dimensions = { width: bitmap.width, height: bitmap.height, pixels: bitmap.width * bitmap.height };
+    const dimensions = {
+      width: bitmap.width,
+      height: bitmap.height,
+      pixels: bitmap.width * bitmap.height,
+      bytes: file.size,
+      kib: Math.ceil(file.size / 1024),
+    };
     bitmap.close?.();
     if (kind === 'avatar') {
       setAvatarFile(file);
@@ -67,12 +73,12 @@ const ProfileEditModal = ({ address, profile, onClose, onSaved, onBalanceUpdated
       setAvatarFile(null);
       setAvatarPreview('');
       setAvatarUrl('');
-      setAvatarDimensions({ width: 0, height: 0, pixels: 0 });
+      setAvatarDimensions({ width: 0, height: 0, pixels: 0, bytes: 0, kib: 0 });
     } else {
       setCoverFile(null);
       setCoverPreview('');
       setCoverUrl('');
-      setCoverDimensions({ width: 0, height: 0, pixels: 0 });
+      setCoverDimensions({ width: 0, height: 0, pixels: 0, bytes: 0, kib: 0 });
     }
   };
 
@@ -95,8 +101,16 @@ const ProfileEditModal = ({ address, profile, onClose, onSaved, onBalanceUpdated
       });
       const mergedProfile = {
         ...savedProfile,
-        ...(avatarMedia ? { avatar_url: avatarMedia.public_url, avatar_pixels: avatarMedia.pixels } : {}),
-        ...(coverMedia ? { cover_url: coverMedia.public_url, cover_pixels: coverMedia.pixels } : {}),
+        ...(avatarMedia ? {
+          avatar_url: avatarMedia.public_url,
+          avatar_pixels: avatarMedia.pixels,
+          avatar_bytes: avatarMedia.bytes,
+        } : {}),
+        ...(coverMedia ? {
+          cover_url: coverMedia.public_url,
+          cover_pixels: coverMedia.pixels,
+          cover_bytes: coverMedia.bytes,
+        } : {}),
       };
       onBalanceUpdated?.(coverMedia?.user || avatarMedia?.user || null);
       onSaved(mergedProfile);
@@ -131,8 +145,8 @@ const ProfileEditModal = ({ address, profile, onClose, onSaved, onBalanceUpdated
           {avatarPreview && <button type="button" onClick={() => removeImage('avatar')} className="-mt-3 mb-4 text-xs font-semibold text-white/35 hover:text-red-300">Remove profile photo</button>}
 
           {(avatarDimensions || coverDimensions) && <div className="mb-5 grid gap-2 rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] p-4 text-xs text-white/55 sm:grid-cols-2">
-            {avatarDimensions && <p><strong className="text-white">Profile photo:</strong> {avatarDimensions.width} × {avatarDimensions.height} · {formatShellAmount(avatarDimensions.pixels)} shells locked</p>}
-            {coverDimensions && <p><strong className="text-white">Cover:</strong> {coverDimensions.width} × {coverDimensions.height} · {formatShellAmount(coverDimensions.pixels)} shells locked</p>}
+            {avatarDimensions && <p><strong className="text-white">Profile photo:</strong> {avatarDimensions.width} × {avatarDimensions.height} · {formatShellAmount(avatarDimensions.kib)} shells locked</p>}
+            {coverDimensions && <p><strong className="text-white">Cover:</strong> {coverDimensions.width} × {coverDimensions.height} · {formatShellAmount(coverDimensions.kib)} shells locked</p>}
           </div>}
 
           <div className="grid gap-4">
@@ -144,7 +158,7 @@ const ProfileEditModal = ({ address, profile, onClose, onSaved, onBalanceUpdated
             </div>
           </div>
 
-          <p className="mt-4 text-xs leading-5 text-white/30">JPG, PNG or WebP, 5 MB maximum. Each pixel locks 1 shell; replacing or removing an image adjusts the refundable amount.</p>
+          <p className="mt-4 text-xs leading-5 text-white/30">JPG, PNG or WebP, 5 MB maximum. Each started KB (1,024 bytes) locks 1 refundable shell; replacing or removing an image adjusts the amount.</p>
           {error && <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p>}
           <button type="submit" disabled={saving || !displayName.trim()} className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-amber-300 px-5 py-3.5 text-sm font-extrabold text-slate-950 transition hover:bg-amber-200 disabled:opacity-50">{saving ? <Loader className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? 'Saving profile...' : 'Save profile'}</button>
         </div>

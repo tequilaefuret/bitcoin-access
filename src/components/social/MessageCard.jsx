@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import {
   Ellipsis,
   Lightbulb,
@@ -10,6 +10,8 @@ import ExpandableText from './ExpandableText';
 import PostOptionsMenu from './PostOptionsMenu';
 import RepostComposer from './RepostComposer';
 import PostMediaGallery from './PostMediaGallery';
+import PostMediaViewer from './PostMediaViewer';
+import CommentComposer from './CommentComposer';
 import {
   countBillableCharacters,
   formatMessageTimestamp,
@@ -28,13 +30,11 @@ const MessageCard = ({
   onEditorialTopicPreference,
   onReportMessage,
   onOpenThread,
+  onLoadThread,
   isFollowed = false,
   showActions = true
 }) => {
   const [showCommentForm, setShowCommentForm] = useState(false);
-  const [commentText, setCommentText] = useState('');
-  const [commentLoading, setCommentLoading] = useState(false);
-  const [commentError, setCommentError] = useState('');
   const [localUsefulCount, setLocalUsefulCount] = useState(Number(message.useful_count) || 0);
   const [localUserMarkedUseful, setLocalUserMarkedUseful] = useState(
     Boolean(message.user_has_marked_useful)
@@ -54,11 +54,7 @@ const MessageCard = ({
   const [showEditorialMenu, setShowEditorialMenu] = useState(false);
   const [editorialAction, setEditorialAction] = useState('');
   const [editorialError, setEditorialError] = useState('');
-  const commentInputRef = useRef(null);
-
-  useEffect(() => {
-    if (showCommentForm) commentInputRef.current?.focus();
-  }, [showCommentForm]);
+  const [mediaViewer, setMediaViewer] = useState(null);
 
   const authorAddress = message.bitcoin_address || null;
   const isOwnMessage = authorAddress === currentAddress;
@@ -94,31 +90,23 @@ const MessageCard = ({
     }
   };
 
-  const submitComment = async () => {
-    if (!onComment || commentLoading || !commentText.trim()) return;
-
-    setCommentLoading(true);
-    setCommentError('');
-    try {
-      await onComment(message.id, commentText, () => {
-        setLocalCommentsCount((count) => count + 1);
-        setCommentText('');
-        setShowCommentForm(false);
-      });
-    } catch (error) {
-      setCommentError(error.message || 'The comment could not be published.');
-    } finally {
-      setCommentLoading(false);
-    }
+  const submitComment = async (content, mediaFiles) => {
+    if (!onComment) return false;
+    return onComment(message.id, content, mediaFiles, () => {
+      setLocalCommentsCount((count) => count + 1);
+      setShowCommentForm(false);
+    });
   };
 
-  const submitRepost = async (quoteContent = '') => {
-    if (!onRepost || repostLoading) return;
-    const isQuote = Boolean(quoteContent.trim());
+  const submitRepost = async (quoteContent = '', mediaFiles = []) => {
+    if (!onRepost || repostLoading) return null;
+    const isQuote = Boolean(quoteContent.trim() || mediaFiles.length > 0);
     setRepostLoading(true);
     setRepostError('');
     try {
-      const result = await onRepost(message.id, quoteContent);
+      const result = mediaFiles.length > 0
+        ? await onRepost(message.id, quoteContent, mediaFiles)
+        : await onRepost(message.id, quoteContent);
       if (result) {
         if (!isQuote) setLocalUserReposted(Boolean(result.active));
         setLocalRepostsCount(Number(result.reposts_count) || 0);
@@ -126,8 +114,10 @@ const MessageCard = ({
       setShowRepostOptions(false);
       setShowQuoteComposer(false);
       setQuoteText('');
+      return result;
     } catch (error) {
       setRepostError(error.message || 'The repost could not be saved.');
+      return null;
     } finally {
       setRepostLoading(false);
     }
@@ -200,7 +190,42 @@ const MessageCard = ({
     onOpenThread(message.id);
   };
 
+  const openMediaViewer = (targetMessage, photoIndex, photos) => {
+    setMediaViewer({ message: targetMessage, photoIndex, photos });
+  };
+
+  const handleViewerUseful = async (targetId) => {
+    if (!onUseful) return null;
+    const result = await onUseful(targetId);
+    if (targetId === message.id && result) {
+      setLocalUserMarkedUseful(Boolean(result.active));
+      setLocalUsefulCount(Number(result.useful_count) || 0);
+    }
+    return result;
+  };
+
+  const handleViewerComment = async (targetId, content, mediaFiles, onSuccess) => {
+    if (!onComment) return null;
+    return onComment(targetId, content, mediaFiles, (published) => {
+      if (targetId === message.id) setLocalCommentsCount((count) => count + 1);
+      onSuccess?.(published);
+    });
+  };
+
+  const handleViewerRepost = async (targetId, quoteContent, mediaFiles = []) => {
+    if (!onRepost) return null;
+    const result = mediaFiles.length > 0
+      ? await onRepost(targetId, quoteContent, mediaFiles)
+      : await onRepost(targetId, quoteContent);
+    if (targetId === message.id && result) {
+      if (!quoteContent.trim() && mediaFiles.length === 0) setLocalUserReposted(Boolean(result.active));
+      setLocalRepostsCount(Number(result.reposts_count) || 0);
+    }
+    return result;
+  };
+
   return (
+    <>
     <article onClick={openThreadFromCard} className={`rounded-[1.5rem] border border-white/[0.085] bg-[#11131a] p-4 shadow-[0_18px_50px_-38px_rgba(0,0,0,0.9)] transition hover:border-white/[0.14] sm:p-5 ${onOpenThread ? 'cursor-pointer' : ''}`}>
       <div className="mb-3 flex items-start justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
@@ -299,7 +324,10 @@ const MessageCard = ({
 
       {message.content && <ExpandableText text={message.content} />}
 
-      <PostMediaGallery media={message.media} />
+      <PostMediaGallery
+        media={message.media}
+        onOpen={(photoIndex, photos) => openMediaViewer(message, photoIndex, photos)}
+      />
 
       {message.repost_of && (
         originalMessage ? (
@@ -343,7 +371,11 @@ const MessageCard = ({
                 {originalMessage.content}
               </p>
             )}
-            <PostMediaGallery media={originalMessage.media} compact />
+            <PostMediaGallery
+              media={originalMessage.media}
+              compact
+              onOpen={(photoIndex, photos) => openMediaViewer(originalMessage, photoIndex, photos)}
+            />
             <p className="mt-2 text-[11px] text-white/25">
               {formatMessageTimestamp(originalMessage.created_at)}
             </p>
@@ -364,8 +396,8 @@ const MessageCard = ({
             title={isOwnMessage
               ? 'You cannot mark your own post as useful'
               : localUserMarkedUseful
-                ? 'Remove Useful (free)'
-                : 'Mark as useful (costs 1 shell)'}
+                ? 'Remove Useful'
+                : 'Mark as useful'}
             className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 transition ${
               localUserMarkedUseful
                 ? 'bg-amber-300/15 font-semibold text-amber-300'
@@ -407,7 +439,6 @@ const MessageCard = ({
 
       {usefulError && <p className="mt-2 text-xs text-red-600">{usefulError}</p>}
       {repostError && <p className="mt-2 text-xs text-red-600">{repostError}</p>}
-      {commentError && <p className="mt-2 text-xs text-red-600">{commentError}</p>}
       {feedbackError && <p className="mt-2 text-xs text-red-600">{feedbackError}</p>}
       {editorialError && <p className="mt-2 text-xs text-red-600">{editorialError}</p>}
 
@@ -425,49 +456,41 @@ const MessageCard = ({
             setShowQuoteComposer(true);
             setShowRepostOptions(false);
           }}
-          onCloseQuote={() => setShowQuoteComposer(false)}
+          onCloseQuote={() => {
+            setShowQuoteComposer(false);
+            setQuoteText('');
+          }}
         />
       )}
 
       {showCommentForm && (
         <div className="mt-4 border-t border-white/[0.08] pt-4" onClick={(event) => event.stopPropagation()}>
-            <div className="rounded-2xl border border-white/[0.08] bg-white/[0.035] p-3">
-              <textarea
-                ref={commentInputRef}
-                value={commentText}
-                onChange={(event) => setCommentText(event.target.value)}
-                placeholder="Write your comment..."
-                maxLength={1000}
-                className="w-full resize-none rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-white outline-none placeholder:text-white/25 focus:border-amber-300/50 focus:ring-2 focus:ring-amber-300/10"
-                rows={3}
-              />
-              <div className="mt-2 flex items-center justify-between gap-3">
-                <span className="text-xs text-white/30">{commentText.length} / 1000</span>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowCommentForm(false);
-                      setCommentText('');
-                    }}
-                    className="px-3 py-1 text-sm text-white/40 hover:text-white"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={submitComment}
-                    disabled={!commentText.trim() || commentLoading}
-                    className="rounded-full bg-amber-300 px-4 py-1.5 text-sm font-bold text-slate-950 hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {commentLoading ? 'Publishing...' : 'Publish'}
-                  </button>
-                </div>
-              </div>
-            </div>
+          <CommentComposer
+            onSubmit={submitComment}
+            onCancel={() => setShowCommentForm(false)}
+          />
         </div>
       )}
     </article>
+    {mediaViewer && (
+      <PostMediaViewer
+        message={mediaViewer.message}
+        photos={mediaViewer.photos}
+        initialIndex={mediaViewer.photoIndex}
+        currentAddress={currentAddress}
+        onClose={() => setMediaViewer(null)}
+        onUseful={handleViewerUseful}
+        onComment={handleViewerComment}
+        onRepost={handleViewerRepost}
+        onDelete={onDelete}
+        onNotInterested={onNotInterested}
+        onEditorialPreference={onEditorialPreference}
+        onEditorialTopicPreference={onEditorialTopicPreference}
+        onReportMessage={onReportMessage}
+        onLoadThread={onLoadThread}
+      />
+    )}
+    </>
   );
 };
 

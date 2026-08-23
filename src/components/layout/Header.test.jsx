@@ -34,3 +34,19 @@ test('shows the signed-in profile photo in the header button', () => {
   expect(screen.getByRole('img', { name: /screen-safe-user's profile/i }))
     .toHaveAttribute('src', 'https://media.example/avatar.webp');
 });
+
+test('uses an application grid icon for the Danaus apps menu', () => {
+  render(
+    <Header
+      connectedAddress="bc1qabcdefghijklmnopqrstuvwxyz123456"
+      displayName="screen-safe-user"
+      onDisconnect={jest.fn()}
+      onHome={jest.fn()}
+      onOpenGame={jest.fn()}
+      onOpenCanvas={jest.fn()}
+    />
+  );
+
+  const appsButton = screen.getByRole('button', { name: /open danaus apps/i });
+  expect(appsButton.querySelector('.lucide-layout-grid')).toBeInTheDocument();
+});

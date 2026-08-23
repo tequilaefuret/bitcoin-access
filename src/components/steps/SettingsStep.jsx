@@ -19,6 +19,8 @@ import { ListSkeleton } from '../ui/ContentSkeletons';
 
 const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 128;
+const SETTINGS_CARD_CLASS = 'relative overflow-hidden rounded-[1.75rem] border border-stone-200 bg-[radial-gradient(circle_at_100%_0%,rgba(252,211,77,0.30),transparent_34%),linear-gradient(115deg,rgba(255,255,255,0.82),rgba(247,245,239,1)_58%)] shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)]';
+const SETTINGS_ICON_CLASS = 'grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-300 text-slate-950 shadow-[0_8px_28px_rgba(252,211,77,0.24)]';
 
 const SettingsStep = ({
   address,
@@ -128,7 +130,7 @@ const SettingsStep = ({
       <button
         type="button"
         onClick={onBack}
-        className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-white/50 transition hover:text-white"
+        className="mb-5 inline-flex w-fit items-center gap-2 text-sm font-semibold text-white/50 transition hover:text-white"
       >
         <ArrowLeft className="h-4 w-4" />
         Back
@@ -143,9 +145,9 @@ const SettingsStep = ({
       </div>
 
       <div className="space-y-6">
-        <section className="overflow-hidden rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)]">
+        <section className={SETTINGS_CARD_CLASS}>
           <header className="flex items-start gap-4 border-b border-slate-100 px-5 py-5 sm:px-7">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-orange-500 text-white">
+            <span className={SETTINGS_ICON_CLASS}>
               <KeyRound className="h-5 w-5" />
             </span>
             <div>
@@ -229,7 +231,7 @@ const SettingsStep = ({
               <button
                 type="submit"
                 disabled={isSavingPassword || Boolean(passwordValidation)}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-orange-500 px-5 py-3.5 font-bold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-amber-300 px-5 py-3.5 font-extrabold text-slate-950 shadow-[0_12px_34px_rgba(245,158,11,0.22)] transition hover:-translate-y-0.5 hover:bg-amber-200 hover:shadow-[0_16px_40px_rgba(245,158,11,0.28)] disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50 disabled:shadow-none sm:w-auto"
               >
                 {isSavingPassword ? <Loader className="h-5 w-5 animate-spin" /> : <KeyRound className="h-5 w-5" />}
                 {isSavingPassword ? 'Updating...' : 'Update password'}
@@ -252,9 +254,9 @@ const SettingsStep = ({
           )}
         </section>
 
-        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
+        <section className={`${SETTINGS_CARD_CLASS} p-5 sm:p-7`}>
           <div className="flex items-start gap-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
+            <span className={SETTINGS_ICON_CLASS}>
               <Rss className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
@@ -275,9 +277,9 @@ const SettingsStep = ({
         </section>
 
         {onLoadEditorialPreferences && (
-          <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
+          <section className={`${SETTINGS_CARD_CLASS} p-5 sm:p-7`}>
             <div className="flex items-start gap-4">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
+              <span className={SETTINGS_ICON_CLASS}>
                 <ShieldCheck className="h-5 w-5" />
               </span>
               <div className="min-w-0 flex-1">
@@ -334,9 +336,9 @@ const SettingsStep = ({
           </section>
         )}
 
-        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
+        <section className={`${SETTINGS_CARD_CLASS} p-5 sm:p-7`}>
           <div className="flex items-start gap-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
+            <span className={SETTINGS_ICON_CLASS}>
               <MonitorCog className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
@@ -356,9 +358,9 @@ const SettingsStep = ({
           </div>
         </section>
 
-        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
+        <section className={`${SETTINGS_CARD_CLASS} p-5 sm:p-7`}>
           <div className="flex items-start gap-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white">
+            <span className={SETTINGS_ICON_CLASS}>
               <WalletCards className="h-5 w-5" />
             </span>
             <div className="min-w-0 flex-1">
@@ -378,9 +380,9 @@ const SettingsStep = ({
           </div>
         </section>
 
-        <section className="rounded-[1.75rem] border border-stone-200 bg-[#f7f5ef] p-5 shadow-[0_24px_70px_-38px_rgba(0,0,0,0.9)] sm:p-7">
+        <section className={`${SETTINGS_CARD_CLASS} p-5 sm:p-7`}>
           <div className="flex items-start gap-4">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-slate-950 text-white"><Eye className="h-5 w-5" /></span>
+            <span className={SETTINGS_ICON_CLASS}><Eye className="h-5 w-5" /></span>
             <div className="min-w-0 flex-1">
               <label htmlFor="balance-display" className="block text-lg font-black text-slate-950">Show balance</label>
               <p className="mt-1 text-sm leading-6 text-slate-500">Control which account balances are visible across Danaus.</p>

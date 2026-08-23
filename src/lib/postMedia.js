@@ -4,6 +4,10 @@ export const TARGET_POST_IMAGE_BYTES = 450 * 1024;
 export const MAX_POST_IMAGE_BYTES = 600 * 1024;
 export const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 
+export const postImageShellCost = (bytes) => (
+  Number.isFinite(bytes) && bytes > 0 ? Math.ceil(bytes / 1024) : 0
+);
+
 const ACCEPTED_SOURCE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const canvasToBlob = (canvas, type, quality) => new Promise((resolve, reject) => {
@@ -59,14 +63,14 @@ const outputName = (name, extension) => {
 
 export const formatImageBytes = (bytes) => {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (bytes < 1024 * 1024) return `${postImageShellCost(bytes)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
 export const validatePostImageSelection = (files, existingCount = 0) => {
   const selected = Array.from(files || []);
   if (selected.length + existingCount > MAX_POST_IMAGES) {
-    throw new Error(`You can add up to ${MAX_POST_IMAGES} photos to a post.`);
+    throw new Error(`You can add up to ${MAX_POST_IMAGES} photos to a message.`);
   }
   selected.forEach((file) => {
     if (!(file instanceof File) || !ACCEPTED_SOURCE_TYPES.has(file.type)) {

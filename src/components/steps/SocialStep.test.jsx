@@ -1,12 +1,8 @@
 import { useState } from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import SocialStep from './SocialStep';
 import Header from '../layout/Header';
 import { optimizePostImages } from '../../lib/postMedia';
-
-jest.mock('../../supabaseClient', () => ({
-  deleteMessage: jest.fn(),
-}));
 
 jest.mock('../../lib/postMedia', () => ({
   ...jest.requireActual('../../lib/postMedia'),
@@ -101,8 +97,9 @@ test('opens the personalized feed by default and keeps Latest and Followed avail
 test('shows the signed-in profile photo beside the post composer', async () => {
   renderSocialStep({ avatarUrl: 'https://media.example/avatar.webp' });
 
-  expect(await screen.findByRole('img', { name: /your profile/i }))
-    .toHaveAttribute('src', 'https://media.example/avatar.webp');
+  const profilePhoto = await screen.findByRole('img', { name: /your profile/i });
+  expect(profilePhoto).toHaveAttribute('src', 'https://media.example/avatar.webp');
+  expect(profilePhoto.closest('section').className).toContain('linear-gradient');
 });
 
 test('loads the next page from its opaque cursor and removes duplicate posts', async () => {
@@ -185,6 +182,36 @@ test('adds a newly published post locally without loading the feed again', async
   expect(await screen.findByText(/^your post is published$/i)).toBeInTheDocument();
 });
 
+test('opens the floating post composer, focuses it and closes it after publishing', async () => {
+  const publishedMessage = {
+    ...message,
+    id: 'floating-post',
+    bitcoin_address: 'bc1q-reader',
+    content: 'Published from the floating composer.',
+  };
+  const onPublishMessage = jest.fn().mockResolvedValue({
+    success: true,
+    message: publishedMessage,
+  });
+  renderSocialStep({ defaultFeed: 'recent', onPublishMessage });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /create a post/i }));
+
+  const dialog = screen.getByRole('dialog', { name: /new post/i });
+  const input = within(dialog).getByPlaceholderText(/share something new/i);
+  expect(input).toHaveFocus();
+  expect(within(dialog).getByRole('button', { name: /add photos/i })).toBeInTheDocument();
+  expect(within(dialog).getByText('0 / 1000')).toBeInTheDocument();
+
+  fireEvent.change(input, { target: { value: publishedMessage.content } });
+  fireEvent.click(within(dialog).getByRole('button', { name: /^publish$/i }));
+
+  await waitFor(() => expect(onPublishMessage).toHaveBeenCalledWith(publishedMessage.content));
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: /new post/i })).not.toBeInTheDocument());
+  expect(await screen.findByText(publishedMessage.content)).toBeInTheDocument();
+});
+
 test('optimizes and publishes a photo-only post', async () => {
   const selectedFile = new File(['original'], 'camera.jpg', { type: 'image/jpeg' });
   const optimizedFile = new File(['optimized'], 'camera.webp', { type: 'image/webp' });
@@ -230,6 +257,40 @@ test('optimizes and publishes a photo-only post', async () => {
     'src',
     'https://media.example/posts/photo.webp',
   );
+  expect(screen.queryByRole('link', { name: /open photo 1/i })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /open photo 1 of 1/i }));
+  expect(screen.getByRole('dialog', { name: /photo viewer/i })).toBeInTheDocument();
+  expect(screen.getByRole('img', { name: /attachment 1 enlarged/i })).toHaveAttribute(
+    'src',
+    'https://media.example/posts/photo.webp',
+  );
+  fireEvent.click(screen.getByRole('button', { name: /close photo viewer/i }));
+});
+
+test('deletes an own publication through the balance-aware callback', async () => {
+  const ownMessage = {
+    ...message,
+    id: 'own-message',
+    bitcoin_address: 'bc1q-reader',
+    content: 'My refundable post',
+  };
+  const onDeleteMessage = jest.fn().mockResolvedValue({
+    success: true,
+    new_balance: 1000,
+    refunded_text: 18,
+    refunded_media: 0,
+  });
+  jest.spyOn(window, 'confirm').mockReturnValue(true);
+  renderSocialStep({
+    onDeleteMessage,
+    onLoadMessages: jest.fn().mockResolvedValue([ownMessage]),
+  });
+
+  expect(await screen.findByText('My refundable post')).toBeInTheDocument();
+  fireEvent.click(screen.getByTitle('Delete'));
+
+  await waitFor(() => expect(onDeleteMessage).toHaveBeenCalledWith('own-message'));
+  await waitFor(() => expect(screen.queryByText('My refundable post')).not.toBeInTheDocument());
 });
 
 test('hydrates a locally added repost with the signed-in name and profile photo', async () => {
@@ -287,13 +348,55 @@ test('opens and focuses the comment composer without loading comments inline', a
   fireEvent.click(commentPublishButton);
 
   await waitFor(() => {
-    expect(onPublishMessage).toHaveBeenCalledWith(publishedComment.content, message.id);
+    expect(onPublishMessage).toHaveBeenCalledWith(publishedComment.content, message.id, []);
   });
   await waitFor(() => {
     expect(screen.queryByPlaceholderText(/write your comment/i)).not.toBeInTheDocument();
   });
   expect(screen.queryByRole('article', { name: publishedComment.content })).not.toBeInTheDocument();
   expect(onLoadMessages).toHaveBeenCalledTimes(1);
+});
+
+test('optimizes and publishes a photo-only comment', async () => {
+  const selectedFile = new File(['original-comment'], 'reply.png', { type: 'image/png' });
+  const optimizedFile = new File(['optimized-comment'], 'reply.webp', { type: 'image/webp' });
+  optimizePostImages.mockResolvedValue([{
+    id: 'comment-photo-1',
+    file: optimizedFile,
+    previewUrl: 'blob:optimized-comment-photo',
+    originalBytes: 2_000_000,
+    optimizedBytes: 180_000,
+  }]);
+  const onPublishMessage = jest.fn().mockResolvedValue({
+    success: true,
+    message: {
+      ...message,
+      id: 'photo-comment',
+      bitcoin_address: 'bc1q-reader',
+      content: '',
+      parent_id: message.id,
+      media: [{ url: 'https://media.example/posts/comment.webp' }],
+    },
+  });
+  renderSocialStep({ onPublishMessage });
+
+  expect(await screen.findByText(message.content)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /write a comment/i }));
+  const composer = screen.getByRole('form', { name: /comment composer/i });
+  const fileInput = composer.querySelector('input[type="file"]');
+  fireEvent.change(fileInput, { target: { files: [selectedFile] } });
+
+  expect(await within(composer).findByRole('img', { name: /selected comment attachment 1/i }))
+    .toHaveAttribute('src', 'blob:optimized-comment-photo');
+  expect(optimizePostImages).toHaveBeenCalledWith([selectedFile], 0);
+
+  fireEvent.click(within(composer).getByRole('button', { name: /^publish$/i }));
+  await waitFor(() => {
+    expect(onPublishMessage).toHaveBeenCalledWith('', message.id, [optimizedFile]);
+  });
+  await waitFor(() => {
+    expect(screen.queryByRole('form', { name: /comment composer/i })).not.toBeInTheDocument();
+  });
 });
 
 test('temporarily hides a recommendation and lets the reader undo it', async () => {

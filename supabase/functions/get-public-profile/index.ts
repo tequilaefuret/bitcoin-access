@@ -89,7 +89,7 @@ serve(async (req) => {
     ] = await Promise.all([
       supabase
         .from('user_profiles')
-        .select('display_name, bio, location, website_url, avatar_url, cover_url, avatar_pixels, cover_pixels, created_at, updated_at')
+        .select('display_name, bio, location, website_url, avatar_url, cover_url, avatar_pixels, cover_pixels, avatar_bytes, cover_bytes, created_at, updated_at')
         .eq('bitcoin_address', address)
         .maybeSingle(),
       supabase
@@ -130,6 +130,8 @@ serve(async (req) => {
         cover_url: profile.cover_url,
         avatar_pixels: profile.avatar_pixels,
         cover_pixels: profile.cover_pixels,
+        avatar_bytes: profile.avatar_bytes,
+        cover_bytes: profile.cover_bytes,
         followers_count: followersCount || 0,
         following_count: followingCount || 0,
         profile_counts: {

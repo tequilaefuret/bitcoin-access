@@ -78,6 +78,7 @@ const ProfileStep = ({
   onBalanceUpdated,
   onPublishMessage,
   onLoadComments,
+  onLoadThread,
   onToggleUseful,
   onRepostMessage,
   onOpenThread,
@@ -271,8 +272,8 @@ const ProfileStep = ({
     return result;
   };
 
-  const handleComment = async (messageId, commentText, onSuccess) => {
-    const result = await onPublishMessage?.(commentText.trim(), messageId);
+  const handleComment = async (messageId, commentText, mediaFiles = [], onSuccess) => {
+    const result = await onPublishMessage?.(commentText.trim(), messageId, mediaFiles);
     if (result && result.success !== false) onSuccess?.(result.message || null);
     return result;
   };
@@ -495,7 +496,7 @@ const ProfileStep = ({
                   <p className="mt-2 text-sm text-white/30">This section will fill up as the conversation grows.</p>
                 </div>
               ) : currentMessages.map((message) => (
-                <MessageCard key={message.id} message={message} currentAddress={currentAddress} onUserClick={onOpenProfile} onUseful={onToggleUseful} onComment={handleComment} onLoadComments={onLoadComments} onRepost={onRepostMessage} onOpenThread={onOpenThread} onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null} onEditorialTopicPreference={onEditorialTopicPreference ? handleEditorialTopicPreference : null} onReportMessage={onReportMessage ? handleReportMessage : null} showActions />
+                <MessageCard key={message.id} message={message} currentAddress={currentAddress} onUserClick={onOpenProfile} onUseful={onToggleUseful} onComment={handleComment} onLoadComments={onLoadComments} onLoadThread={onLoadThread} onRepost={onRepostMessage} onOpenThread={onOpenThread} onEditorialPreference={onEditorialPreference ? handleEditorialPreference : null} onEditorialTopicPreference={onEditorialTopicPreference ? handleEditorialTopicPreference : null} onReportMessage={onReportMessage ? handleReportMessage : null} showActions />
               ))}
               {loadingMore && currentMessages.length > 0 && <FeedSkeleton count={2} compact className="mt-4" />}
               <div className="flex items-center justify-center pt-2">

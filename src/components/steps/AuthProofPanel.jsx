@@ -241,7 +241,6 @@ const AuthProofPanel = ({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="text-sm font-bold text-slate-950">Trezor</h4>
-                      <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-700">Beta</span>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
                       {usesTrezorSuite
@@ -291,7 +290,6 @@ const AuthProofPanel = ({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <h4 className="text-sm font-bold text-slate-950">Ledger</h4>
-                      <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-orange-700">Beta</span>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
                       {usesLedgerWallet
@@ -359,7 +357,16 @@ const AuthProofPanel = ({
                       {jadeBusy ? 'Connecting Jade...' : 'Connect Jade by USB'}
                     </button>
                   )}
-                  <button type="button" onClick={() => selectHardwareMethod('jade-qr')} disabled={jadeBusy || trezorBusy || ledgerBusy} className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+                  <button
+                    type="button"
+                    onClick={() => selectHardwareMethod('jade-qr')}
+                    disabled={jadeBusy || trezorBusy || ledgerBusy}
+                    className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                      mobileDevice
+                        ? 'border-black bg-black text-white hover:bg-slate-900'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
                     <QrCode className="h-4 w-4" />
                     Use Jade QR
                   </button>

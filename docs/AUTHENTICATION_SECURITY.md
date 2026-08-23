@@ -258,8 +258,8 @@ simple repost when their content is empty, otherwise as a quoted post.
 
 A new simple repost costs one satoshi-equivalent shell per character in the
 original post. A quoted repost costs the original post characters plus the
-characters in the added quotation. Removing an existing simple repost does not
-refund its publication cost.
+characters in the added quotation. Original photo bytes are never billed again.
+Removing a simple or quoted repost refunds all of those character shells.
 
 ## Hardware and multisig PSBT journey
 

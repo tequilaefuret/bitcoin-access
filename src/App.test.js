@@ -32,7 +32,7 @@ test('uses Useful as the only evaluation action', async () => {
   expect(screen.queryByText(/dislike/i)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: /useful 3/i })).toHaveAttribute(
     'title',
-    'Mark as useful (costs 1 shell)'
+    'Mark as useful'
   );
 
   fireEvent.click(screen.getByRole('button', { name: /useful 3/i }));
@@ -41,7 +41,7 @@ test('uses Useful as the only evaluation action', async () => {
   await waitFor(() => {
     expect(screen.getByRole('button', { name: /useful 4/i })).toHaveAttribute(
       'title',
-      'Remove Useful (free)'
+      'Remove Useful'
     );
   });
 });

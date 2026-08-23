@@ -5,9 +5,9 @@ import {
   Flame,
   Gamepad2,
   Grid3X3,
+  LayoutGrid,
   LogOut,
   MessageSquareText,
-  Plus,
   Settings as SettingsIcon,
   Sparkles,
   UserRound,
@@ -122,7 +122,7 @@ const Header = ({
             {(onOpenGame || onOpenCanvas) && (
               <div className="relative">
                 <button type="button" onClick={() => { setShowCreateMenu((visible) => !visible); setShowProfileMenu(false); }} aria-label="Open Danaus apps" aria-expanded={showCreateMenu} className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/[0.045] text-white/55 transition hover:border-amber-300/30 hover:bg-amber-300/10 hover:text-amber-300">
-                  <Plus className={`h-5 w-5 transition-transform ${showCreateMenu ? 'rotate-45' : ''}`} />
+                  <LayoutGrid className={`h-5 w-5 transition ${showCreateMenu ? 'text-amber-300' : ''}`} />
                 </button>
                 {showCreateMenu && (
                   <div className="absolute right-0 mt-2 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[#15171e] p-1.5 text-white shadow-[0_24px_70px_rgba(0,0,0,0.5)]">

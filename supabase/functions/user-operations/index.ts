@@ -171,11 +171,20 @@ async function setEditorialAuthorPreference(
     throw error;
   }
 
+  const { data: balance, error: balanceError } = await supabase
+    .from('user_balances')
+    .select('shells_balance, shells_spent_total')
+    .eq('bitcoin_address', readerAddress)
+    .single();
+  if (balanceError) throw balanceError;
+
   return {
     success: true,
     target_address: targetAddress,
     preference: data?.[0]?.preference || preference,
     active: Boolean(data?.[0]?.active),
+    new_balance: Number(balance?.shells_balance) || 0,
+    shells_spent_total: Number(balance?.shells_spent_total) || 0,
   };
 }
 
@@ -301,7 +310,7 @@ async function createPostMediaUploads(
     throw new OperationError('Le stockage des photos n’est pas encore configuré', 503);
   }
   if (!Array.isArray(requestedFiles) || requestedFiles.length < 1 || requestedFiles.length > MAX_POST_MEDIA_ITEMS) {
-    throw new OperationError('Une publication accepte entre une et trois photos');
+    throw new OperationError('Un message accepte entre une et trois photos');
   }
 
   const normalized = requestedFiles.map((file) => ({
@@ -360,12 +369,17 @@ async function discardPostMediaUploads(address: string, objectKeys: unknown) {
 }
 
 async function validatePostMediaUploads(address: string, objectKeys: unknown) {
-  const keys = Array.isArray(objectKeys)
-    ? objectKeys.filter((key): key is string => typeof key === 'string')
-    : [];
+  if (objectKeys !== undefined && objectKeys !== null && !Array.isArray(objectKeys)) {
+    throw new OperationError('Les photos du message sont invalides');
+  }
+  const rawKeys = Array.isArray(objectKeys) ? objectKeys : [];
+  if (rawKeys.some((key) => typeof key !== 'string')) {
+    throw new OperationError('Les photos du message sont invalides');
+  }
+  const keys = rawKeys as string[];
   if (keys.length === 0) return [];
   if (keys.length > MAX_POST_MEDIA_ITEMS || new Set(keys).size !== keys.length) {
-    throw new OperationError('Les photos de la publication sont invalides');
+    throw new OperationError('Les photos du message sont invalides');
   }
 
   const prefix = `${await postMediaPrefix(address)}/`;
@@ -469,9 +483,10 @@ async function confirmProfileMediaUpload(address: string, mediaKind: string, obj
   }
 
   const publicUrl = `${R2_PUBLIC_BASE_URL}/${objectKey}`;
-  const { data, error } = await supabase.rpc('set_profile_media_lock', {
+  const { data, error } = await supabase.rpc('set_profile_media_size_lock', {
     p_bitcoin_address: address,
     p_media_kind: mediaKind,
+    p_bytes: size,
     p_pixels: pixels,
     p_public_url: publicUrl,
     p_object_key: objectKey,
@@ -491,6 +506,9 @@ async function confirmProfileMediaUpload(address: string, mediaKind: string, obj
     width,
     height,
     pixels,
+    bytes: size,
+    size_kib: Math.ceil(size / 1024),
+    locked_kib: Number(locked?.locked_kib) || 0,
     lock_delta: Number(locked?.lock_delta) || 0,
     user: {
       shells_balance: Number(locked?.new_balance) || 0,
@@ -545,9 +563,10 @@ function readImageDimensions(bytes: Uint8Array, contentType: string) {
 
 async function removeProfileMedia(address: string, mediaKind: string) {
   if (!['avatar', 'cover'].includes(mediaKind)) throw new OperationError('Type de média invalide');
-  const { data, error } = await supabase.rpc('set_profile_media_lock', {
+  const { data, error } = await supabase.rpc('set_profile_media_size_lock', {
     p_bitcoin_address: address,
     p_media_kind: mediaKind,
+    p_bytes: 0,
     p_pixels: 0,
     p_public_url: null,
     p_object_key: null,
@@ -561,6 +580,9 @@ async function removeProfileMedia(address: string, mediaKind: string) {
     success: true,
     public_url: null,
     pixels: 0,
+    bytes: 0,
+    size_kib: 0,
+    locked_kib: 0,
     lock_delta: Number(unlocked?.lock_delta) || 0,
     user: {
       shells_balance: Number(unlocked?.new_balance) || 0,
@@ -698,9 +720,6 @@ async function publishMessage(
 
   try {
     if (parentId) await assertEditorialInteractionAllowed(address, parentId);
-    if (parentId && Array.isArray(mediaObjectKeys) && mediaObjectKeys.length > 0) {
-      throw new OperationError('Les photos sont réservées aux publications');
-    }
     const media = await validatePostMediaUploads(address, mediaObjectKeys);
 
     const { data, error } = await supabase.rpc('publish_message_with_media_cost_idempotent', {
@@ -719,8 +738,8 @@ async function publishMessage(
         'Le message ne peut pas être vide',
         'La publication ne peut pas être vide',
         'Le message ne peut pas dépasser 1000 caractères',
-        'Les photos sont réservées aux publications',
         'Médias de publication invalides',
+        'Médias du message invalides',
         'Identifiant de requête déjà utilisé avec des paramètres différents',
       ];
       const expected = expectedMessages.find((message) => error.message?.includes(message));
@@ -761,42 +780,90 @@ async function publishMessage(
   }
 }
 
-async function repostMessage(address: string, messageId: string, quoteContent?: string | null) {
-  await assertEditorialInteractionAllowed(address, messageId);
+async function repostMessage(
+  address: string,
+  messageId: string,
+  quoteContent?: string | null,
+  mediaObjectKeys: unknown = [],
+) {
+  const cleanedQuote = (quoteContent || '').trim();
+  const media = await validatePostMediaUploads(address, mediaObjectKeys);
+  let isRemovingExistingSimpleRepost = false;
+  if (!cleanedQuote && media.length === 0) {
+    const { data: target } = await supabase.from('messages')
+      .select('id, repost_of').eq('id', messageId).maybeSingle();
+    const originalId = target?.repost_of || target?.id;
+    if (originalId) {
+      const { data: existing } = await supabase.from('messages').select('id')
+        .eq('bitcoin_address', address)
+        .eq('repost_of', originalId)
+        .eq('repost_kind', 'simple')
+        .is('deleted_at', null)
+        .limit(1)
+        .maybeSingle();
+      isRemovingExistingSimpleRepost = Boolean(existing);
+    }
+  }
+  try {
+    if (!isRemovingExistingSimpleRepost) await assertEditorialInteractionAllowed(address, messageId);
 
-  const { data, error } = await supabase.rpc('toggle_or_create_message_repost', {
-    p_bitcoin_address: address,
-    p_target_message_id: messageId,
-    p_quote_content: quoteContent || null,
-  });
+    const { data, error } = await supabase.rpc('toggle_or_create_message_repost', {
+      p_bitcoin_address: address,
+      p_target_message_id: messageId,
+      p_quote_content: cleanedQuote || null,
+      p_media: media,
+    });
 
-  if (error) {
-    const expectedMessages = [
-      'Publication introuvable',
-      'Publication originale introuvable',
-      'Vous ne pouvez pas reposter votre propre publication',
-      'La citation ne peut pas dépasser 1000 caractères',
-      'Solde insuffisant',
-    ];
-    const expected = expectedMessages.find((message) => error.message?.includes(message));
-    if (expected) throw new OperationError(expected, expected.includes('introuvable') ? 404 : 400);
+    if (error) {
+      const expectedMessages = [
+        'Publication introuvable',
+        'Publication originale introuvable',
+        'Vous ne pouvez pas reposter votre propre publication',
+        'La citation ne peut pas dépasser 1000 caractères',
+        'Médias de citation invalides',
+        'Taille de photo invalide',
+        'INSUFFICIENT_SHELLS',
+        'Solde insuffisant',
+      ];
+      const expected = expectedMessages.find((message) => error.message?.includes(message));
+      if (expected) {
+        throw new OperationError(
+          expected,
+          expected.includes('INSUFFICIENT_SHELLS') || expected.includes('Solde insuffisant')
+            ? 402
+            : expected.includes('introuvable')
+              ? 404
+              : 400,
+        );
+      }
+      throw error;
+    }
+
+    const result = data?.[0];
+    if (!result) throw new Error('Le repost n’a pas pu être enregistré');
+    return {
+      success: true,
+      active: Boolean(result.active),
+      reposts_count: Number(result.repost_count) || 0,
+      new_balance: Number(result.new_balance) || 0,
+      shells_spent_total: Number(result.shells_spent_total) || 0,
+      message: result.created_message || null,
+    };
+  } catch (error) {
+    if (media.length > 0) await deletePostMediaObjects(media.map((item) => item.object_key));
     throw error;
   }
-
-  const result = data?.[0];
-  if (!result) throw new Error('Le repost n’a pas pu être enregistré');
-  return {
-    success: true,
-    active: Boolean(result.active),
-    reposts_count: Number(result.repost_count) || 0,
-    new_balance: Number(result.new_balance) || 0,
-    shells_spent_total: Number(result.shells_spent_total) || 0,
-    message: result.created_message || null,
-  };
 }
 
 async function toggleMessageUseful(address: string, messageId: string) {
-  await assertEditorialInteractionAllowed(address, messageId);
+  const { data: existingVote, error: existingVoteError } = await supabase
+    .from('message_useful_votes')
+    .select('message_id')
+    .eq('message_id', messageId)
+    .eq('bitcoin_address', address)
+    .maybeSingle();
+  if (existingVoteError) throw existingVoteError;
+  if (!existingVote) await assertEditorialInteractionAllowed(address, messageId);
 
   const { data, error } = await supabase.rpc('toggle_message_useful_with_cost', {
     p_message_id: messageId,
@@ -1332,7 +1399,12 @@ async function getProfileMessages(
   };
 }
 
-async function getMessageThread(viewerAddress: string, messageId: string, requestId: string) {
+async function getMessageThread(
+  viewerAddress: string,
+  messageId: string,
+  requestId: string,
+  replySort: 'recent' | 'useful' = 'recent',
+) {
   const { data: selected, error: selectedError } = await supabase.from('messages')
     .select(SOCIAL_MESSAGE_SELECT).eq('id', messageId).is('deleted_at', null).maybeSingle();
   if (selectedError) throw selectedError;
@@ -1349,9 +1421,18 @@ async function getMessageThread(viewerAddress: string, messageId: string, reques
     depth += 1;
   }
 
-  const { data: replies, error: repliesError } = await supabase.from('messages')
-    .select(SOCIAL_MESSAGE_SELECT).eq('parent_id', root.id).is('deleted_at', null)
-    .order('created_at', { ascending: true }).limit(50);
+  let repliesQuery = supabase.from('messages')
+    .select(SOCIAL_MESSAGE_SELECT).eq('parent_id', root.id).is('deleted_at', null);
+  if (replySort === 'useful') {
+    repliesQuery = repliesQuery
+      .order('useful_count', { ascending: false })
+      .order('created_at', { ascending: false });
+  } else {
+    repliesQuery = repliesQuery.order('created_at', { ascending: false });
+  }
+  const { data: replies, error: repliesError } = await repliesQuery
+    .order('id', { ascending: false })
+    .limit(50);
   if (repliesError) throw repliesError;
   const rawThread = [root, ...(replies || [])];
   if (!rawThread.some((message: any) => message.id === selected.id)) rawThread.push(selected);
@@ -1363,7 +1444,7 @@ async function getMessageThread(viewerAddress: string, messageId: string, reques
     p_request_id: requestId,
     p_bitcoin_address: viewerAddress,
     p_message_ids: snapshot.map((message: any) => message.id),
-    p_request_context: { message_id: messageId, view: 'thread' },
+    p_request_context: { message_id: messageId, view: 'thread', reply_sort: replySort },
     p_messages_snapshot: snapshot,
   });
   if (chargeError) {
@@ -1372,11 +1453,21 @@ async function getMessageThread(viewerAddress: string, messageId: string, reques
   }
   const charged = chargedRows?.[0];
   const paid = Array.isArray(charged?.messages_snapshot) ? charged.messages_snapshot : snapshot;
+  const comments = paid.filter((message: any) => message.id !== root.id);
+  comments.sort((first: any, second: any) => {
+    if (replySort === 'useful') {
+      const usefulDifference = (Number(second.useful_count) || 0) - (Number(first.useful_count) || 0);
+      if (usefulDifference !== 0) return usefulDifference;
+    }
+    const dateDifference = new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+    return dateDifference !== 0 ? dateDifference : String(second.id).localeCompare(String(first.id));
+  });
   return {
     success: true,
     root: paid.find((message: any) => message.id === root.id) || paid[0],
-    comments: paid.filter((message: any) => message.id !== root.id),
+    comments,
     focus_id: messageId,
+    reply_sort: replySort,
     new_balance: Number(charged?.new_balance) || 0,
     cost: Number(charged?.cost) || 0,
   };
@@ -1413,7 +1504,7 @@ async function getHistory(address: string, limit: number = 20, offset: number = 
     ] = await Promise.all([
       supabase
         .from('messages')
-        .select('id, content, char_count, cost_shells, created_at, parent_id, repost_of, repost_kind')
+        .select('id, content, char_count, cost_shells, media, created_at, parent_id, repost_of, repost_kind')
         .eq('bitcoin_address', address)
         .order('created_at', { ascending: false })
         .limit(sourceLimit),
@@ -1431,7 +1522,7 @@ async function getHistory(address: string, limit: number = 20, offset: number = 
         .limit(sourceLimit),
       supabase
         .from('transactions')
-        .select('id, amount, type, game_score, created_at')
+        .select('id, amount, type, game_score, shell_lock_kind, shell_lock_key, created_at')
         .eq('bitcoin_address', address)
         .in('type', [
           'game',
@@ -1443,6 +1534,10 @@ async function getHistory(address: string, limit: number = 20, offset: number = 
           'profile_avatar_unlock',
           'profile_cover_lock',
           'profile_cover_unlock',
+          'message_text_unlock',
+          'message_media_unlock',
+          'shell_lock',
+          'shell_unlock',
         ])
         .order('created_at', { ascending: false })
         .limit(sourceLimit)
@@ -1462,6 +1557,14 @@ async function getHistory(address: string, limit: number = 20, offset: number = 
       const isComment = Boolean(message.parent_id);
       const isRepost = Boolean(message.repost_of);
       const isQuote = message.repost_kind === 'quote';
+      const mediaShells = Array.isArray(message.media)
+        ? message.media.reduce((total: number, item: any) => {
+          const bytes = Number(item?.bytes || 0);
+          return total + (bytes > 0 ? Math.ceil(bytes / 1024) : 0);
+        }, 0)
+        : 0;
+      const detailParts = [`${message.char_count || 0} characters`];
+      if (mediaShells > 0) detailParts.push(`${mediaShells} photo shells`);
 
       history.push({
         id: `message:${message.id}`,
@@ -1474,7 +1577,7 @@ async function getHistory(address: string, limit: number = 20, offset: number = 
         description: isRepost && !isQuote
           ? 'Reposted a publication'
           : summarizeContent(message.content),
-        detail: `${message.char_count || 0} characters`
+        detail: detailParts.join(' + ')
       });
     });
 
@@ -1534,19 +1637,29 @@ async function getHistory(address: string, limit: number = 20, offset: number = 
     });
 
     (actions || []).forEach((action: any) => {
+      if (action.type === 'shell_lock'
+        && ['message_text', 'message_media'].includes(action.shell_lock_kind)) return;
       const signedAmount = Number(action.amount || 0);
       const amount = toShellAmount(signedAmount);
       if (!Number.isFinite(signedAmount) || amount === 0) return;
 
-      const actionType = action.type === 'game'
+      const genericLockType = action.type === 'shell_lock' || action.type === 'shell_unlock'
+        ? action.shell_lock_kind === 'profile_media'
+          ? `profile_${action.shell_lock_key || 'media'}_${action.type === 'shell_lock' ? 'lock' : 'unlock'}`
+          : `${action.shell_lock_kind || 'shell'}_${action.type === 'shell_lock' ? 'lock' : 'unlock'}`
+        : null;
+      const actionType = genericLockType || (action.type === 'game'
         ? 'game'
         : action.type === 'canvas'
           ? 'canvas'
           : action.type === 'social_useful'
             ? 'useful'
+            : action.type === 'message_text_unlock' || action.type === 'message_media_unlock'
+              ? action.type
             : action.type.startsWith('profile_')
               ? action.type
-              : 'read_messages';
+              : 'read_messages'
+      );
 
       const labels: Record<string, { title: string; description: string; detail: string }> = {
         game: {
@@ -1595,15 +1708,42 @@ async function getHistory(address: string, limit: number = 20, offset: number = 
           title: 'Cover photo',
           description: 'Cover photo removed',
           detail: `${Math.round(amount)} shells unlocked`
+        },
+        message_text_unlock: {
+          title: 'Publication deleted',
+          description: 'Text storage released',
+          detail: `${Math.round(amount)} shells unlocked`
+        },
+        message_media_unlock: {
+          title: 'Publication deleted',
+          description: 'Photo storage released',
+          detail: `${Math.round(amount)} shells unlocked`
         }
       };
 
-      const label = labels[actionType];
+      const isGenericUnlock = action.type === 'shell_unlock';
+      const genericSubject: Record<string, string> = {
+        useful: 'Useful',
+        reaction: 'Reaction',
+        follow: 'Follow',
+        profile_media: action.shell_lock_key === 'avatar' ? 'Profile photo' : 'Cover photo',
+        message_text: 'Publication text',
+        message_media: 'Message photos',
+      };
+      const label = labels[actionType] || {
+        title: genericSubject[action.shell_lock_kind] || 'Refundable action',
+        description: isGenericUnlock ? 'Action reversed' : 'Action activated',
+        detail: `${Math.round(amount)} shells ${isGenericUnlock ? 'unlocked' : 'locked'}`,
+      };
 
       history.push({
         id: `${actionType}:${action.id}`,
         type: actionType,
-        amount: actionType.startsWith('profile_') ? signedAmount : -amount,
+        amount: action.type === 'shell_lock' || action.type === 'shell_unlock'
+          ? signedAmount
+          : actionType.startsWith('profile_') || actionType.startsWith('message_')
+          ? signedAmount
+          : -amount,
         created_at: action.created_at,
         title: label.title,
         description: label.description,
@@ -1888,6 +2028,7 @@ serve(async (req) => {
       topicId,
       stance,
       sortMode,
+      replySort,
       cursor,
       requestId,
       targetAddress,
@@ -2114,7 +2255,7 @@ serve(async (req) => {
 
       case 'repost_message':
         if (!messageId) throw new OperationError('Paramètre "messageId" manquant');
-        result = await repostMessage(address, messageId, quoteContent);
+        result = await repostMessage(address, messageId, quoteContent, mediaObjectKeys);
         break;
 
       case 'get_opinion_topics':
@@ -2142,7 +2283,8 @@ serve(async (req) => {
       case 'get_message_thread':
         if (!messageId) throw new OperationError('Paramètre "messageId" manquant');
         if (typeof requestId !== 'string' || !UUID_PATTERN.test(requestId)) throw new OperationError('Paramètre "requestId" invalide');
-        result = await getMessageThread(address, messageId, requestId);
+        if (replySort !== undefined && !['recent', 'useful'].includes(replySort)) throw new OperationError('Mode de tri des réponses invalide');
+        result = await getMessageThread(address, messageId, requestId, replySort || 'recent');
         break;
       
       case 'get_stats':

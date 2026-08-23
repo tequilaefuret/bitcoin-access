@@ -6,7 +6,9 @@ import {
   verifyAndRegister,
   syncUserBalance,
   publishMessage,
+  deleteMessage as deletePublishedMessage,
   getMessages,
+  getMessageThread as fetchMessageThread,
   getSpendingHistory,
   deductGameCost,
   getCanvasPixels,
@@ -243,6 +245,15 @@ export const useBitcoinBalance = () => {
     }
   }, [address, beginActivity, endActivity]);
 
+  const loadMessageThread = useCallback(async (messageId, replySort = 'recent') => {
+    if (!address) throw new Error('Bitcoin address is not set');
+    const result = await fetchMessageThread(address, messageId, replySort);
+    if (result?.new_balance !== null && result?.new_balance !== undefined) {
+      setShellsAvailable(Number(result.new_balance));
+    }
+    return result;
+  }, [address]);
+
   // ============================================
   // CANVAS - Charger tous les pixels
   // ============================================
@@ -316,11 +327,22 @@ export const useBitcoinBalance = () => {
     return result;
   }, [address]);
 
-  const repostMessage = useCallback(async (messageId, quoteContent = '') => {
+  const repostMessage = useCallback(async (messageId, quoteContent = '', mediaFiles = []) => {
     if (!address) throw new Error('Bitcoin address is not set');
-    const result = await createMessageRepost(address, messageId, quoteContent);
+    const result = await createMessageRepost(address, messageId, quoteContent, mediaFiles);
     if (result.new_balance !== null && result.new_balance !== undefined) {
       setShellsAvailable(Number(result.new_balance));
+    }
+    return result;
+  }, [address]);
+
+  const deleteMessage = useCallback(async (messageId) => {
+    if (!address) throw new Error('Bitcoin address is not set');
+    const result = await deletePublishedMessage(address, messageId);
+    if (result?.new_balance !== null && result?.new_balance !== undefined) {
+      setShellsAvailable(Number(result.new_balance));
+    } else if (result?.user?.shells_balance !== undefined) {
+      setShellsAvailable(Number(result.user.shells_balance));
     }
     return result;
   }, [address]);
@@ -332,7 +354,11 @@ export const useBitcoinBalance = () => {
 
   const updateEditorialAuthorPreference = useCallback(async (targetAddress, preference) => {
     if (!address) throw new Error('Bitcoin address is not set');
-    return persistEditorialAuthorPreference(address, targetAddress, preference);
+    const result = await persistEditorialAuthorPreference(address, targetAddress, preference);
+    if (result?.new_balance !== null && result?.new_balance !== undefined) {
+      setShellsAvailable(Number(result.new_balance));
+    }
+    return result;
   }, [address]);
 
   const updateEditorialTopicPreference = useCallback(async (messageId, preference = 'reduce') => {
@@ -400,8 +426,10 @@ export const useBitcoinBalance = () => {
     submitCanvasPixels,
     loadUserPixelCount,
     loadComments,
+    loadMessageThread,
     toggleUseful,
     repostMessage,
+    deleteMessage,
     hideForYouMessage,
     updateEditorialAuthorPreference,
     updateEditorialTopicPreference,

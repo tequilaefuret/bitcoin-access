@@ -32,6 +32,16 @@ const eventStyle = {
   profile_avatar_unlock: 'border-fuchsia-300/15 bg-fuchsia-300/[0.05]',
   profile_cover_lock: 'border-indigo-300/15 bg-indigo-300/[0.05]',
   profile_cover_unlock: 'border-indigo-300/15 bg-indigo-300/[0.05]',
+  message_text_unlock: 'border-emerald-300/15 bg-emerald-300/[0.05]',
+  message_media_unlock: 'border-cyan-300/15 bg-cyan-300/[0.05]',
+  message_text_lock: 'border-orange-300/15 bg-orange-300/[0.055]',
+  message_media_lock: 'border-cyan-300/15 bg-cyan-300/[0.05]',
+  useful_lock: 'border-yellow-300/15 bg-yellow-300/[0.05]',
+  useful_unlock: 'border-emerald-300/15 bg-emerald-300/[0.05]',
+  reaction_lock: 'border-sky-300/15 bg-sky-300/[0.05]',
+  reaction_unlock: 'border-emerald-300/15 bg-emerald-300/[0.05]',
+  follow_lock: 'border-fuchsia-300/15 bg-fuchsia-300/[0.05]',
+  follow_unlock: 'border-emerald-300/15 bg-emerald-300/[0.05]',
 };
 
 export const groupConsecutiveHistory = (history) => history.reduce((groups, event) => {
@@ -79,6 +89,16 @@ const describeGroup = (group) => {
     case 'profile_avatar_unlock': return `${amount} shells unlocked from the profile photo`;
     case 'profile_cover_lock': return `${amount} shells locked for the cover photo`;
     case 'profile_cover_unlock': return `${amount} shells unlocked from the cover photo`;
+    case 'message_text_unlock': return `${amount} text shells unlocked from a deleted message`;
+    case 'message_media_unlock': return `${amount} photo shells unlocked from a deleted message`;
+    case 'message_text_lock': return `${amount} text shells locked for a message`;
+    case 'message_media_lock': return `${amount} photo shells locked for a message`;
+    case 'useful_lock': return `${amount} shell locked for Useful`;
+    case 'useful_unlock': return `${amount} shell unlocked from Useful`;
+    case 'reaction_lock': return `${amount} shell locked for a reaction`;
+    case 'reaction_unlock': return `${amount} shell unlocked from a reaction`;
+    case 'follow_lock': return `${amount} shells locked for a follow`;
+    case 'follow_unlock': return `${amount} shells unlocked from a follow`;
     case 'profile_media_lock': return `${amount} shells ${group.amount > 0 ? 'unlocked' : 'locked'} for profile media`;
     default: return group.description || plural(count, 'action');
   }

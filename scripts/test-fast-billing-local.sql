@@ -84,6 +84,11 @@ create table public.editorial_author_preferences (
 \ir ../supabase/migrations/202608080003_transactional_billing_idempotency.sql
 \ir ../supabase/migrations/20260820222705_shell_units_and_refundable_locks.sql
 \ir ../supabase/migrations/20260821205412_fix_social_history_and_profile_counts.sql
+\ir ../supabase/migrations/20260821212011_add_post_media.sql
+\ir ../supabase/migrations/20260823182330_refundable_content_kib_billing.sql
+\ir ../supabase/migrations/20260823184402_harmonize_refundable_shell_locks.sql
+\ir ../supabase/migrations/20260823211133_allow_comment_media.sql
+\ir ../supabase/migrations/20260823213523_allow_quote_repost_media.sql
 
 insert into public.user_balances (
   bitcoin_address, btc_balance, shells_balance, shells_spent_total
@@ -290,6 +295,212 @@ begin
     when others then
       if sqlerrm = 'The 200-item batch limit was not enforced' then raise; end if;
   end;
+end;
+$$;
+
+insert into public.user_balances (
+  bitcoin_address, btc_balance, shells_balance, shells_spent_total
+) values
+  ('bc1q-refundable-author', 1, 10000, 0),
+  ('bc1q-refundable-foreign', 1, 10000, 0);
+
+insert into public.user_profiles (bitcoin_address, display_name) values
+  ('bc1q-refundable-author', 'RefundableAuthor'),
+  ('bc1q-refundable-foreign', 'RefundableForeign');
+
+do $$
+declare
+  profile_lock record;
+  published record;
+  deleted record;
+  reposted record;
+  original_message_id uuid;
+  post_message_id uuid;
+  comment_message_id uuid;
+  repost_message_id uuid;
+  media_lock_count integer;
+  useful_vote record;
+  read_charge record;
+  follow_lock record;
+  editorial_preference record;
+  author_balance numeric;
+  foreign_balance numeric;
+  remaining_follow_rows integer;
+  remaining_follow_locks integer;
+  photo jsonb := jsonb_build_array(jsonb_build_object(
+    'url', 'https://media.example/photo.webp',
+    'object_key', 'posts/test/photo.webp',
+    'width', 1200,
+    'height', 900,
+    'bytes', 361472,
+    'content_type', 'image/webp'
+  ));
+begin
+  -- 361,472 bytes is exactly 353 KiB and therefore costs 353 shells.
+  select * into profile_lock from public.set_profile_media_size_lock(
+    'bc1q-refundable-author', 'avatar', 361472, 1080000,
+    'https://media.example/avatar.webp', 'profiles/test/avatar.webp'
+  );
+  if profile_lock.locked_kib <> 353 or profile_lock.new_balance <> 9647 then
+    raise exception 'Profile KiB lock is incorrect: %', row_to_json(profile_lock);
+  end if;
+
+  select * into profile_lock from public.set_profile_media_size_lock(
+    'bc1q-refundable-author', 'avatar', 0, 0, null, null
+  );
+  if profile_lock.locked_kib <> 0 or profile_lock.new_balance <> 10000 then
+    raise exception 'Profile KiB refund is incorrect: %', row_to_json(profile_lock);
+  end if;
+
+  select * into published from public.publish_message_with_media_cost(
+    'bc1q-refundable-author', 'hello', null, photo
+  );
+  post_message_id := (published.created_message ->> 'id')::uuid;
+  if published.cost <> 358 or published.new_balance <> 9642 then
+    raise exception 'Text plus photo charge is incorrect: %', row_to_json(published);
+  end if;
+
+  select * into deleted from public.delete_message_and_release_locks(
+    'bc1q-refundable-author', post_message_id
+  );
+  if deleted.refunded_text <> 5 or deleted.refunded_media <> 353
+    or deleted.new_balance <> 10000 then
+    raise exception 'Post deletion refund is incorrect: %', row_to_json(deleted);
+  end if;
+
+  select * into published from public.publish_message_with_media_cost(
+    'bc1q-refundable-foreign', 'tenletters', null, photo
+  );
+  original_message_id := (published.created_message ->> 'id')::uuid;
+
+  select * into reposted from public.toggle_or_create_message_repost(
+    'bc1q-refundable-author', original_message_id, null
+  );
+  repost_message_id := (reposted.created_message ->> 'id')::uuid;
+  if reposted.new_balance <> 9990 then
+    raise exception 'A simple repost rebilled the photo: %', row_to_json(reposted);
+  end if;
+  select count(*) into media_lock_count
+  from public.shell_locks
+  where owner_address = 'bc1q-refundable-author'
+    and lock_kind = 'message_media'
+    and lock_key = repost_message_id::text;
+  if media_lock_count <> 0 then
+    raise exception 'A repost created a photo lock';
+  end if;
+
+  select * into reposted from public.toggle_or_create_message_repost(
+    'bc1q-refundable-author', original_message_id, null
+  );
+  if reposted.active or reposted.new_balance <> 10000 then
+    raise exception 'Simple repost removal did not refund text: %', row_to_json(reposted);
+  end if;
+
+  select * into reposted from public.toggle_or_create_message_repost(
+    'bc1q-refundable-author', original_message_id, 'quote', photo
+  );
+  repost_message_id := (reposted.created_message ->> 'id')::uuid;
+  if reposted.new_balance <> 9632 then
+    raise exception 'Quoted repost cost is incorrect: %', row_to_json(reposted);
+  end if;
+  if jsonb_array_length(reposted.created_message -> 'media') <> 1 then
+    raise exception 'Quoted repost did not retain its own photo';
+  end if;
+  select count(*) into media_lock_count
+  from public.shell_locks
+  where owner_address = 'bc1q-refundable-author'
+    and lock_kind = 'message_media'
+    and lock_key = repost_message_id::text
+    and amount = 353;
+  if media_lock_count <> 1 then
+    raise exception 'Quoted repost photo lock is incorrect';
+  end if;
+
+  select * into deleted from public.delete_message_and_release_locks(
+    'bc1q-refundable-author', repost_message_id
+  );
+  if deleted.refunded_text <> 15 or deleted.refunded_media <> 353
+    or deleted.new_balance <> 10000 then
+    raise exception 'Quoted repost deletion did not refund text and media: %', row_to_json(deleted);
+  end if;
+
+  select * into useful_vote from public.toggle_message_useful_with_cost(
+    original_message_id, 'bc1q-refundable-author'
+  );
+  if not useful_vote.active or useful_vote.new_balance <> 9999 or useful_vote.cost <> 1 then
+    raise exception 'Useful lock is incorrect: %', row_to_json(useful_vote);
+  end if;
+  select * into useful_vote from public.toggle_message_useful_with_cost(
+    original_message_id, 'bc1q-refundable-author'
+  );
+  if useful_vote.active or useful_vote.new_balance <> 10000 or useful_vote.cost <> -1 then
+    raise exception 'Useful unlock is incorrect: %', row_to_json(useful_vote);
+  end if;
+
+  select * into published from public.publish_message_with_media_cost(
+    'bc1q-refundable-author', 'reply', original_message_id, photo
+  );
+  comment_message_id := (published.created_message ->> 'id')::uuid;
+  if published.cost <> 358 or published.new_balance <> 9642
+    or (published.created_message ->> 'parent_id')::uuid <> original_message_id
+    or jsonb_array_length(published.created_message -> 'media') <> 1 then
+    raise exception 'Comment text plus photo charge is incorrect: %', row_to_json(published);
+  end if;
+  select * into deleted from public.delete_message_and_release_locks(
+    'bc1q-refundable-author', comment_message_id
+  );
+  if deleted.refunded_text <> 5 or deleted.refunded_media <> 353
+    or deleted.new_balance <> 10000 then
+    raise exception 'Comment deletion refund is incorrect: %', row_to_json(deleted);
+  end if;
+
+  select * into follow_lock from public.set_follow_with_lock(
+    'bc1q-refundable-author', 'bc1q-refundable-foreign', true
+  );
+  select * into follow_lock from public.set_follow_with_lock(
+    'bc1q-refundable-foreign', 'bc1q-refundable-author', true
+  );
+  select * into editorial_preference from public.set_editorial_author_preference(
+    'bc1q-refundable-author', 'bc1q-refundable-foreign', 'block'
+  );
+  select shells_balance into author_balance from public.user_balances
+  where bitcoin_address = 'bc1q-refundable-author';
+  select shells_balance into foreign_balance from public.user_balances
+  where bitcoin_address = 'bc1q-refundable-foreign';
+  select count(*) into remaining_follow_rows from public.follows
+  where follower_address in ('bc1q-refundable-author', 'bc1q-refundable-foreign')
+    and following_address in ('bc1q-refundable-author', 'bc1q-refundable-foreign');
+  select count(*) into remaining_follow_locks from public.shell_locks
+  where lock_kind = 'follow'
+    and owner_address in ('bc1q-refundable-author', 'bc1q-refundable-foreign');
+  if not editorial_preference.active or author_balance <> 10000
+    or foreign_balance <> 9637 or remaining_follow_rows <> 0
+    or remaining_follow_locks <> 0 then
+    raise exception 'Blocking did not refund both follow locks';
+  end if;
+  begin
+    perform public.set_follow_with_lock(
+      'bc1q-refundable-foreign', 'bc1q-refundable-author', true
+    );
+    raise exception 'A blocked follow was accepted';
+  exception
+    when others then
+      if sqlerrm = 'A blocked follow was accepted' then raise; end if;
+      if sqlerrm <> 'Interaction impossible entre ces comptes' then raise; end if;
+  end;
+
+  select * into read_charge from public.charge_message_batch(
+    'bc1q-refundable-author', array[original_message_id]
+  );
+  if read_charge.charged_count <> 1 or read_charge.cost <> 1 or read_charge.new_balance <> 9999 then
+    raise exception 'First message exposure charge is incorrect: %', row_to_json(read_charge);
+  end if;
+  select * into read_charge from public.charge_message_batch(
+    'bc1q-refundable-author', array[original_message_id]
+  );
+  if read_charge.charged_count <> 0 or read_charge.cost <> 0 or read_charge.new_balance <> 9999 then
+    raise exception 'Previously loaded message was charged twice: %', row_to_json(read_charge);
+  end if;
 end;
 $$;
 

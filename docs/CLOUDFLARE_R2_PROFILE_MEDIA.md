@@ -1,4 +1,4 @@
-# Photos de profil et de publications avec Cloudflare R2
+# Photos de profil, de publications, de commentaires et de citations avec Cloudflare R2
 
 Danaus enregistre les fichiers image dans Cloudflare R2 et conserve uniquement
 leurs URL publiques dans Supabase. Le navigateur ne reçoit jamais la clé secrète
@@ -10,7 +10,9 @@ Les formats acceptés pour les profils sont JPG, PNG et WebP, avec une limite de
 Chaque compte possède au maximum un objet `avatar` et un objet `cover` : changer
 une photo remplace l'ancienne au lieu d'accumuler des fichiers inutiles.
 
-Les publications acceptent de une à trois photos. Avant tout envoi, le navigateur
+Les publications, commentaires et reposts avec citation acceptent de une à trois
+photos, avec ou sans texte. Les photos déjà présentes dans la publication citée
+ne sont ni copiées ni refacturées. Avant tout envoi, le navigateur
 retire les métadonnées en réencodant l’image, limite son côté le plus long à
 1 600 px et vise 450 Ko. Le serveur refuse toute photo dépassant 600 Ko ou
 1 600 px, même si le navigateur a été contourné. Ces limites donnent un rendu
@@ -176,7 +178,8 @@ supabase functions deploy social-delete
 
 La migration ajoute les métadonnées d'image et le verrou remboursable associé.
 PostgreSQL ne reçoit jamais le fichier : uniquement son URL, sa clé R2, ses
-dimensions et le nombre de pixels verrouillés.
+dimensions et sa taille en octets vérifiée directement dans R2. Chaque Kio
+entamé (1 024 octets) verrouille un shell.
 
 Le pipeline complet du projet peut aussi déployer toutes les migrations et Edge
 Functions avec `npm run deploy:development`, puis, après validation, avec
@@ -188,20 +191,36 @@ projet Supabase avant ce déploiement.
 1. Ouvrir le site DEV et se connecter.
 2. Aller sur son profil puis cliquer sur **Edit profile**.
 3. Choisir un JPG, PNG ou WebP de moins de 5 Mo pour l'avatar et la couverture.
-   L'écran affiche ses dimensions et le nombre de shells à verrouiller.
+   L'écran affiche ses dimensions et le nombre de shells à verrouiller selon sa taille.
 4. Enregistrer, actualiser la page et vérifier que les deux images restent visibles.
 5. Dans Cloudflare R2, ouvrir **Objects** : deux objets de profil doivent exister sous
    `profiles/<identifiant-anonyme>/avatar/<uuid>` et
    `profiles/<identifiant-anonyme>/cover/<uuid>`.
 6. Vérifier également le profil depuis un autre compte et sur téléphone.
-7. Remplacer une image par une plus petite puis la supprimer. Une image de
-   100 × 200 verrouille 20 000 shells ; une image de 100 × 100 en libère 10 000.
+7. Remplacer une image par une plus petite puis la supprimer. Un fichier de
+   361 472 octets verrouille 353 shells. Sa suppression doit rendre 353 shells.
 8. Créer une publication avec trois grandes photos. Avant de publier, vérifier
-   que chaque aperçu indique moins de 600 Ko. Actualiser la page et ouvrir la
+   que chaque aperçu indique moins de 600 Ko et son coût en shells. Actualiser la page et ouvrir la
    publication depuis un téléphone puis un ordinateur.
 9. Dans R2, vérifier la présence de trois objets sous
    `posts/<identifiant-anonyme>/<uuid-du-lot>/`. Supprimer la publication et
-   vérifier que ses trois objets sont également supprimés.
+   vérifier que ses trois objets sont également supprimés et que les shells de
+   son texte et de ses trois photos sont rendus.
+10. Cliquer sur une photo : elle doit s'ouvrir dans la visionneuse noire, jamais
+    dans un nouvel onglet. Sur mobile, vérifier le balayage entre photos, le
+    pincement pour zoomer et le masquage des commandes par un toucher. Sur
+    ordinateur, vérifier les flèches, la molette/double-clic de zoom et le panneau
+    de discussion à droite. Ouvrir ensuite une discussion déjà chargée : seuls
+    les messages jamais payés auparavant doivent réduire le solde.
+11. Ouvrir le formulaire d'un commentaire, ajouter trois photos et vérifier que
+    les mêmes aperçus, limites de 600 Ko et estimations de shells apparaissent.
+    Publier aussi un commentaire composé uniquement d'une photo, puis le
+    supprimer : le poids réel de la photo doit être rendu avec l'éventuel texte.
+12. Ouvrir **Repost**, puis **Quote**, ajouter de une à trois photos et vérifier
+    les mêmes aperçus et estimations. Tester une citation avec texte et une
+    citation composée uniquement d'une photo. La publication d'origine ne doit
+    pas être refacturée pour ses propres photos. Supprimer la citation et vérifier
+    que son texte facturé et ses nouvelles photos rendent leurs shells.
 
 Si l'envoi affiche une erreur CORS, vérifier en priorité que l'origine exacte du
 site figure dans `AllowedOrigins`. Si l'image est envoyée mais ne s'affiche pas,

@@ -60,42 +60,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Vérifier que le message appartient à l'utilisateur
-    const { data: message, error: fetchError } = await supabase
-      .from('messages')
-      .select('id, bitcoin_address, media')
-      .eq('id', messageId)
-      .single();
-
-    if (fetchError || !message) {
-      console.error('❌ Message introuvable');
-      return new Response(
-        JSON.stringify({ error: 'Message introuvable' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (message.bitcoin_address !== bitcoinAddress) {
-      console.error('❌ Non autorisé');
-      return new Response(
-        JSON.stringify({ error: 'Non autorisé' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Marquer le message comme supprimé (soft delete)
-    const { error: deleteError } = await supabase
-      .from('messages')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', messageId);
-
+    // The database marks the post as deleted, releases its text/photo locks,
+    // and updates the balance in one transaction. R2 cleanup follows as a
+    // best-effort storage operation and never controls the financial result.
+    const { data, error: deleteError } = await supabase.rpc('delete_message_and_release_locks', {
+      p_bitcoin_address: bitcoinAddress,
+      p_message_id: messageId,
+    });
     if (deleteError) {
+      if (deleteError.message?.includes('Publication introuvable')) {
+        return jsonResponse(req, { error: 'Message introuvable' }, 404);
+      }
       console.error('❌ Erreur suppression:', safeErrorForLog(deleteError));
       throw deleteError;
     }
+    const deletion = data?.[0];
 
-    const postMediaKeys = Array.isArray(message.media)
-      ? message.media
+    const postMediaKeys = Array.isArray(deletion?.message_media)
+      ? deletion.message_media
         .map((item: { object_key?: unknown }) => item?.object_key)
         .filter((key: unknown): key is string => typeof key === 'string' && key.startsWith('posts/'))
         .slice(0, 3)
@@ -108,11 +90,18 @@ Deno.serve(async (req) => {
       )));
     }
 
-    console.log('✅ Message marqué comme supprimé');
-    return new Response(
-      JSON.stringify({ success: true }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    console.log('✅ Message supprimé et shells libérés');
+    return jsonResponse(req, {
+      success: true,
+      new_balance: Number(deletion?.new_balance) || 0,
+      refunded_text: Number(deletion?.refunded_text) || 0,
+      refunded_media: Number(deletion?.refunded_media) || 0,
+      already_deleted: Boolean(deletion?.already_deleted),
+      user: {
+        shells_balance: Number(deletion?.new_balance) || 0,
+        shells_spent_total: Number(deletion?.shells_spent_total) || 0,
+      },
+    });
 
   } catch (error: any) {
     console.error('❌ Erreur social-delete:', safeErrorForLog(error));

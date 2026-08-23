@@ -120,6 +120,9 @@ Deno.serve(async (req) => {
       if (lockError.message?.includes('INSUFFICIENT_SHELLS')) {
         return jsonResponse(req, { error: 'INSUFFICIENT_SHELLS' }, 402);
       }
+      if (lockError.message?.includes('Interaction impossible')) {
+        return jsonResponse(req, { error: 'Interaction impossible entre ces comptes' }, 403);
+      }
       throw lockError;
     } else {
       // The database transaction is authoritative for both the relationship

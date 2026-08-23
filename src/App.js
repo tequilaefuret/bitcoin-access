@@ -109,12 +109,14 @@ const BitcoinExclusiveAccess = () => {
     publishMessage,
     loadMessages,
     loadComments,
+    loadMessageThread,
     loadSpendingHistory,
     submitCanvasPixels,
     loadCanvasPixels,
     loadUserPixelCount,
     toggleUseful,
     repostMessage,
+    deleteMessage,
     hideForYouMessage,
     updateEditorialAuthorPreference,
     updateEditorialTopicPreference,
@@ -515,7 +517,8 @@ const BitcoinExclusiveAccess = () => {
     setError('');
     setSettingsReturnStep(['profile', 'game', 'canvas'].includes(step) ? step : 'social');
     setStep('settings');
-  }, [setError, step]);
+    scrollToTop();
+  }, [scrollToTop, setError, step]);
 
   const handleSettingsBack = useCallback(() => {
     setError('');
@@ -607,7 +610,7 @@ const BitcoinExclusiveAccess = () => {
       {step !== 'landing' && <EnvIndicator />}
 
       {step !== 'landing' && (
-        <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
+        <div className={`pointer-events-none inset-0 -z-10 overflow-hidden ${step === 'settings' ? 'fixed' : 'absolute'}`} aria-hidden="true">
           <div className="absolute left-1/2 top-[-26rem] h-[54rem] w-[64rem] -translate-x-1/2 rounded-full bg-amber-500/20 blur-[140px]" />
           <div className="absolute bottom-[-18rem] right-[-12rem] h-[38rem] w-[38rem] rounded-full bg-orange-600/10 blur-[130px]" />
           <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.028)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.028)_1px,transparent_1px)] bg-[size:52px_52px] [mask-image:linear-gradient(to_bottom,black,transparent_75%)]" />
@@ -743,8 +746,10 @@ const BitcoinExclusiveAccess = () => {
               onPublishMessage={handlePublishMessage}
               onLoadMessages={loadMessages}
               onLoadComments={loadComments}
+              onLoadThread={loadMessageThread}
               onToggleUseful={toggleUseful}
               onRepostMessage={repostMessage}
+              onDeleteMessage={deleteMessage}
               onForYouNotInterested={hideForYouMessage}
               onEditorialPreference={handleEditorialPreference}
               onEditorialTopicPreference={updateEditorialTopicPreference}
@@ -783,6 +788,7 @@ const BitcoinExclusiveAccess = () => {
               onBalanceUpdated={updateBalance}
               onPublishMessage={handlePublishMessage}
               onLoadComments={loadComments}
+              onLoadThread={loadMessageThread}
               onToggleUseful={toggleUseful}
               onRepostMessage={repostMessage}
               onOpenThread={handleOpenThread}
@@ -798,11 +804,14 @@ const BitcoinExclusiveAccess = () => {
             <ThreadStep
               messageId={threadMessageId}
               currentAddress={authenticatedAddress}
+              displayName={sessionDisplayName}
+              avatarUrl={sessionAvatarUrl}
               onBack={handleThreadBack}
               onOpenProfile={(bitcoinAddress) => handleOpenProfile(bitcoinAddress, 'thread')}
               onOpenThread={handleOpenThread}
               onPublishMessage={handlePublishMessage}
               onLoadComments={loadComments}
+              onLoadThread={loadMessageThread}
               onToggleUseful={toggleUseful}
               onRepostMessage={repostMessage}
               onBalanceUpdated={updateBalance}
