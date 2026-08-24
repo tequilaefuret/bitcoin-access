@@ -71,6 +71,16 @@ create table public.follows (
   primary key (follower_address, following_address)
 );
 
+create table public.canvas_pixels (
+  x integer not null,
+  y integer not null,
+  color text not null,
+  bitcoin_address text not null references public.user_balances(bitcoin_address),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (x, y)
+);
+
 create table public.editorial_author_preferences (
   reader_address text not null references public.user_balances(bitcoin_address),
   target_address text not null references public.user_balances(bitcoin_address),
@@ -89,6 +99,7 @@ create table public.editorial_author_preferences (
 \ir ../supabase/migrations/20260823184402_harmonize_refundable_shell_locks.sql
 \ir ../supabase/migrations/20260823211133_allow_comment_media.sql
 \ir ../supabase/migrations/20260823213523_allow_quote_repost_media.sql
+\ir ../supabase/migrations/20260824203619_enforce_balance_reference_integrity.sql
 
 insert into public.user_balances (
   bitcoin_address, btc_balance, shells_balance, shells_spent_total
@@ -501,6 +512,14 @@ begin
   if read_charge.charged_count <> 0 or read_charge.cost <> 0 or read_charge.new_balance <> 9999 then
     raise exception 'Previously loaded message was charged twice: %', row_to_json(read_charge);
   end if;
+
+  begin
+    delete from public.user_balances
+    where bitcoin_address = 'bc1q-refundable-foreign';
+    raise exception 'A balance with authored messages was deleted';
+  exception
+    when foreign_key_violation then null;
+  end;
 end;
 $$;
 

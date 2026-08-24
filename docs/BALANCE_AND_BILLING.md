@@ -95,6 +95,14 @@ Un blocage libère atomiquement les éventuels follows dans les deux sens ; la
 fonction SQL de follow revérifie elle-même le blocage pour empêcher une course
 entre deux requêtes simultanées.
 
+`user_balances` est également la racine d'intégrité du registre comptable. Les
+publications et transactions historiques interdisent sa suppression directe ;
+les réactions, follows, pixels et reçus techniques sont rattachés par des clés
+étrangères. Une correction manuelle de balance doit donc toujours modifier la
+ligne existante, jamais la supprimer puis la recréer. Cette protection évite
+qu'une migration de verrous remboursables rencontre du contenu dont le compte
+propriétaire n'existe plus.
+
 Pour ajouter une future action facturée, la règle est désormais explicite :
 
 1. si l'action est irréversible, enregistrer un débit définitif et augmenter

@@ -419,6 +419,24 @@ Règles complémentaires :
 - une migration de production ne se « rollback » pas automatiquement : en cas de
   problème, ajoute une migration corrective vers l'avant.
 
+### Ne pas supprimer manuellement un compte de facturation
+
+La ligne `user_balances` est le parent comptable des publications, transactions,
+réactions, follows, pixels et requêtes de facturation. Ne la supprime jamais
+directement dans l'éditeur Supabase pour modifier un solde : modifie uniquement
+les colonnes du solde concerné. La migration
+`20260824203619_enforce_balance_reference_integrity.sql` empêche désormais une
+suppression tant qu'il reste une publication ou une écriture comptable, et
+supprime automatiquement les données sociales dérivées lorsqu'une suppression
+de compte coordonnée devient possible.
+
+Si une future migration s'arrête avec `INTEGRITY_ORPHAN`, ne marque pas la
+migration comme appliquée. Il faut d'abord soit recréer la ligne `user_balances`
+manquante avec des montants vérifiés, soit supprimer dans une transaction toutes
+les données enfant de l'adresse. Relance ensuite le déploiement normal : la
+migration vérifiera les données, installera les clés étrangères manquantes et
+enregistrera son numéro dans l'historique.
+
 ## Retour arrière
 
 Le frontend peut être restauré depuis l'historique Netlify. Les Edge Functions
